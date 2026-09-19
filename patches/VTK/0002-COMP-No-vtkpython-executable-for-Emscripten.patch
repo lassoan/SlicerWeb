@@ -1,0 +1,29 @@
+From 5af894135b82e4b24b39ce203aa17578a9448a43 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@localhost>
+Date: Sat, 19 Sep 2026 11:51:13 -0400
+Subject: [PATCH] COMP: Do not build vtkpython executable for Emscripten
+
+Python modules built with Emscripten are side modules loaded by a Python
+runtime such as Pyodide, which is the main module.
+---
+ Wrapping/Python/CMakeLists.txt | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/Wrapping/Python/CMakeLists.txt b/Wrapping/Python/CMakeLists.txt
+index ed21af2de2..9e5a9cdfef 100644
+--- a/Wrapping/Python/CMakeLists.txt
++++ b/Wrapping/Python/CMakeLists.txt
+@@ -22,7 +22,9 @@ if (UNIX)
+ endif ()
+ 
+ # The interpreters are not supported in wheel builds, so skip them.
+-if (NOT VTK_WHEEL_BUILD)
++# With Emscripten, Python modules are side modules loaded by a Python main module (e.g. Pyodide),
++# so there is no interpreter executable to build either.
++if (NOT VTK_WHEEL_BUILD AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+   add_executable(vtkpython)
+   target_sources(vtkpython
+     PRIVATE
+-- 
+2.44.0.windows.1
+

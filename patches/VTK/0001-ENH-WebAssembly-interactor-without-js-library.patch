@@ -1,0 +1,194 @@
+From f46fce5251397908f4bdabffb238c87dd4d6d148 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@localhost>
+Date: Sat, 19 Sep 2026 11:13:00 -0400
+Subject: [PATCH] ENH: Allow using the WebAssembly interactor from Emscripten
+ side modules
+
+Add VTK_WEBASSEMBLY_JS_LIBRARY option. When OFF, the functions of
+vtkWebAssemblyRenderWindowInteractor.js are implemented in C++ on top of
+Emscripten's html5/eventloop libraries, so that VTK can be built as side
+modules (e.g. Python extension modules loaded by Pyodide), which cannot
+link a --js-library.
+---
+ Rendering/UI/CMakeLists.txt                   |  11 +-
+ ...kWebAssemblyRenderWindowInteractorCAPI.cxx | 139 ++++++++++++++++++
+ 2 files changed, 149 insertions(+), 1 deletion(-)
+ create mode 100644 Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx
+
+diff --git a/Rendering/UI/CMakeLists.txt b/Rendering/UI/CMakeLists.txt
+index 469491157f..dd7fb8f119 100644
+--- a/Rendering/UI/CMakeLists.txt
++++ b/Rendering/UI/CMakeLists.txt
+@@ -12,6 +12,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+                                vtkWebAssemblyHardwareWindow)
+   endif()
+   list(APPEND classes vtkWebAssemblyRenderWindowInteractor vtkWebAssemblyHardwareWindow)
++  # When VTK is built as Emscripten side modules (e.g. Python extension modules loaded by Pyodide), a
++  # `--js-library` cannot be linked into the side module. In that case the functions implemented in
++  # vtkWebAssemblyRenderWindowInteractor.js are provided in C++ using Emscripten's built-in JS libraries.
++  option(VTK_WEBASSEMBLY_JS_LIBRARY
++    "Link vtkWebAssemblyRenderWindowInteractor.js into consumers. Turn OFF for side-module builds." ON)
++  mark_as_advanced(VTK_WEBASSEMBLY_JS_LIBRARY)
++  if(NOT VTK_WEBASSEMBLY_JS_LIBRARY)
++    list(APPEND sources vtkWebAssemblyRenderWindowInteractorCAPI.cxx)
++  endif()
+ elseif(VTK_USE_X)
+   # Add some custom overrides
+   if(NOT VTK_DEFAULT_RENDER_WINDOW_HEADLESS)
+@@ -130,7 +139,7 @@ vtk_module_add_module(
+   PRIVATE_HEADERS
+   ${vtk_object_factory_header})
+ 
+-if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
++if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND VTK_WEBASSEMBLY_JS_LIBRARY)
+   vtk_module_link_options(
+     VTK::RenderingUI
+     INTERFACE
+diff --git a/Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx b/Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx
+new file mode 100644
+index 0000000000..49b7c67b80
+--- /dev/null
++++ b/Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx
+@@ -0,0 +1,139 @@
++// SPDX-FileCopyrightText: Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
++// SPDX-License-Identifier: BSD-3-Clause
++
++// C++ implementation of the functions that vtkWebAssemblyRenderWindowInteractor.js provides.
++// Used when VTK_WEBASSEMBLY_JS_LIBRARY is OFF, i.e. when VTK is built as Emscripten side modules
++// (for example Python extension modules loaded by Pyodide), which cannot carry a --js-library.
++// Only Emscripten's standard JS libraries (html5, eventloop) are used, which a main module such as
++// Pyodide links and exports.
++
++#include "vtkWebAssemblyRenderWindowInteractor.h"
++
++#include <emscripten.h>
++#include <emscripten/eventloop.h>
++#include <emscripten/html5.h>
++
++#include <cstdlib>
++
++namespace
++{
++struct vtkEventLoopContext
++{
++  vtkEventProcessingFunc SpinOnceAndGetDone;
++  vtkUnRegisterInteractorFunc UnRegisterInteractor;
++  void* Arg;
++};
++
++bool vtkEventLoopTick(double /*time*/, void* userData)
++{
++  auto* ctx = static_cast<vtkEventLoopContext*>(userData);
++  if (!ctx->SpinOnceAndGetDone(ctx->Arg))
++  {
++    return true; // keep requesting animation frames
++  }
++  if (ctx->UnRegisterInteractor)
++  {
++    ctx->UnRegisterInteractor(ctx->Arg);
++  }
++  delete ctx;
++  return false;
++}
++}
++
++extern "C"
++{
++  VTK_ABI_NAMESPACE_BEGIN
++
++  int vtkCreateTimer(
++    unsigned long duration, bool isOneShot, vtkTimerCallbackFunc callback, void* userData)
++  {
++    if (isOneShot)
++    {
++      return emscripten_set_timeout(callback, static_cast<double>(duration), userData);
++    }
++    return static_cast<int>(
++      emscripten_set_interval(callback, static_cast<double>(duration), userData));
++  }
++
++  void vtkDestroyTimer(int timerId, bool isOneShot)
++  {
++    if (isOneShot)
++    {
++      emscripten_clear_timeout(timerId);
++    }
++    else
++    {
++      emscripten_clear_interval(timerId);
++    }
++  }
++
++  int* vtkGetParentElementBoundingRectSize(const char* selector)
++  {
++    int* size = static_cast<int*>(std::malloc(2 * sizeof(int)));
++    size[0] = 0;
++    size[1] = 0;
++    // clang-format off
++    MAIN_THREAD_EM_ASM(
++      {
++        var target = UTF8ToString($0);
++        var canvas = document.querySelector(target);
++        if (!canvas || !canvas.parentElement) { return; }
++        var rect = canvas.parentElement.getBoundingClientRect();
++        var dpr = window.devicePixelRatio || 1;
++        HEAP32[$1 >> 2] = Math.floor(rect.width * dpr + 0.5);
++        HEAP32[($1 >> 2) + 1] = Math.floor(rect.height * dpr + 0.5);
++      },
++      selector, size);
++    // clang-format on
++    return size;
++  }
++
++  void vtkInitializeCanvasElement(const char* selector, bool applyStyle)
++  {
++    if (!applyStyle)
++    {
++      return;
++    }
++    // clang-format off
++    MAIN_THREAD_EM_ASM(
++      {
++        var target = UTF8ToString($0);
++        var canvas = document.querySelector(target);
++        if (!canvas) { return; }
++        var container = canvas.parentElement;
++        if (container === document.body) {
++          document.body.style.margin = 0;
++          document.body.style.width = '100vw';
++          document.body.style.height = '100vh';
++        } else if (container) {
++          container.style.position = 'relative';
++          container.style.width = '100%';
++          container.style.height = '100%';
++        }
++        canvas.style.position = 'absolute';
++        canvas.style.top = 0;
++        canvas.style.left = 0;
++        canvas.style.width = '100%';
++        canvas.style.height = '100%';
++        window.dispatchEvent(new Event('resize'));
++      },
++      selector);
++    // clang-format on
++  }
++
++  void vtkStartEventLoopSync(vtkEventProcessingFunc spinOnceAndGetDone,
++    vtkUnRegisterInteractorFunc unRegisterInteractor, void* arg)
++  {
++    emscripten_request_animation_frame_loop(
++      vtkEventLoopTick, new vtkEventLoopContext{ spinOnceAndGetDone, unRegisterInteractor, arg });
++  }
++
++  void vtkStartEventLoopAsync(vtkEventProcessingFunc spinOnceAndGetDone,
++    vtkUnRegisterInteractorFunc unRegisterInteractor, void* arg)
++  {
++    // Side modules are not built with Asyncify/JSPI; drive the loop synchronously.
++    vtkStartEventLoopSync(spinOnceAndGetDone, unRegisterInteractor, arg);
++  }
++
++  VTK_ABI_NAMESPACE_END
++}
+-- 
+2.44.0.windows.1
+

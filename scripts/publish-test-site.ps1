@@ -2,7 +2,8 @@
 # restricted by Cloudflare Access to radixlabmedical.com email addresses.
 #
 # Requirements:
-#  - $env:CLOUDFLARE_API_TOKEN: API token with the "Access: Apps and Policies - Edit" account permission
+#  - API token with the "Access: Apps and Policies - Edit" account permission, in the file
+#    .secrets\cloudflare-api-token (git-ignored) or in $env:CLOUDFLARE_API_TOKEN
 #  - the production build served locally: cd web; npx vite preview --port 4173
 #  - tunnel "slicerweb-test" and its DNS record (created with D:\SlicerWeb-build\tools\cloudflared.exe)
 #
@@ -16,8 +17,11 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
-if (-not $env:CLOUDFLARE_API_TOKEN) { throw "Set CLOUDFLARE_API_TOKEN (Access: Apps and Policies - Edit)" }
-$headers = @{ Authorization = "Bearer $($env:CLOUDFLARE_API_TOKEN)"; "Content-Type" = "application/json" }
+$tokenFile = Join-Path $PSScriptRoot "..\.secrets\cloudflare-api-token"
+$token = $env:CLOUDFLARE_API_TOKEN
+if (-not $token -and (Test-Path $tokenFile)) { $token = (Get-Content $tokenFile -Raw).Trim() }
+if (-not $token) { throw "Save the API token (Access: Apps and Policies - Edit) in $tokenFile" }
+$headers = @{ Authorization = "Bearer $token"; "Content-Type" = "application/json" }
 $api = "https://api.cloudflare.com/client/v4/accounts/$AccountId/access/apps"
 
 $app = @{

@@ -1,0 +1,38 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] BUG: Compare floats with float literals in volume shaders
+
+GLSL ES 3.00 (WebGL 2) has no implicit int to float conversion: comparing a
+float with an int literal fails to compile, so volume rendering with shading,
+gradient opacity or linear interpolation rendered nothing in WebAssembly.
+---
+diff --git a/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h b/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
+index 45ddb3e986..1f2c138d4b 100644
+--- a/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
++++ b/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
+@@ -789,7 +789,7 @@ inline std::string ComputeGradientDeclaration(
+         "\n"
+         "  // Since the actual range of the gradient magnitude is unknown,\n"
+         "  // assume it is in the range [0, 0.25 * dataRange].\n"
+-        "  range = range != 0 ? range : 1.0;\n"
++        "  range = range != 0.0 ? range : 1.0;\n"
+         "  grad_mag = grad_mag / (0.25 * range);\n"
+         "  grad_mag = clamp(grad_mag, 0.0, 1.0);\n"
+         "\n"
+@@ -1162,7 +1162,7 @@ inline std::string ComputeDensityGradientDeclaration(vtkOpenGLGPUVolumeRayCastMa
+         "\n"
+         "  // Since the actual range of the gradient magnitude is unknown,\n"
+         "  // assume it is in the range [0, 0.25 * dataRange].\n"
+-        "  range = range != 0 ? range : 1.0;\n"
++        "  range = range != 0.0 ? range : 1.0;\n"
+         "  grad_mag = grad_mag / (0.25 * range);\n"
+         "  grad_mag = clamp(grad_mag, 0.0, 1.0);\n"
+         "\n"
+@@ -2869,7 +2869,7 @@ inline std::string ShadingSingleInput(vtkRenderer* vtkNotUsed(ren), vtkVolumeMap
+       compParamStr = ", maxComp";
+     }
+     shaderStr += std::string("\
+-        \n    if (g_currentT == 0)\
++        \n    if (g_currentT == 0.0)\
+         \n    {\
+         \n      l_initialIndex = findIsoSurfaceIndex(scalar[maxComp], l_normValues);\
+         \n    }\

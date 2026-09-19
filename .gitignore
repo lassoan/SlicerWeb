@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 web/**/dist/
 .vite/
+
+# Local credentials (never committed)
+/.secrets/

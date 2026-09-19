@@ -1,0 +1,21 @@
+import { chromium } from "playwright-core";
+const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+const page = await context.newPage();
+await page.goto("http://localhost:4173/?sample=");
+await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 180000 });
+await page.getByRole("button", { name: /python/i }).first().tap();
+const input = page.locator("textarea").last();
+await input.tap();
+await page.evaluate(() => {
+  window.__log = [];
+  const t0 = performance.now();
+  const ta = document.querySelectorAll("textarea")[document.querySelectorAll("textarea").length - 1];
+  for (const ev of ["input", "keydown", "compositionstart", "compositionend"]) ta.addEventListener(ev, (e) => window.__log.push(`${(performance.now() - t0).toFixed(0)} ${ev} ${e.key ?? e.data ?? ""}`));
+  const call = window.slicerWeb.bridge.call.bind(window.slicerWeb.bridge);
+  window.slicerWeb.bridge.call = (m, a) => { if (m === "completePython") window.__log.push(`${(performance.now() - t0).toFixed(0)} completePython ${JSON.stringify(a)}`); return call(m, a); };
+});
+await input.pressSequentially("slicer.util.getN", { delay: 60 });
+await page.waitForTimeout(1500);
+console.log((await page.evaluate(() => window.__log)).slice(-12).join("\n"));
+await browser.close();

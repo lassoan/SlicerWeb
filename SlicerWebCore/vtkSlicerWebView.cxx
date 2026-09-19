@@ -44,6 +44,9 @@ public:
   int PauseRenderCount{ 0 };
   vtkNew<vtkCallbackCommand> SceneCallback;
   vtkNew<vtkCallbackCommand> RenderRequestCallback;
+  vtkNew<vtkCallbackCommand> GestureCallback;
+  /// Pan translation of the current touch gesture accumulated so far (see OnGestureEvent)
+  double PanTranslation[2] = { 0.0, 0.0 };
   bool Started{ false };
 };
 
@@ -77,6 +80,8 @@ vtkSlicerWebView::vtkSlicerWebView()
 {
   this->Internal->SceneCallback->SetClientData(this);
   this->Internal->SceneCallback->SetCallback(&vtkSlicerWebView::OnSceneEvent);
+  this->Internal->GestureCallback->SetClientData(this->Internal);
+  this->Internal->GestureCallback->SetCallback(&vtkSlicerWebView::OnGestureEvent);
   this->Internal->RenderRequestCallback->SetClientData(this);
   this->Internal->RenderRequestCallback->SetCallback(&vtkSlicerWebView::OnRenderRequest);
 }
@@ -146,6 +151,9 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
   d->RenderWindow->SetAlphaBitPlanes(1);
   d->RenderWindow->AddRenderer(d->Renderer);
   d->Interactor->SetRenderWindow(d->RenderWindow);
+  // Runs before the Slicer interactor styles (priority 0)
+  d->Interactor->AddObserver(vtkCommand::StartPanEvent, d->GestureCallback, 100.0);
+  d->Interactor->AddObserver(vtkCommand::PanEvent, d->GestureCallback, 100.0);
 
   d->Scene = scene;
   scene->AddObserver(vtkMRMLScene::StartBatchProcessEvent, d->SceneCallback);
@@ -449,4 +457,31 @@ void vtkSlicerWebView::SetDisplayableManagerGroupInternal(vtkMRMLDisplayableMana
   {
     this->Internal->InteractorObserver->SetDisplayableManagers(group);
   }
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::OnGestureEvent(vtkObject* caller, unsigned long eid, void* clientData, void* vtkNotUsed(callData))
+{
+  // VTK's multi-touch gesture recognizer (vtkRenderWindowInteractor::RecognizeGesture) reports the
+  // pan translation since the start of the gesture, while Slicer widgets (e.g.
+  // vtkMRMLSliceIntersectionWidget::ProcessTouchTranslate, vtkMRMLCameraWidget) expect the
+  // translation since the previous event, as Qt pan gestures provide it. Convert to increments.
+  // (Scale and rotation are already used as differences of consecutive values.)
+  vtkRenderWindowInteractor* interactor = vtkRenderWindowInteractor::SafeDownCast(caller);
+  vtkInternal* d = static_cast<vtkInternal*>(clientData);
+  if (!interactor || !d)
+  {
+    return;
+  }
+  if (eid == vtkCommand::StartPanEvent)
+  {
+    d->PanTranslation[0] = 0.0;
+    d->PanTranslation[1] = 0.0;
+    return;
+  }
+  const double* total = interactor->GetTranslation();
+  double increment[2] = { total[0] - d->PanTranslation[0], total[1] - d->PanTranslation[1] };
+  d->PanTranslation[0] = total[0];
+  d->PanTranslation[1] = total[1];
+  interactor->SetTranslation(increment);
 }

@@ -38,7 +38,7 @@ def ownerPluginName(node):
     if node is None:
         return None
     # Not data: application state, display and storage nodes, cameras (desktop plugins do not own them)
-    for className in ("vtkMRMLSubjectHierarchyNode", "vtkMRMLDisplayNode", "vtkMRMLStorageNode", "vtkMRMLCameraNode",
+    for className in ("vtkMRMLSubjectHierarchyNode", "vtkMRMLDisplayNode", "vtkMRMLStorageNode", "vtkMRMLCameraNode", "vtkMRMLVolumePropertyNode", "vtkMRMLShaderPropertyNode",
                       "vtkMRMLAbstractViewNode"):
         if node.IsA(className):
             return None

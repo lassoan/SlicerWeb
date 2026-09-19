@@ -13,6 +13,7 @@ const input = ref("");
 const history: string[] = [];
 let historyIndex = 0;
 const output = ref<HTMLDivElement>();
+const inputEl = ref<HTMLTextAreaElement>();
 const height = ref(260);
 
 function append(kind: "in" | "out" | "err" | "log", text: string) {
@@ -33,6 +34,8 @@ async function run() {
   history.push(code);
   historyIndex = history.length;
   input.value = "";
+  closeSuggestions();
+  window.clearTimeout(completionTimer);
   append("in", ">>> " + code.replace(/\n/g, "\n... "));
   try {
     const isExpression = !code.includes("\n") && !/^\s*(import|from|def|class|for|while|if|with|try|[\w.\[\]'"]+\s*=[^=])/.test(code);
@@ -50,7 +53,108 @@ async function run() {
   }
 }
 
+// ---- Auto-completion: suggestions appear after a pause in typing (phones have no Tab key), or
+// immediately with Tab. Tap/click a suggestion, or use arrow keys and Enter/Tab to insert it.
+interface Completion { text: string; callable: boolean }
+const COMPLETION_DELAY_MS = 1000;
+const suggestions = ref<Completion[]>([]);
+const activeSuggestion = ref(0);
+let completionStart = 0;
+let completionCursor = 0;
+let completionTimer: number | undefined;
+let completionRequest = 0;
+
+function closeSuggestions() {
+  suggestions.value = [];
+  activeSuggestion.value = 0;
+}
+
+async function requestCompletions(applySingle = false) {
+  window.clearTimeout(completionTimer);
+  const el = inputEl.value;
+  if (!el) return;
+  const cursor = el.selectionStart ?? input.value.length;
+  const text = input.value;
+  if (!/[A-Za-z_][\w.]*$/.test(text.slice(0, cursor))) {
+    closeSuggestions();
+    return;
+  }
+  const request = ++completionRequest;
+  const result = await bridge
+    .call<{ start: number; items: Completion[] }>("completePython", [text, cursor])
+    .catch(() => ({ start: cursor, items: [] as Completion[] }));
+  // ignore stale results (the text changed while completions were computed)
+  if (request !== completionRequest || input.value !== text) return;
+  const word = text.slice(result.start, cursor);
+  const items = result.items.filter((i) => i.text !== word || i.callable);
+  completionStart = result.start;
+  completionCursor = cursor;
+  if (applySingle && items.length === 1) {
+    applyCompletion(items[0]);
+    return;
+  }
+  suggestions.value = items;
+  activeSuggestion.value = 0;
+}
+
+function applyCompletion(item: Completion) {
+  const before = input.value.slice(0, completionStart);
+  const after = input.value.slice(completionCursor);
+  const inserted = item.text + (item.callable ? "(" : "");
+  input.value = before + inserted + after;
+  closeSuggestions();
+  const position = before.length + inserted.length;
+  nextTick(() => {
+    const el = inputEl.value;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(position, position);
+  });
+}
+
+function onInput() {
+  closeSuggestions();
+  completionRequest++;
+  window.clearTimeout(completionTimer);
+  if (input.value.trim()) completionTimer = window.setTimeout(() => requestCompletions(), COMPLETION_DELAY_MS);
+}
+
+/** Last part of a dotted name (the list shows "getNode" for "slicer.util.getNode"). */
+function shortName(text: string) {
+  return text.slice(text.lastIndexOf(".") + 1);
+}
+
+onBeforeUnmount(() => window.clearTimeout(completionTimer));
+
 function onKey(e: KeyboardEvent) {
+  if (suggestions.value.length) {
+    const n = suggestions.value.length;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeSuggestion.value = (activeSuggestion.value + 1) % n;
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeSuggestion.value = (activeSuggestion.value - 1 + n) % n;
+      return;
+    }
+    if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+      e.preventDefault();
+      applyCompletion(suggestions.value[activeSuggestion.value]);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSuggestions();
+      return;
+    }
+  }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    requestCompletions(true);
+    return;
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     run();
@@ -87,8 +191,17 @@ function startResize(e: PointerEvent) {
       <div v-for="(l, i) in lines" :key="i"
         :class="{ 'text-highlight': l.kind === 'in', 'text-red-400': l.kind === 'err', 'text-muted-foreground': l.kind === 'log' }">{{ l.text }}</div>
     </div>
-    <textarea v-model="input" rows="1" spellcheck="false" placeholder=">>> (Shift+Enter for a new line)"
+    <div v-if="suggestions.length" class="flex gap-1 overflow-x-auto px-2 pt-1 [scrollbar-width:thin]" role="listbox"
+      aria-label="Completions">
+      <button v-for="(s, i) in suggestions" :key="s.text" type="button" role="option" :aria-selected="i === activeSuggestion"
+        :title="s.text"
+        class="shrink-0 rounded border px-2 py-1 font-mono text-[12px] whitespace-nowrap"
+        :class="i === activeSuggestion ? 'border-primary bg-primary/25 text-foreground' : 'border-input bg-background text-muted-foreground'"
+        @pointerdown.prevent @click="applyCompletion(s)">{{ shortName(s.text) }}<span v-if="s.callable" class="opacity-60">()</span></button>
+    </div>
+    <textarea ref="inputEl" v-model="input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
+      placeholder=">>> (Shift+Enter for a new line, Tab to complete)"
       class="m-2 resize-none rounded border border-input bg-background px-2 py-1 font-mono text-[12px] outline-none focus:border-primary"
-      @keydown="onKey" />
+      @keydown="onKey" @input="onInput" @blur="closeSuggestions" />
   </div>
 </template>

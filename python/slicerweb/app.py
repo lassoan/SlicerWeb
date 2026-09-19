@@ -75,6 +75,15 @@ class SlicerWebApplication:
 
         qtcompat.install_slicer_widgets()
 
+        # Python console namespace, as in the desktop Python interactor
+        import __main__
+
+        import ctk
+        import numpy
+        import qt
+
+        __main__.__dict__.update(slicer=slicer, vtk=vtk, qt=qt, ctk=ctk, numpy=numpy, np=numpy)
+
         bridge.install_scene_observers()
 
         from .subject_hierarchy import SubjectHierarchyPluginLogic

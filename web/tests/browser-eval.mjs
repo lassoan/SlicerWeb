@@ -6,7 +6,7 @@ import { chromium } from "playwright-core";
 const [url, pyFile, screenshot] = process.argv.slice(2);
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist"] });
 const page = await (await browser.newContext({ viewport: { width: 1600, height: 900 } })).newPage();
-page.on("console", (m) => { if (m.type() === "error" || m.type() === "warning") console.log(`[${m.type()}] ${m.text().slice(0, 400)}`); });
+page.on("console", (m) => { if ((m.type() === "error" || m.type() === "warning") && !/GL Driver Message/.test(m.text())) console.log(`[${m.type()}] ${m.text().slice(0, 400)}`); });
 page.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
 await page.goto(url);
 await page.waitForFunction(() => (window).slicerWeb?.bridge && document.querySelectorAll("canvas").length > 0, null, { timeout: 180000 });

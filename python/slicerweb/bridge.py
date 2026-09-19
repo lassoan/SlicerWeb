@@ -158,6 +158,86 @@ def evalPython(code, mode="exec"):
     return None
 
 
+@method()
+def completePython(text, cursor=None, limit=200):
+    """Completions for the Python console at the cursor position (like the desktop Python console).
+
+    Returns {"start": index where the completed word starts, "items": [{"text", "callable"}]}.
+    """
+    import __main__
+    import re
+    import rlcompleter
+
+    if cursor is None:
+        cursor = len(text)
+    before = text[:cursor]
+    namespace = __main__.__dict__
+
+    # Expression ending at the cursor: names, dots, and bracketed call/index arguments
+    i = cursor
+    depth = 0
+    while i > 0:
+        c = before[i - 1]
+        if c in ")]":
+            depth += 1
+        elif c in "([":
+            if depth == 0:
+                break
+            depth -= 1
+        elif depth == 0 and not (c.isalnum() or c in "_."):
+            break
+        i -= 1
+    expression = before[i:]
+    base, dot, prefix = expression.rpartition(".")
+    if dot and re.fullmatch(r"\w*", prefix) and re.search(r"[)\]]$", base):
+        # Attribute of a call or index result, e.g. getNode("CT").GetIm (desktop console does the same:
+        # the expression is evaluated)
+        try:
+            obj = eval(base, namespace)
+        except Exception:
+            return {"start": cursor, "items": []}
+        items = []
+        for name in sorted(dir(obj), key=str.lower):
+            if not name.startswith(prefix) or (name.startswith("_") and not prefix.startswith("_")):
+                continue
+            try:
+                isCallable = callable(getattr(obj, name))
+            except Exception:
+                isCallable = False
+            items.append({"text": name, "callable": isCallable})
+            if len(items) >= limit:
+                break
+        return {"start": cursor - len(prefix), "items": items}
+
+    match = re.search(r"[A-Za-z_][\w.]*$|(?<=\.)$", before)
+    word = match.group(0) if match else ""
+    if not word:
+        return {"start": cursor, "items": []}
+    completer = rlcompleter.Completer(namespace)
+    items, seen = [], set()
+    state = 0
+    while len(items) < limit:
+        try:
+            candidate = completer.complete(word, state)
+        except Exception:
+            break
+        state += 1
+        if candidate is None:
+            break
+        isCallable = candidate.endswith("(") or candidate.endswith("()")
+        name = candidate[:-2] if candidate.endswith("()") else candidate.rstrip("(")
+        # hide private members unless the user started typing an underscore
+        last = name.rsplit(".", 1)[-1]
+        if last.startswith("_") and not word.rsplit(".", 1)[-1].startswith("_"):
+            continue
+        if name in seen:
+            continue
+        seen.add(name)
+        items.append({"text": name, "callable": isCallable})
+    items.sort(key=lambda i: i["text"].lower())
+    return {"start": cursor - len(word), "items": items}
+
+
 # --------------------------------------------------------------------------- nodes
 def _node_summary(node):
     info = {"id": node.GetID(), "name": node.GetName(), "className": node.GetClassName(),

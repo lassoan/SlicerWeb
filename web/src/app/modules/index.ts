@@ -8,6 +8,8 @@ import SegmentEditorPanel from "./SegmentEditorPanel.vue";
 import VolumeRenderingPanel from "./VolumeRenderingPanel.vue";
 import TransformsPanel from "./TransformsPanel.vue";
 import DataModulePanel from "./DataModulePanel.vue";
+// Web GUIs of loadable modules of extensions (their desktop GUIs are Qt C++ widgets)
+import MarkupsToModelPanel from "./MarkupsToModelPanel.vue";
 
 export const modulePanels: Record<string, Component> = {
   Volumes: VolumesPanel,
@@ -22,4 +24,6 @@ export const modulePanels: Record<string, Component> = {
   volumerendering: VolumeRenderingPanel,
   Transforms: TransformsPanel,
   Data: DataModulePanel,
+  MarkupsToModel: MarkupsToModelPanel,
+  markupstomodel: MarkupsToModelPanel,
 };

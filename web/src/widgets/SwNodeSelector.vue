@@ -8,6 +8,8 @@ const props = withDefaults(
   defineProps<{
     nodeTypes?: string[] | string;
     currentNodeID?: string | null;
+    /** Same as currentNodeID (templates write current-node-id, which maps to currentNodeId). */
+    currentNodeId?: string | null;
     noneEnabled?: boolean;
     addEnabled?: boolean;
     removeEnabled?: boolean;
@@ -19,7 +21,8 @@ const props = withDefaults(
   }>(),
   {
     nodeTypes: () => ["vtkMRMLNode"],
-    currentNodeID: null,
+    currentNodeID: undefined,
+    currentNodeId: undefined,
     noneEnabled: false,
     addEnabled: false,
     removeEnabled: false,
@@ -33,8 +36,13 @@ const props = withDefaults(
 const emit = defineEmits<{ currentNodeChanged: [string | null]; nodeAdded: [string] }>();
 
 const nodes = ref<NodeSummary[]>([]);
-const selected = ref<string | null>(props.currentNodeID);
-watch(() => props.currentNodeID, (v) => (selected.value = v));
+const current = () => (props.currentNodeID !== undefined ? props.currentNodeID : props.currentNodeId) ?? null;
+const selected = ref<string | null>(current());
+watch(current, (v) => {
+  selected.value = v;
+  // a node created after the last list update (e.g. by module logic): update the list
+  if (v && !nodes.value.some((n) => n.id === v)) refresh();
+});
 
 function types(): string[] {
   const t = props.nodeTypes;
@@ -89,8 +97,9 @@ onBeforeUnmount(() => off?.());
 <template>
   <select class="sw-node-selector h-7 w-full min-w-0 rounded-md border border-input bg-background px-2 text-[13px] text-foreground outline-none focus:border-primary disabled:opacity-40"
     :disabled="!enabled" :value="selected ?? ''" @change="onChange">
-    <option v-if="noneEnabled" value="">{{ noneDisplay }}</option>
-    <option v-for="n in nodes" :key="n.id" :value="n.id">{{ n.name }}</option>
+    <!-- selection is set on the options: a value bound on the select is lost when options arrive later -->
+    <option v-if="noneEnabled" value="" :selected="!selected">{{ noneDisplay }}</option>
+    <option v-for="n in nodes" :key="n.id" :value="n.id" :selected="n.id === selected">{{ n.name }}</option>
     <option v-if="addEnabled" value="__create__">Create new {{ baseName || types()[0].replace('vtkMRML', '').replace('Node', '') }}…</option>
     <option v-if="renameEnabled && selected" value="__rename__">Rename current node…</option>
     <option v-if="removeEnabled && selected" value="__delete__">Delete current node</option>

@@ -119,7 +119,17 @@ bool vtkSlicerWebSliceView::InitializeView(vtkMRMLApplicationLogic* appLogic, vt
   {
     appLogic->GetSliceLogics()->AddItem(d->SliceLogic);
   }
-  vtkMRMLSliceNode* sliceNode = d->SliceLogic->AddSliceNode(layoutName);
+  // Use the slice node of the layout (a singleton identified by the layout name). AddSliceNode()
+  // would replace its content with a new default node and keep the logic on the unused copy.
+  vtkMRMLSliceNode* sliceNode = vtkMRMLSliceNode::SafeDownCast(scene->GetSingletonNode(layoutName, "vtkMRMLSliceNode"));
+  if (sliceNode)
+  {
+    d->SliceLogic->SetSliceNode(sliceNode);
+  }
+  else
+  {
+    sliceNode = d->SliceLogic->AddSliceNode(layoutName);
+  }
   if (!sliceNode)
   {
     vtkErrorMacro("InitializeView: failed to create slice node for layout name " << layoutName);

@@ -1,0 +1,32 @@
+{
+  "name": "slicerweb",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "3D Slicer in the web browser: OHIF-style web application and reusable Slicer web widgets",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build && vite build --config vite.widgets.config.ts",
+    "build:app": "vite build",
+    "build:widgets": "vite build --config vite.widgets.config.ts",
+    "typecheck": "vue-tsc --noEmit",
+    "preview": "vite preview",
+    "fetch-sample-data": "node scripts/fetch-sample-data.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.0",
+    "@lucide/vue": "^1.47.0",
+    "pyodide": "314.0.7",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "playwright-core": "^1.63.0",
+    "tailwindcss": "^4.3.0",
+    "typescript": "~5.9.0",
+    "vite": "^8.0.0",
+    "vue-tsc": "^3.0.0"
+  }
+}

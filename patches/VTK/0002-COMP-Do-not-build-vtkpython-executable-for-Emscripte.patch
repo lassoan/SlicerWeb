@@ -1,7 +1,7 @@
-From 5af894135b82e4b24b39ce203aa17578a9448a43 Mon Sep 17 00:00:00 2001
+From 1f3872b47ca083d07989b09f789b3531e0a75f62 Mon Sep 17 00:00:00 2001
 From: SlicerWeb <slicerweb@localhost>
-Date: Sat, 19 Sep 2026 11:51:13 -0400
-Subject: [PATCH] COMP: Do not build vtkpython executable for Emscripten
+Date: Sat, 19 Sep 2026 12:22:54 -0400
+Subject: [PATCH 2/2] COMP: Do not build vtkpython executable for Emscripten
 
 Python modules built with Emscripten are side modules loaded by a Python
 runtime such as Pyodide, which is the main module.
@@ -10,7 +10,7 @@ runtime such as Pyodide, which is the main module.
  1 file changed, 3 insertions(+), 1 deletion(-)
 
 diff --git a/Wrapping/Python/CMakeLists.txt b/Wrapping/Python/CMakeLists.txt
-index ed21af2de2..9e5a9cdfef 100644
+index 3488567..2e146a5 100644
 --- a/Wrapping/Python/CMakeLists.txt
 +++ b/Wrapping/Python/CMakeLists.txt
 @@ -22,7 +22,9 @@ if (UNIX)

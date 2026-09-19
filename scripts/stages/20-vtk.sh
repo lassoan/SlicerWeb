@@ -1,9 +1,10 @@
 # VTK as Pyodide side modules (VTK kits as shared libraries + Python extension modules).
 source /work/scripts/env.sh
 B=$SW_BUILD/vtk
+CT=$(dirname "$(find "$SW_INSTALL/vtk-compiletools" -name vtkcompiletools-config.cmake | head -1)")
 cmake -S "$SW_SRC/VTK" -B "$B" "${SW_CMAKE_SIDE_ARGS[@]}" "${SW_OPENGL_ARGS[@]}" \
   -DCMAKE_PROJECT_VTK_INCLUDE=/work/cmake/vtk/project-include.cmake \
-  -DSW_VTK_COMPILETOOLS_DIR="$SW_INSTALL/vtk-compiletools/lib/cmake/vtkcompiletools-9.7" \
+  -DSW_VTK_COMPILETOOLS_DIR="$CT" \
   -DPython3_EXECUTABLE=/usr/local/bin/python3.14 -DPython3_INCLUDE_DIR="$PYTHON_INCLUDE_DIR" \
   -DPython3_SOABI=$SW_PY_SOABI -DPython3_FIND_STRATEGY=LOCATION \
   -DCMAKE_INSTALL_PREFIX="$SW_INSTALL/vtk" \

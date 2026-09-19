@@ -1,0 +1,34 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] COMP: Install CMake files from the vtkAddon source directory
+
+CMAKE_SOURCE_DIR is the top-level project when vtkAddon is included with
+add_subdirectory() from a project other than Slicer. Use the vtkAddon
+source directory instead.
+---
+ CMakeLists.txt | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -318,13 +318,13 @@
+ # Install vtkAddon CMake files
+ install(
+   FILES
+-  ${CMAKE_SOURCE_DIR}/CMake/vtkAddonFunctionAddExecutable.cmake
+-  ${CMAKE_SOURCE_DIR}/CMake/vtkAddonFunctionAddExecutable.cmake
+-  ${CMAKE_SOURCE_DIR}/CMake/vtkMacroKitPythonWrap.cmake
+-  ${CMAKE_SOURCE_DIR}/CMake/vtkWrapHierarchy.cmake
+-  ${CMAKE_SOURCE_DIR}/CMake/vtkWrapperInit.data.in
+-  ${CMAKE_SOURCE_DIR}/CMake/vtkWrapPython.cmake
+-  ${CMAKE_SOURCE_DIR}/CMake/WindowsApplicationUseUtf8.manifest
++  ${vtkAddon_SOURCE_DIR}/CMake/vtkAddonFunctionAddExecutable.cmake
++  ${vtkAddon_SOURCE_DIR}/CMake/vtkAddonFunctionAddExecutable.cmake
++  ${vtkAddon_SOURCE_DIR}/CMake/vtkMacroKitPythonWrap.cmake
++  ${vtkAddon_SOURCE_DIR}/CMake/vtkWrapHierarchy.cmake
++  ${vtkAddon_SOURCE_DIR}/CMake/vtkWrapperInit.data.in
++  ${vtkAddon_SOURCE_DIR}/CMake/vtkWrapPython.cmake
++  ${vtkAddon_SOURCE_DIR}/CMake/WindowsApplicationUseUtf8.manifest
+   DESTINATION "${${PROJECT_NAME}_INSTALL_CMAKE_DIR}"
+   COMPONENT Development
+   )

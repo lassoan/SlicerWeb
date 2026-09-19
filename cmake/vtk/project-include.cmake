@@ -1,6 +1,9 @@
 # Injected into VTK right after project(VTK) (CMAKE_PROJECT_VTK_INCLUDE).
 # Makes VTK use natively built wrapping tools while cross-compiling to wasm.
 include_guard(GLOBAL)
+
+# FindOpenGL.cmake for side modules (see /work/cmake/FindOpenGL.cmake)
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/..")
 # The tools are 64-bit host executables; the package version file would reject them for a 32-bit target.
 set(_sw_sizeof_void_p "${CMAKE_SIZEOF_VOID_P}")
 set(CMAKE_SIZEOF_VOID_P 8)

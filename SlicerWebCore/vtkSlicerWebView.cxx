@@ -57,6 +57,17 @@ bool vtkSlicerWebViewAnimationFrame(double /*time*/, void* userData)
   self->UnRegister(nullptr); // reference taken in ScheduleRender()
   return false;              // one-shot
 }
+
+bool vtkSlicerWebViewEventLoopTick(double /*time*/, void* userData)
+{
+  vtkSlicerWebView* self = static_cast<vtkSlicerWebView*>(userData);
+  if (self->ProcessInteractorEvents())
+  {
+    return true; // keep processing events in the next animation frame
+  }
+  self->UnRegister(nullptr); // reference taken in Start()
+  return false;
+}
 }
 #endif
 
@@ -178,7 +189,25 @@ void vtkSlicerWebView::Start()
     return;
   }
   d->Started = true;
-  d->Interactor->Start(); // non-blocking in the browser: events are processed in animation frames
+#ifdef __EMSCRIPTEN__
+  // Each view processes its queued input events in its own requestAnimationFrame loop.
+  // (vtkRenderWindowInteractor::Start() would use Emscripten's single global main loop, which
+  // cannot be shared by several views, and blocks when Asyncify is not available.)
+  this->Register(nullptr);
+  emscripten_request_animation_frame_loop(vtkSlicerWebViewEventLoopTick, this);
+#endif
+}
+
+//----------------------------------------------------------------------------
+bool vtkSlicerWebView::ProcessInteractorEvents()
+{
+  vtkInternal* d = this->Internal;
+  if (!this->Initialized || !d->Started || !d->Interactor)
+  {
+    return false;
+  }
+  d->Interactor->ProcessEvents();
+  return true;
 }
 
 //----------------------------------------------------------------------------
@@ -241,12 +270,13 @@ void vtkSlicerWebView::SetSize(int width, int height)
   {
     return;
   }
+  // The render window may already have the canvas size (it is read from the canvas when the window
+  // is initialized), but the views must still update for it (e.g. slice node dimensions).
   const int* current = d->RenderWindow->GetSize();
-  if (current[0] == width && current[1] == height)
+  if (current[0] != width || current[1] != height)
   {
-    return;
+    d->Interactor->UpdateSize(width, height);
   }
-  d->Interactor->UpdateSize(width, height);
   this->OnSizeChanged(width, height);
   this->ScheduleRender();
 }

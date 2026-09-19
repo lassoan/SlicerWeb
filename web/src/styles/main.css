@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+/* OHIF Viewer v3 design tokens (platform/ui-next tailwind.css and tailwind.config.js) */
+@theme {
+  --font-sans: "Inter Variable", "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: hsl(0 0% 0%);
+  --color-foreground: hsl(0 0% 98%);
+  --color-card: hsl(234 64% 10%);
+  --color-card-foreground: hsl(0 0% 98%);
+  --color-popover: hsl(219 90% 15%);
+  --color-popover-foreground: hsl(0 0% 98%);
+  --color-primary: hsl(214 98% 60%);
+  --color-primary-foreground: hsl(0 0% 98%);
+  --color-secondary: hsl(214 65% 36%);
+  --color-secondary-foreground: hsl(200 50% 84%);
+  --color-muted: hsl(234 64% 10%);
+  --color-muted-foreground: hsl(200 46% 65%);
+  --color-accent: hsl(217 79% 24%);
+  --color-accent-foreground: hsl(0 0% 98%);
+  --color-destructive: hsl(0 62.8% 30.6%);
+  --color-destructive-foreground: hsl(0 0% 98%);
+  --color-border: hsl(0 0% 14.9%);
+  --color-input: hsl(236 52% 30%);
+  --color-ring: hsl(214 98% 60%);
+  --color-highlight: hsl(191 74% 63%);
+  --color-neutral: hsl(213 22% 59%);
+  --color-neutral-light: hsl(214 69% 81%);
+  --color-neutral-dark: hsl(214 16% 21%);
+
+  /* legacy OHIF palette (platform/ui) */
+  --color-bkg-low: #050615;
+  --color-bkg-med: #090c29;
+  --color-bkg-full: #041c4a;
+  --color-primary-light: #5acce6;
+  --color-primary-main: #0944b3;
+  --color-primary-dark: #090c29;
+  --color-primary-active: #348cfd;
+  --color-secondary-light: #3a3f99;
+  --color-secondary-main: #2b166b;
+  --color-secondary-dark: #041c4a;
+  --color-common-bright: #e1e1e1;
+  --color-common-light: #a19fad;
+  --color-common-dark: #726f7e;
+  --color-aqua-pale: #7bb2ce;
+  --color-customgreen: #05d97c;
+
+  --radius-lg: 0.5rem;
+  --radius-md: calc(0.5rem - 2px);
+  --radius-sm: calc(0.5rem - 4px);
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* thin OHIF-like scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-input) transparent;
+}
+
+.sw-panel-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+canvas.sw-view-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  touch-action: none;
+}

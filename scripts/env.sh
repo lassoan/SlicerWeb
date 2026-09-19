@@ -41,7 +41,9 @@ git config --global advice.detachedHead false
 SW_EMPTY=$SW_BUILD/sw-empty
 if [ ! -f "$SW_EMPTY/lib/libsw_empty.a" ]; then
   mkdir -p "$SW_EMPTY/include" "$SW_EMPTY/lib"
-  echo 'void sw_empty_placeholder(void) {}' > "$SW_EMPTY/empty.c"
+  # An object without symbols: side modules link static archives with --whole-archive, and the
+  # placeholder may be listed several times (e.g. as OpenGL and zlib library).
+  echo '/* empty */' > "$SW_EMPTY/empty.c"
   emcc -fPIC -c "$SW_EMPTY/empty.c" -o "$SW_EMPTY/empty.o" && emar rcs "$SW_EMPTY/lib/libsw_empty.a" "$SW_EMPTY/empty.o"
 fi
 SW_OPENGL_ARGS=(
@@ -49,7 +51,20 @@ SW_OPENGL_ARGS=(
   "-DOPENGL_GLES3_INCLUDE_DIR=$SW_EMPTY/include" "-DOPENGL_EGL_INCLUDE_DIR=$SW_EMPTY/include"
   "-DOPENGL_gl_LIBRARY=$SW_EMPTY/lib/libsw_empty.a" "-DOPENGL_gles3_LIBRARY=$SW_EMPTY/lib/libsw_empty.a"
   "-DOPENGL_gles2_LIBRARY=$SW_EMPTY/lib/libsw_empty.a" "-DOPENGL_egl_LIBRARY=$SW_EMPTY/lib/libsw_empty.a"
+  "-DOPENGL_opengl_LIBRARY=$SW_EMPTY/lib/libsw_empty.a" "-DOPENGL_glx_LIBRARY=$SW_EMPTY/lib/libsw_empty.a"
+  "-DOPENGL_GLX_INCLUDE_DIR=$SW_EMPTY/include"
 )
+
+# zlib: statically linked into Pyodide's main module (-sUSE_ZLIB). Side modules only need its headers;
+# its symbols resolve against the main module when a side module is loaded (like a system zlib).
+SW_ZLIB=$SW_INSTALL/zlib
+if [ ! -f "$SW_ZLIB/include/zlib.h" ]; then
+  embuilder build zlib --pic >/dev/null
+  mkdir -p "$SW_ZLIB/include" "$SW_ZLIB/lib"
+  cp "$EM_CACHE/sysroot/include/zlib.h" "$EM_CACHE/sysroot/include/zconf.h" "$SW_ZLIB/include/"
+  cp "$SW_EMPTY/lib/libsw_empty.a" "$SW_ZLIB/lib/libz_from_main_module.a"
+fi
+ZLIB_ARGS=(-DZLIB_ROOT="$SW_ZLIB" -DZLIB_INCLUDE_DIR="$SW_ZLIB/include" -DZLIB_LIBRARY="$SW_ZLIB/lib/libz_from_main_module.a")
 
 log() { printf '\n\033[1;34m[slicerweb]\033[0m %s\n' "$*"; }
 

@@ -1,8 +1,8 @@
-From f46fce5251397908f4bdabffb238c87dd4d6d148 Mon Sep 17 00:00:00 2001
+From da63ddd697e20873203f4664d54c2ecb0dbf1721 Mon Sep 17 00:00:00 2001
 From: SlicerWeb <slicerweb@localhost>
-Date: Sat, 19 Sep 2026 11:13:00 -0400
-Subject: [PATCH] ENH: Allow using the WebAssembly interactor from Emscripten
- side modules
+Date: Sat, 19 Sep 2026 12:22:53 -0400
+Subject: [PATCH 1/2] ENH: Allow using the WebAssembly interactor from
+ Emscripten side modules
 
 Add VTK_WEBASSEMBLY_JS_LIBRARY option. When OFF, the functions of
 vtkWebAssemblyRenderWindowInteractor.js are implemented in C++ on top of
@@ -11,45 +11,45 @@ modules (e.g. Python extension modules loaded by Pyodide), which cannot
 link a --js-library.
 ---
  Rendering/UI/CMakeLists.txt                   |  11 +-
- ...kWebAssemblyRenderWindowInteractorCAPI.cxx | 139 ++++++++++++++++++
- 2 files changed, 149 insertions(+), 1 deletion(-)
+ ...kWebAssemblyRenderWindowInteractorCAPI.cxx | 127 ++++++++++++++++++
+ 2 files changed, 137 insertions(+), 1 deletion(-)
  create mode 100644 Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx
 
 diff --git a/Rendering/UI/CMakeLists.txt b/Rendering/UI/CMakeLists.txt
-index 469491157f..dd7fb8f119 100644
+index 0402add..7f6e4a7 100644
 --- a/Rendering/UI/CMakeLists.txt
 +++ b/Rendering/UI/CMakeLists.txt
-@@ -12,6 +12,15 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-                                vtkWebAssemblyHardwareWindow)
-   endif()
-   list(APPEND classes vtkWebAssemblyRenderWindowInteractor vtkWebAssemblyHardwareWindow)
+@@ -75,6 +75,15 @@ elseif (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+     BASE vtkRenderWindowInteractor
+     OVERRIDE vtkWebAssemblyRenderWindowInteractor)
+   list(APPEND classes vtkWebAssemblyRenderWindowInteractor)
 +  # When VTK is built as Emscripten side modules (e.g. Python extension modules loaded by Pyodide), a
 +  # `--js-library` cannot be linked into the side module. In that case the functions implemented in
 +  # vtkWebAssemblyRenderWindowInteractor.js are provided in C++ using Emscripten's built-in JS libraries.
 +  option(VTK_WEBASSEMBLY_JS_LIBRARY
 +    "Link vtkWebAssemblyRenderWindowInteractor.js into consumers. Turn OFF for side-module builds." ON)
 +  mark_as_advanced(VTK_WEBASSEMBLY_JS_LIBRARY)
-+  if(NOT VTK_WEBASSEMBLY_JS_LIBRARY)
++  if (NOT VTK_WEBASSEMBLY_JS_LIBRARY)
 +    list(APPEND sources vtkWebAssemblyRenderWindowInteractorCAPI.cxx)
-+  endif()
- elseif(VTK_USE_X)
-   # Add some custom overrides
-   if(NOT VTK_DEFAULT_RENDER_WINDOW_HEADLESS)
-@@ -130,7 +139,7 @@ vtk_module_add_module(
-   PRIVATE_HEADERS
-   ${vtk_object_factory_header})
++  endif ()
+ else () # use generic
+   vtk_object_factory_declare(
+     BASE vtkRenderWindowInteractor
+@@ -95,7 +104,7 @@ vtk_module_add_module(VTK::RenderingUI
+   PRIVATE_HEADERS ${vtk_object_factory_header}
+   )
  
--if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND VTK_WEBASSEMBLY_JS_LIBRARY)
-   vtk_module_link_options(
-     VTK::RenderingUI
+-if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
++if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND VTK_WEBASSEMBLY_JS_LIBRARY)
+   vtk_module_link_options(VTK::RenderingUI
      INTERFACE
+       "-sDEFAULT_LIBRARY_FUNCS_TO_INCLUDE=$getWasmTableEntry"
 diff --git a/Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx b/Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx
 new file mode 100644
-index 0000000000..49b7c67b80
+index 0000000..bcd10d0
 --- /dev/null
 +++ b/Rendering/UI/vtkWebAssemblyRenderWindowInteractorCAPI.cxx
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,127 @@
 +// SPDX-FileCopyrightText: Copyright (c) Ken Martin, Will Schroeder, Bill Lorensen
 +// SPDX-License-Identifier: BSD-3-Clause
 +
@@ -94,8 +94,6 @@ index 0000000000..49b7c67b80
 +
 +extern "C"
 +{
-+  VTK_ABI_NAMESPACE_BEGIN
-+
 +  int vtkCreateTimer(
 +    unsigned long duration, bool isOneShot, vtkTimerCallbackFunc callback, void* userData)
 +  {
@@ -127,8 +125,7 @@ index 0000000000..49b7c67b80
 +    // clang-format off
 +    MAIN_THREAD_EM_ASM(
 +      {
-+        var target = UTF8ToString($0);
-+        var canvas = document.querySelector(target);
++        var canvas = document.querySelector(UTF8ToString($0));
 +        if (!canvas || !canvas.parentElement) { return; }
 +        var rect = canvas.parentElement.getBoundingClientRect();
 +        var dpr = window.devicePixelRatio || 1;
@@ -149,8 +146,7 @@ index 0000000000..49b7c67b80
 +    // clang-format off
 +    MAIN_THREAD_EM_ASM(
 +      {
-+        var target = UTF8ToString($0);
-+        var canvas = document.querySelector(target);
++        var canvas = document.querySelector(UTF8ToString($0));
 +        if (!canvas) { return; }
 +        var container = canvas.parentElement;
 +        if (container === document.body) {
@@ -173,21 +169,13 @@ index 0000000000..49b7c67b80
 +    // clang-format on
 +  }
 +
-+  void vtkStartEventLoopSync(vtkEventProcessingFunc spinOnceAndGetDone,
-+    vtkUnRegisterInteractorFunc unRegisterInteractor, void* arg)
-+  {
-+    emscripten_request_animation_frame_loop(
-+      vtkEventLoopTick, new vtkEventLoopContext{ spinOnceAndGetDone, unRegisterInteractor, arg });
-+  }
-+
 +  void vtkStartEventLoopAsync(vtkEventProcessingFunc spinOnceAndGetDone,
 +    vtkUnRegisterInteractorFunc unRegisterInteractor, void* arg)
 +  {
-+    // Side modules are not built with Asyncify/JSPI; drive the loop synchronously.
-+    vtkStartEventLoopSync(spinOnceAndGetDone, unRegisterInteractor, arg);
++    // Side modules are not built with Asyncify/JSPI: drive the loop with requestAnimationFrame.
++    emscripten_request_animation_frame_loop(
++      vtkEventLoopTick, new vtkEventLoopContext{ spinOnceAndGetDone, unRegisterInteractor, arg });
 +  }
-+
-+  VTK_ABI_NAMESPACE_END
 +}
 -- 
 2.44.0.windows.1

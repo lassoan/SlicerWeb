@@ -28,6 +28,7 @@ fetch() { # name url rev [local-mirror]
     git init -q "$dir"
     git -C "$dir" remote add origin "$url"
   fi
+  git -C "$dir" remote set-url origin "$url"
   if [ -n "$mirror" ] && [ -d "$mirror/.git" ] && git -C "$mirror" cat-file -e "$rev^{commit}" 2>/dev/null; then
     log "$name: fetching $rev from local mirror $mirror"
     git -C "$dir" fetch -q --no-tags "$mirror" "$rev" || git -C "$dir" fetch -q "$mirror"

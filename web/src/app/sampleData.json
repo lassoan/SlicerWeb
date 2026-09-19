@@ -1,0 +1,32 @@
+[
+  {
+    "name": "MRHead",
+    "description": "MR head, 256×256×130",
+    "fileName": "MR-head.nrrd",
+    "sourceUrl": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/cc211f0dfd9a05ca3841ce1141b292898b2dd2d3f08286affadf823a7e58df93"
+  },
+  {
+    "name": "CTChest",
+    "description": "CT chest",
+    "fileName": "CT-chest.nrrd",
+    "sourceUrl": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/4507b664690840abb6cb9af2d919377ffc4ef75b167cb6fd0f747befdb12e38e"
+  },
+  {
+    "name": "CTACardio",
+    "description": "CT angiography, heart",
+    "fileName": "CTA-cardio.nrrd",
+    "sourceUrl": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/3b0d4eb1a7d8ebb0c5a89cc0504640f76a030b4e869e33ff34c564c3d3b88ad2"
+  },
+  {
+    "name": "MRBrainTumor1",
+    "description": "MR brain with tumor",
+    "fileName": "RegLib_C01_1.nrrd",
+    "sourceUrl": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95"
+  },
+  {
+    "name": "DTIBrain",
+    "description": "Diffusion tensor MRI, brain",
+    "fileName": "DTI-Brain.nrrd",
+    "sourceUrl": "https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/5c78d00c86ae8d968caa7a49b870ef8e1c04525b1abc53845751d8bce1f0b91a"
+  }
+]

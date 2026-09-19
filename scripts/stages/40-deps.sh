@@ -1,27 +1,19 @@
-# Small third-party dependencies of Slicer: zlib headers, teem, libarchive, RapidJSON, JsonCpp.
+# Small third-party dependencies of Slicer: teem, libarchive, RapidJSON, JsonCpp.
 #
-# zlib itself is statically linked into Pyodide's main module (-sUSE_ZLIB), so side modules only need
-# its headers; the symbols resolve against the main module at load time.
-# teem and libarchive are built as static position-independent archives and linked into exactly one
-# side module each (libvtkTeem.so and libMRMLCore.so).
+# zlib is statically linked into Pyodide's main module; see env.sh.
+# teem and libarchive are built as shared side modules: side modules link static archives with
+# --whole-archive, so a static library that reaches a link line twice (directly and through a
+# dependency's link interface) would produce duplicate symbols.
 source /work/scripts/env.sh
 
-# --- zlib headers (from the Emscripten port, which is what Pyodide links) ---
-Z=$SW_INSTALL/zlib
-if [ ! -f "$Z/include/zlib.h" ]; then
-  embuilder build zlib --pic
-  mkdir -p "$Z/include" "$Z/lib"
-  cp "$EM_CACHE/sysroot/include/zlib.h" "$EM_CACHE/sysroot/include/zconf.h" "$Z/include/"
-  cp "$SW_EMPTY/lib/libsw_empty.a" "$Z/lib/libz_from_main_module.a"
-fi
-ZLIB_ARGS=(-DZLIB_ROOT="$Z" -DZLIB_INCLUDE_DIR="$Z/include" -DZLIB_LIBRARY="$Z/lib/libz_from_main_module.a")
-
 STATIC_ARGS=("${SW_CMAKE_SIDE_ARGS[@]}" -DBUILD_SHARED_LIBS=OFF -DBUILD_TESTING=OFF)
+SHARED_ARGS=("${SW_CMAKE_SIDE_ARGS[@]}" -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF)
 
-# --- teem ---
+# --- teem (its command-line tools are linked as dynamic main modules with Emscripten's zlib port) ---
 log "teem"
-cmake -S "$SW_SRC/teem" -B "$SW_BUILD/teem" "${STATIC_ARGS[@]}" "${ZLIB_ARGS[@]}" \
+cmake -S "$SW_SRC/teem" -B "$SW_BUILD/teem" "${SHARED_ARGS[@]}" "${ZLIB_ARGS[@]}" \
   -DCMAKE_INSTALL_PREFIX="$SW_INSTALL/teem" \
+  "-DCMAKE_EXE_LINKER_FLAGS=-fwasm-exceptions -sSUPPORT_LONGJMP=wasm -sUSE_ZLIB=1 -sMAIN_MODULE=2" \
   -DTeem_USE_LIB_INSTALL_SUBDIR=ON -DTeem_PTHREAD=OFF -DTeem_BZIP2=OFF -DTeem_ZLIB=ON -DTeem_PNG=OFF \
   -DTeem_VTK_MANGLE=OFF -DTeem_LEVMAR=OFF -DTeem_FFTW3=OFF -DBUILD_EXPERIMENTAL_LIBS=OFF -DBUILD_EXPERIMENTAL_APPS=OFF
 cmake --build "$SW_BUILD/teem" -j "$SW_JOBS"
@@ -33,7 +25,7 @@ LA_OFF=()
 for o in ACL BZip2 CAT CNG CPIO EXPAT ICONV LIBB2 LibGCC LIBXML2 LZ4 LZMA LZO MBEDTLS NETTLE OPENSSL PCREPOSIX PCRE2POSIX TAR TEST XATTR ZSTD UNZIP WERROR; do
   LA_OFF+=("-DENABLE_$o=OFF")
 done
-cmake -S "$SW_SRC/libarchive" -B "$SW_BUILD/libarchive" "${STATIC_ARGS[@]}" "${ZLIB_ARGS[@]}" "${LA_OFF[@]}" \
+cmake -S "$SW_SRC/libarchive" -B "$SW_BUILD/libarchive" "${SHARED_ARGS[@]}" "${ZLIB_ARGS[@]}" "${LA_OFF[@]}" \
   -DCMAKE_INSTALL_PREFIX="$SW_INSTALL/libarchive" -DENABLE_ZLIB=ON -DARCHIVE_CRYPTO_MD5_LIBSYSTEM=OFF
 cmake --build "$SW_BUILD/libarchive" -j "$SW_JOBS"
 cmake --install "$SW_BUILD/libarchive"
@@ -46,7 +38,7 @@ cmake -S "$SW_SRC/rapidjson" -B "$SW_BUILD/rapidjson" "${STATIC_ARGS[@]}" \
   -DRAPIDJSON_BUILD_TESTS=OFF -DRAPIDJSON_ENABLE_INSTRUMENTATION_OPT=OFF
 cmake --install "$SW_BUILD/rapidjson"
 
-# --- JsonCpp (static PIC; used by VolumeRendering MRML) ---
+# --- JsonCpp (static PIC; linked only by the VolumeRendering MRML library) ---
 log "jsoncpp"
 cmake -S "$SW_SRC/jsoncpp" -B "$SW_BUILD/jsoncpp" "${STATIC_ARGS[@]}" \
   -DCMAKE_INSTALL_PREFIX="$SW_INSTALL/jsoncpp" -DBUILD_STATIC_LIBS=ON -DBUILD_OBJECT_LIBS=OFF \

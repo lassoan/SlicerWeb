@@ -109,7 +109,19 @@ bool vtkSlicerWebThreeDView::InitializeView(vtkMRMLApplicationLogic* appLogic, v
   {
     appLogic->GetViewLogics()->AddItem(d->ViewLogic);
   }
-  vtkMRMLViewNode* viewNode = d->ViewLogic->AddViewNode(layoutName);
+  // Use the view node of the layout (a singleton identified by the layout name), see
+  // vtkSlicerWebSliceView::InitializeView().
+  vtkMRMLViewNode* viewNode = vtkMRMLViewNode::SafeDownCast(scene->GetSingletonNode(layoutName, "vtkMRMLViewNode"));
+  if (viewNode)
+  {
+    // the view logic finds the view (and camera) node by layout name
+    d->ViewLogic->SetName(layoutName);
+    viewNode = d->ViewLogic->GetViewNode();
+  }
+  else
+  {
+    viewNode = d->ViewLogic->AddViewNode(layoutName);
+  }
   if (!viewNode)
   {
     vtkErrorMacro("InitializeView: failed to create view node for layout name " << layoutName);

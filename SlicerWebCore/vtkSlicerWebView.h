@@ -88,6 +88,10 @@ public:
   /// Internal: called from the animation frame callback.
   void ProcessScheduledRender();
 
+  /// Internal: process queued user input events (called once per animation frame after Start()).
+  /// Returns false when the view is finalized, which ends the event loop.
+  bool ProcessInteractorEvents();
+
 protected:
   vtkSlicerWebView();
   ~vtkSlicerWebView() override;

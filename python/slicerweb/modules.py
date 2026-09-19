@@ -526,13 +526,23 @@ def _discover_scripted_modules(path):
 
 
 def _import_module_python_extensions(directory):
-    """Same as qSlicerScriptedUtils::importModulePythonExtensions (C++ module classes into slicer)."""
-    from slicer.util import importVTKClassesFromDirectory
+    """Same as qSlicerScriptedUtils::importModulePythonExtensions (C++ module classes into slicer).
+
+    slicer.util.importVTKClassesFromDirectory remembers the directories it scanned, so it would not
+    import libraries installed later (extensions): the files are scanned on each call instead.
+    """
+    import fnmatch
+    import vtk
+    from slicer.util import importModuleObjects
 
     for pattern in ("vtkSlicer*ModuleLogicPython.*", "vtkSlicer*ModuleMRMLPython.*",
                     "vtkSlicer*ModuleMRMLDisplayableManagerPython.*", "vtkSlicer*ModuleVTKWidgetsPython.*",
                     "vtkSlicerWeb*InitializerPython.*"):
-        try:
-            importVTKClassesFromDirectory(directory, "slicer", filematch=pattern)
-        except Exception:
-            logger.exception("Failed to import %s from %s", pattern, directory)
+        for filename in sorted(glob.glob(os.path.join(directory, pattern))):
+            if not fnmatch.fnmatch(os.path.basename(filename), pattern):
+                continue
+            moduleName = os.path.basename(filename).split(".")[0]
+            try:
+                importModuleObjects(moduleName, "slicer", vtk.vtkObjectBase)
+            except Exception:
+                logger.exception("Failed to import %s", moduleName)

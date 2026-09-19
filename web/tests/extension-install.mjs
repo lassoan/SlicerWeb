@@ -33,6 +33,7 @@ _report = json.dumps({"loaded": sorted(mm.loadedModulesNames()), "missing": mm.m
   return b.evalPython("_report", "eval");
 });
 console.log(report);
+if (process.env.EXTRA_PY) { const fs = await import("node:fs"); await page.evaluate((c) => window.slicerWeb.bridge.evalPython(c), fs.readFileSync(process.env.EXTRA_PY, "utf8")); console.log(await page.evaluate(() => window.slicerWeb.bridge.evalPython("_out", "eval"))); }
 if (process.env.EXTRA_PY) {
   const fs = await import("node:fs");
   const code = fs.readFileSync(process.env.EXTRA_PY, "utf8");

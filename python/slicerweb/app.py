@@ -10,6 +10,26 @@ from .settings import Settings
 
 logger = logging.getLogger("slicerweb")
 
+from .qtcompat.core import property_value  # noqa: E402
+
+
+_APP_SIGNALS = ("startupCompleted", "mrmlSceneChanged", "aboutToQuit", "lastWindowClosed")
+
+
+class _BoundAppSignal:
+    def __init__(self, app, name):
+        self._app, self._name = app, name
+
+    def connect(self, slot):
+        return self._app.connect(self._name + "()", slot)
+
+    def disconnect(self, slot=None):
+        return self._app.disconnect(self._name + "()", slot)
+
+    def emit(self, *args):
+        for slot in list(self._app._slots.get(self._name, [])):
+            slot(*args)
+
 
 class SlicerWebApplication:
     """Application singleton, available as ``slicer.app``.
@@ -36,6 +56,9 @@ class SlicerWebApplication:
         self._settings = Settings()
         self._pauseRenderCount = 0
         self._batchProcessing = False
+        self._slots = {}  # Qt-style signal name -> [slots] (connect/disconnect)
+        self._startupCompleted = False
+        self._pendingStartupSlots = []
 
     # ------------------------------------------------------------------ startup
     def startup(self):
@@ -75,6 +98,10 @@ class SlicerWebApplication:
 
         qtcompat.install_slicer_widgets()
 
+        from . import packages
+
+        packages.install()
+
         # Python console namespace, as in the desktop Python interactor
         import __main__
 
@@ -86,12 +113,17 @@ class SlicerWebApplication:
 
         bridge.install_scene_observers()
 
-        from .subject_hierarchy import SubjectHierarchyPluginLogic
+        from .subject_hierarchy import SubjectHierarchyPluginLogic, install as install_subject_hierarchy
+
+        install_subject_hierarchy()
 
         self._subjectHierarchyPluginLogic = SubjectHierarchyPluginLogic(scene)
 
         self._moduleManager.loadModules(self._config.get("modules"))
         self._layoutManager.setLayout(self._config.get("layout", "FourUp"))
+        self._startupCompleted = True
+        self._moduleManager.connect("modulesLoaded(QStringList)", lambda *args: self._flushStartupSlots())
+        self._flushStartupSlots()
         host.emit("app-ready", {"version": self.applicationVersion, "modules": self._moduleManager.moduleSummaries()})
         return self
 
@@ -212,8 +244,9 @@ class SlicerWebApplication:
 
         host.emit("select-module-for-node", {"nodeID": node.GetID() if node else None})
 
+    @property
     def applicationName(self):
-        return "3D Slicer"
+        return property_value("3D Slicer")
 
     @property
     def applicationVersion(self):
@@ -221,11 +254,30 @@ class SlicerWebApplication:
 
         return libs.slicer_version_full()
 
+    # Qt properties of qSlicerCoreApplication (attributes in PythonQt; also callable, see property_value)
+    @property
     def majorVersion(self):
-        return int(self.applicationVersion.split(".")[0])
+        return property_value(int(self.applicationVersion.split(".")[0]))
 
+    @property
     def minorVersion(self):
-        return int(self.applicationVersion.split(".")[1])
+        return property_value(int(self.applicationVersion.split(".")[1]))
+
+    @property
+    def patchVersion(self):
+        return property_value(int(self.applicationVersion.split(".")[2]))
+
+    @property
+    def releaseType(self):
+        return property_value("Preview")
+
+    @property
+    def revision(self):
+        return property_value(self._config.get("revision", ""))
+
+    @property
+    def repositoryRevision(self):
+        return self.revision
 
     @property
     def slicerHome(self):
@@ -234,6 +286,63 @@ class SlicerWebApplication:
     @property
     def slicerSharePath(self):
         return self._share
+
+    # ------------------------------------------------------------------ Qt-style signals
+    def __getattr__(self, name):
+        # New-style signal access, e.g. slicer.app.startupCompleted.connect(slot)
+        if name in _APP_SIGNALS:
+            return _BoundAppSignal(self, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def connect(self, signal, slot):
+        """qSlicerApplication signals (e.g. startupCompleted(), used by scripted modules to finish
+        their setup after all modules are loaded)."""
+        name = signal.split("(")[0]
+        self._slots.setdefault(name, []).append(slot)
+        if name == "startupCompleted":
+            self._pendingStartupSlots.append(slot)
+        return True
+
+    def disconnect(self, signal, slot=None):
+        name = signal.split("(")[0]
+        if slot is None:
+            self._slots.pop(name, None)
+        elif slot in self._slots.get(name, []):
+            self._slots[name].remove(slot)
+        return True
+
+    def _flushStartupSlots(self):
+        """Call startupCompleted() slots: at the end of startup, and for modules loaded later
+        (installed extensions) after they are loaded."""
+        if not self._startupCompleted:
+            return
+        pending, self._pendingStartupSlots = self._pendingStartupSlots, []
+        for slot in pending:
+            try:
+                slot()
+            except RuntimeError as e:
+                if "Failed to obtain reference to" in str(e):
+                    # desktop main window elements (menus, toolbars) do not exist in the web page
+                    logger.info("%s: %s (no desktop main window)", getattr(slot, "__qualname__", slot), e)
+                else:
+                    logger.exception("Error in startupCompleted() handler %s", getattr(slot, "__qualname__", slot))
+            except Exception:
+                logger.exception("Error in startupCompleted() handler %s", getattr(slot, "__qualname__", slot))
+
+    def topLevelWidgets(self):
+        """No Qt main window in the browser (slicer.util.mainWindow() returns None)."""
+        return []
+
+    def documentationBaseUrl(self):
+        return "https://slicer.readthedocs.io/en/latest"
+
+    def moduleDocumentationUrl(self, moduleName):
+        """qSlicerCoreApplication::moduleDocumentationUrl"""
+        return f"{self.documentationBaseUrl()}/user_guide/modules/{moduleName.lower()}.html"
+
+    def translate(self, context, text, disambiguation=None, n=-1):
+        """QCoreApplication::translate (slicer.i18n): no translations are installed; English text."""
+        return text
 
     @property
     def temporaryPath(self):
@@ -258,8 +367,9 @@ class SlicerWebApplication:
         return "emscripten-wasm32"
 
     @property
+    @property
     def os(self):
-        return "emscripten"
+        return property_value("emscripten")
 
     @property
     def arch(self):
@@ -269,8 +379,9 @@ class SlicerWebApplication:
     def testingEnabled(self):
         return bool(self._config.get("testing", False))
 
+    @property
     def isInstalled(self):
-        return True
+        return property_value(True)
 
     def pythonManager(self):
         return None

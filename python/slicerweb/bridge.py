@@ -238,6 +238,25 @@ def completePython(text, cursor=None, limit=200):
     return {"start": cursor - len(word), "items": items}
 
 
+@method()
+def getMissingPythonModules():
+    """{package: [module names]} of scripted modules that could not be imported yet (see loadModules)."""
+    import slicer
+
+    return dict(slicer.app.moduleManager().missingPythonModules)
+
+
+@method()
+def loadModules():
+    """Load newly available modules (installed extensions, modules whose Python packages were installed)."""
+    import slicer
+
+    manager = slicer.app.moduleManager()
+    manager.missingPythonModules.clear()
+    manager.loadModules()
+    return manager.moduleSummaries()
+
+
 # --------------------------------------------------------------------------- nodes
 def _node_summary(node):
     info = {"id": node.GetID(), "name": node.GetName(), "className": node.GetClassName(),

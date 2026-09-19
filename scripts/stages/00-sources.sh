@@ -51,3 +51,8 @@ fetch libarchive "$LIBARCHIVE_URL" "$LIBARCHIVE_REV"
 fetch rapidjson  "$RAPIDJSON_URL"  "$RAPIDJSON_REV"
 fetch jsoncpp    "$JSONCPP_URL"    "$JSONCPP_REV"
 fetch SlicerExecutionModel "$SEM_URL" "$SEM_REV" "$SEM_LOCAL"
+# Extensions
+fetch vmtk           "$VMTK_URL"           "$VMTK_REV"           "$VMTK_LOCAL"
+fetch SlicerVMTK     "$SLICERVMTK_URL"     "$SLICERVMTK_REV"     "$SLICERVMTK_LOCAL"
+fetch SlicerHeart    "$SLICERHEART_URL"    "$SLICERHEART_REV"    "$SLICERHEART_LOCAL"
+fetch MarkupsToModel "$MARKUPSTOMODEL_URL" "$MARKUPSTOMODEL_REV"

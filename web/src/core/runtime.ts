@@ -113,7 +113,61 @@ slicerweb.initialize(json.loads(${JSON.stringify(JSON.stringify({ layout: this.c
 bridge.call
 `);
     this.bridge.attach((method: string, args: string) => init(method, args));
+    this.bridge.missingModuleHandler = (name) => this.ensurePythonPackage(name);
+    await this.loadModulesWithPackages();
     this.progress("ready", "Ready", 1);
+  }
+
+  private unavailablePackages = new Set<string>();
+
+  /**
+   * Make a Python package importable: from the Pyodide distribution (import or package name), else
+   * from PyPI (pure Python or Pyodide-compatible wheels). Returns false if it is not available.
+   */
+  async ensurePythonPackage(name: string): Promise<boolean> {
+    const pyodide = this.pyodide!;
+    if (this.unavailablePackages.has(name)) return false;
+    const importable = () =>
+      pyodide.runPython(`import importlib.util; importlib.util.find_spec(${JSON.stringify(name.replace(/-/g, "_"))}) is not None`);
+    this.progress("packages", `Installing Python package ${name}`, 1);
+    try {
+      await pyodide.loadPackagesFromImports(`import ${name.replace(/-/g, "_")}`, { messageCallback: () => {} });
+      if (!importable()) await pyodide.loadPackage(name, { messageCallback: () => {} });
+      if (importable()) return true;
+      const micropip = pyodide.pyimport("micropip");
+      try {
+        await micropip.install(name);
+      } finally {
+        micropip.destroy?.();
+      }
+      return true;
+    } catch (e) {
+      console.warn(`Python package ${name} is not available`, e);
+      this.unavailablePackages.add(name);
+      return false;
+    } finally {
+      this.progress("ready", "Ready", 1);
+    }
+  }
+
+  /**
+   * Load modules (e.g. of newly installed extensions). Scripted modules that need Python packages
+   * that are not installed yet are loaded again after installing the packages.
+   */
+  async loadModulesWithPackages(reload = false): Promise<void> {
+    if (reload) await this.bridge.call("loadModules");
+    for (let round = 0; round < 3; round++) {
+      const missing = await this.bridge.call<Record<string, string[]>>("getMissingPythonModules");
+      const names = Object.keys(missing).filter((n) => !this.unavailablePackages.has(n));
+      if (!names.length) return;
+      let installed = false;
+      for (const name of names) {
+        console.info(`Modules ${missing[name].join(", ")} need Python package ${name}`);
+        installed = (await this.ensurePythonPackage(name)) || installed;
+      }
+      if (!installed) return;
+      await this.bridge.call("loadModules");
+    }
   }
 
   /** Install a wheel from a URL (SlicerWeb wheels, extension wheels). */
@@ -125,6 +179,15 @@ bridge.call
     } finally {
       micropip.destroy?.();
     }
+  }
+
+  /** URL of a SlicerWeb wheel by distribution name (e.g. "slicerweb-itk-extra"), from the wheel index. */
+  async baseWheelUrl(name: string): Promise<string | null> {
+    const response = await fetch(this.config.wheelsURL + "index.json");
+    if (!response.ok) return null;
+    const index: WheelIndex = await response.json();
+    const entry = index.packages.find((p) => p.name === name);
+    return entry ? new URL(this.config.wheelsURL + entry.file, document.baseURI).href : null;
   }
 
   private async resolveWheels(): Promise<{ name: string; url: string }[]> {

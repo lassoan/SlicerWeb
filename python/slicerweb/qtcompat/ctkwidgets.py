@@ -255,6 +255,16 @@ class ctkColorPickerButton(_ElementWidget):
         pass
 
 
+class ctkPushButton(QPushButton):
+    """ctkPushButton: QPushButton with icon/text alignment options (alignment is not used here)."""
+
+    def setButtonTextAlignment(self, alignment):
+        pass
+
+    def setIconAlignment(self, alignment):
+        pass
+
+
 class ctkMenuButton(QPushButton):
     pass
 

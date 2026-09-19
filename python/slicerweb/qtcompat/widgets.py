@@ -1369,6 +1369,57 @@ class QTableWidget(QWidget):
     def setEditTriggers(self, t):
         pass
 
+    # Selection and layout options (display only: the table is read-only)
+    cellChanged = Signal("cellChanged(int,int)")
+    cellClicked = Signal("cellClicked(int,int)")
+    itemSelectionChanged = Signal("itemSelectionChanged()")
+    customContextMenuRequested = Signal("customContextMenuRequested(QPoint)")
+
+    def setColumnHidden(self, column, hidden):
+        pass
+
+    def hideColumn(self, column):
+        pass
+
+    def showColumn(self, column):
+        pass
+
+    def setColumnWidth(self, column, width):
+        pass
+
+    def setSelectionMode(self, mode):
+        pass
+
+    def setSelectionBehavior(self, behavior):
+        pass
+
+    def setContextMenuPolicy(self, policy):
+        pass
+
+    def resizeColumnsToContents(self):
+        pass
+
+    def resizeRowsToContents(self):
+        pass
+
+    def setSortingEnabled(self, enabled):
+        pass
+
+    def selectedItems(self):
+        return []
+
+    def currentRow(self):
+        return -1
+
+    def clearContents(self):
+        self._data = {}
+        self._render()
+
+    def clear(self):
+        self._data = {}
+        self._headers = []
+        self._render()
+
     def setSelectionBehavior(self, b):
         pass
 
@@ -1379,3 +1430,75 @@ class QTableWidget(QWidget):
 class _Header:
     def __getattr__(self, name):
         return lambda *a, **k: None
+
+
+class QButtonGroup(QObject):
+    """Groups checkable buttons; exclusive by default (only one checked button)."""
+
+    buttonClicked = Signal("buttonClicked(QAbstractButton*)")
+    buttonToggled = Signal("buttonToggled(QAbstractButton*,bool)")
+    idClicked = Signal("idClicked(int)")
+    idToggled = Signal("idToggled(int,bool)")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._buttons = []  # [(button, id)]
+        self._exclusive = True
+        self._updating = False
+
+    def addButton(self, button, id=-1):
+        if any(b is button for b, _ in self._buttons):
+            return
+        if id == -1:
+            id = -2 - len(self._buttons)
+        self._buttons.append((button, id))
+        button.clicked.connect(lambda checked=False, b=button: self._onClicked(b))
+        button.toggled.connect(lambda checked, b=button: self._onToggled(b, checked))
+
+    def removeButton(self, button):
+        self._buttons = [(b, i) for b, i in self._buttons if b is not button]
+
+    def buttons(self):
+        return [b for b, _ in self._buttons]
+
+    def button(self, id):
+        return next((b for b, i in self._buttons if i == id), None)
+
+    def id(self, button):
+        return next((i for b, i in self._buttons if b is button), -1)
+
+    def setId(self, button, id):
+        self._buttons = [(b, id if b is button else i) for b, i in self._buttons]
+
+    def checkedButton(self):
+        return next((b for b, _ in self._buttons if b.isChecked()), None)
+
+    def checkedId(self):
+        b = self.checkedButton()
+        return self.id(b) if b is not None else -1
+
+    def setExclusive(self, exclusive):
+        self._exclusive = bool(exclusive)
+
+    def exclusive(self):
+        return self._exclusive
+
+    def _onClicked(self, button):
+        self.buttonClicked.emit(button)
+        self.idClicked.emit(self.id(button))
+
+    def _onToggled(self, button, checked):
+        if self._updating:
+            return
+        if checked and self._exclusive:
+            self._updating = True
+            try:
+                for b, _ in self._buttons:
+                    if b is not button and b.isChecked():
+                        b.setChecked(False)
+                        self.buttonToggled.emit(b, False)
+                        self.idToggled.emit(self.id(b), False)
+            finally:
+                self._updating = False
+        self.buttonToggled.emit(button, bool(checked))
+        self.idToggled.emit(self.id(button), bool(checked))

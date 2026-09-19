@@ -58,10 +58,26 @@ abstract class BridgeBase implements SlicerBridge {
 
   protected abstract rawCall(method: string, argsJson: string): Promise<string>;
 
+  /**
+   * Installs a missing Python package (import or distribution name). Set by the runtime: calls that
+   * fail with ModuleNotFoundError install the package and run again (packages are loaded on demand,
+   * see slicerweb/packages.py).
+   */
+  missingModuleHandler: ((name: string) => Promise<boolean>) | null = null;
+
   async call<T = unknown>(method: string, args: unknown[] | Record<string, unknown> = []): Promise<T> {
-    const response = JSON.parse(await this.rawCall(method, JSON.stringify(args)));
-    if ("error" in response) throw new BridgeError(response.error, response.type);
-    return response.result as T;
+    const argsJson = JSON.stringify(args);
+    const tried = new Set<string>();
+    for (;;) {
+      const response = JSON.parse(await this.rawCall(method, argsJson));
+      if (!("error" in response)) return response.result as T;
+      const missing = response.type === "ModuleNotFoundError" ? /No module named '([^']+)'/.exec(response.error)?.[1] : undefined;
+      if (missing && this.missingModuleHandler && !tried.has(missing) && tried.size < 5) {
+        tried.add(missing);
+        if (await this.missingModuleHandler(missing)) continue;
+      }
+      throw new BridgeError(response.error, response.type);
+    }
   }
 
   invoke<T = unknown>(target: string, name: string, args: unknown[] = []): Promise<T> {

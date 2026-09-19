@@ -253,3 +253,8 @@ endforeach()
 include(SlicerWebMacros)
 add_subdirectory(SlicerWebCore)
 add_subdirectory(Modules)
+
+#-----------------------------------------------------------------------------
+# Extension SDK (build tree): SlicerConfig.cmake for extensions
+#-----------------------------------------------------------------------------
+include(SlicerWebSDK)

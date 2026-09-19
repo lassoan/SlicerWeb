@@ -18,6 +18,7 @@ import xml.etree.ElementTree as ET
 import vtk
 
 from . import host
+from .qtcompat.core import property_value
 
 logger = logging.getLogger("slicerweb.layout")
 
@@ -63,8 +64,14 @@ class LayoutManager:
         # The layout node may not be modified if the arrangement did not change: always publish
         self._publishLayout(force=True)
 
+    # Qt properties of qMRMLLayoutManager (attributes in PythonQt, also callable: see property_value)
+    @property
     def layout(self):
-        return self._layoutNode.GetViewArrangement()
+        return property_value(self._layoutNode.GetViewArrangement())
+
+    @layout.setter
+    def layout(self, value):
+        self.setLayout(value)
 
     def layoutLogic(self):
         return self._layoutLogic
@@ -281,8 +288,17 @@ class LayoutManager:
         widget = self._widgets.get(name)
         return widget if isinstance(widget, SliceWidget) else None
 
+    @property
     def threeDViewCount(self):
-        return len(self._threeDWidgets())
+        return property_value(len(self._threeDWidgets()))
+
+    @property
+    def tableViewCount(self):
+        return property_value(0)
+
+    @property
+    def plotViewCount(self):
+        return property_value(0)
 
     def threeDWidget(self, index):
         widgets = self._threeDWidgets()

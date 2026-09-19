@@ -1,0 +1,20 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] COMP: Allow finding VTK more than once in a directory (Emscripten)
+
+vtkModuleTesting.cmake adds the HTTPServerStart/Stop tests when it is included,
+which fails when a project finds VTK twice in the same directory (e.g. directly
+and through the config file of a dependency).
+---
+diff --git a/CMake/vtkModuleTesting.cmake b/CMake/vtkModuleTesting.cmake
+index ca3c3a12ab..40eebcef5f 100644
+--- a/CMake/vtkModuleTesting.cmake
++++ b/CMake/vtkModuleTesting.cmake
+@@ -16,7 +16,7 @@ order to indicate that test data is required.
+ include(ExternalData)
+ get_filename_component(_vtkModuleTesting_dir "${CMAKE_CURRENT_LIST_FILE}" DIRECTORY)
+ 
+-if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
++if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND NOT TEST HTTPServerStart)
+   add_test(
+     NAME HTTPServerStart
+     COMMAND  "${CMAKE_CROSSCOMPILING_EMULATOR}"

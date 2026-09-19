@@ -92,9 +92,12 @@ bool vtkSlicerWebThreeDView::InitializeView(vtkMRMLApplicationLogic* appLogic, v
   vtkThreeDInternal* d = this->ThreeDInternal;
   vtkRenderer* renderer = this->GetRenderer();
 
-  // Same rendering settings as ctkVTKRenderView / qMRMLThreeDView
-  renderer->SetUseDepthPeeling(true);
-  renderer->SetUseDepthPeelingForVolumes(true);
+  // Translucent geometry: desktop Slicer uses (dual) depth peeling, which VTK does not support on
+  // OpenGL ES 3 / WebGL 2 ("Built in Dual Depth Peeling is not supported on ES3"). Without depth
+  // peeling, VTK renders translucent geometry with its order-independent translucency pass.
+  renderer->SetUseDepthPeeling(false);
+  renderer->SetUseDepthPeelingForVolumes(false);
+  renderer->SetUseOIT(true);
   double* defaultBackground = vtkMRMLViewNode::defaultBackgroundColor();
   double* defaultBackground2 = vtkMRMLViewNode::defaultBackgroundColor2();
   renderer->SetBackground(defaultBackground);

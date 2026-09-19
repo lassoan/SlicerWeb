@@ -1,6 +1,7 @@
 """qMRML* and qSlicer* widgets (installed in the ``slicer`` namespace)."""
 
 from . import dom
+from .core import property_value
 from .core import QProp, Signal
 from .widgets import QVBoxLayout, QWidget, _ElementWidget
 
@@ -72,10 +73,12 @@ class qMRMLNodeComboBox(_ElementWidget):
 
         return slicer.mrmlScene.GetNodeByID(self._currentNodeID) if self._currentNodeID else None
 
+    @property
     def currentNodeID(self):
-        return self._currentNodeID or ""
+        """Qt property (attribute in PythonQt); also callable as currentNodeID()."""
+        return property_value(self._currentNodeID or "")
 
-    currentNodeId = property(lambda self: self._currentNodeID or "")
+    currentNodeId = currentNodeID
 
     def setCurrentNode(self, node):
         nodeID = node.GetID() if node is not None and not isinstance(node, str) else node
@@ -210,21 +213,80 @@ class qMRMLSegmentEditorWidget(QWidget):
         segment_editor.editor().setEffect(name)
 
 
-class qSlicerSimpleMarkupsWidget(qMRMLNodeComboBox):
+class qSlicerSimpleMarkupsWidget(qMRMLWidget):
+    """Markups node selector with the list of control points (qSlicerSimpleMarkupsWidget).
+
+    The node selection API of the desktop widget (currentNode, setCurrentNode, nodeTypes, ...) is
+    provided by the embedded node selector (markupsSelectorComboBox()).
+    """
+
     markupsNodeChanged = Signal("markupsNodeChanged()")
+    markupsFiducialActivated = Signal("markupsFiducialActivated(QModelIndex)")
+    markupsFiducialTableContextMenuRequested = Signal("markupsFiducialTableContextMenuRequested(QPoint)")
+    activeMarkupsFiducialPlaceModeChanged = Signal("activeMarkupsFiducialPlaceModeChanged(bool)")
+    currentNodeChanged = Signal("currentNodeChanged(vtkMRMLNode*)")
 
     def __init__(self, parent=None):
+        from .widgets import QTableWidget
+
         super().__init__(parent)
-        self.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
-        self.currentNodeChanged.connect(lambda *a: self.markupsNodeChanged.emit())
+        layout = QVBoxLayout(self)
+        self._selector = qMRMLNodeComboBox(self)
+        self._selector.nodeTypes = ["vtkMRMLMarkupsFiducialNode"]
+        self._selector.addEnabled = True
+        self._selector.removeEnabled = True
+        layout.addWidget(self._selector)
+        self._placeWidget = qSlicerMarkupsPlaceWidget(self)
+        layout.addWidget(self._placeWidget)
+        self._table = QTableWidget(self)
+        self._table.setColumnCount(4)
+        self._table.setHorizontalHeaderLabels(["Label", "R", "A", "S"])
+        layout.addWidget(self._table)
+        self._observed = None
+        self._observerTag = None
+        self._selector.currentNodeChanged.connect(self._onNodeChanged)
+
+    # desktop API
+    def markupsSelectorComboBox(self):
+        return self._selector
+
+    def markupsPlaceWidget(self):
+        return self._placeWidget
+
+    def tableWidget(self):
+        return self._table
+
+    def currentNode(self):
+        return self._selector.currentNode()
+
+    def setCurrentNode(self, node):
+        self._selector.setCurrentNode(node)
+
+    @property
+    def currentNodeID(self):
+        return self._selector.currentNodeID
+
+    def setMRMLScene(self, scene):
+        super().setMRMLScene(scene)
+        self._selector.setMRMLScene(scene)
+        self._placeWidget.setMRMLScene(scene)
 
     def setNodeBaseName(self, name):
-        self.baseName = name
+        self._selector.baseName = name
+
+    def nodeBaseName(self):
+        return getattr(self._selector, "baseName", "")
 
     def setDefaultNodeColor(self, color):
         pass
 
     def setEnterPlaceModeOnNodeChange(self, v):
+        pass
+
+    def setJumpToSliceEnabled(self, v):
+        pass
+
+    def setViewGroup(self, group):
         pass
 
     def setMarkupsNode(self, node):
@@ -233,25 +295,155 @@ class qSlicerSimpleMarkupsWidget(qMRMLNodeComboBox):
     def markupsNode(self):
         return self.currentNode()
 
+    def highlightNthControlPoint(self, n):
+        pass
+
+    highlightNthFiducial = highlightNthControlPoint
+
+    def getCurrentNode(self):
+        return self.currentNode()
+
+    def placeActive(self, place):
+        self._placeWidget.setPlaceModeEnabled(bool(place))
+
+    def activate(self):
+        self.placeActive(True)
+
+    def setInteractionNode(self, interactionNode):
+        pass
+
+    def setNodeSelectorVisible(self, visible):
+        self._selector.setVisible(bool(visible))
+
+    def nodeSelectorVisible(self):
+        return self._selector.isVisible()
+
+    def setOptionsVisible(self, visible):
+        pass
+
+    def optionsVisible(self):
+        return False
+
+    def setNodeColor(self, color):
+        node = self.currentNode()
+        display = node.GetDisplayNode() if node is not None else None
+        if display is not None and hasattr(color, "redF"):
+            display.SetSelectedColor(color.redF(), color.greenF(), color.blueF())
+
+    def setPositionStatusColumnVisible(self, visible):
+        pass
+
+    def enterPlaceModeOnNodeChange(self):
+        return False
+
+    def jumpToSliceEnabled(self):
+        return False
+
+    def viewGroup(self):
+        return -1
+
+    def __getattr__(self, name):
+        # node selector properties (nodeTypes, addEnabled, noneEnabled, ...)
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._selector, name)
+
+    def __setattr__(self, name, value):
+        if name in ("nodeTypes", "addEnabled", "removeEnabled", "noneEnabled", "renameEnabled",
+                    "showHidden", "showChildNodeTypes", "baseName", "selectNodeUponCreation", "editEnabled"):
+            setattr(self._selector, name, value)
+        else:
+            super().__setattr__(name, value)
+
+    def _onNodeChanged(self, node):
+        import vtk
+
+        if self._observed is not None and self._observerTag is not None:
+            self._observed.RemoveObserver(self._observerTag)
+        self._observed, self._observerTag = node, None
+        if node is not None:
+            self._observerTag = node.AddObserver(vtk.vtkCommand.ModifiedEvent, lambda *a: self._updateTable())
+        self._placeWidget.setCurrentNode(node)
+        self._updateTable()
+        self.currentNodeChanged.emit(node)
+        self.markupsNodeChanged.emit()
+
+    def _updateTable(self):
+        from .types import QTableWidgetItem
+
+        node = self._observed
+        count = node.GetNumberOfControlPoints() if node is not None and hasattr(node, "GetNumberOfControlPoints") else 0
+        self._table.setRowCount(count)
+        for i in range(count):
+            p = [0.0, 0.0, 0.0]
+            node.GetNthControlPointPosition(i, p)
+            self._table.setItem(i, 0, QTableWidgetItem(node.GetNthControlPointLabel(i)))
+            for c in range(3):
+                self._table.setItem(i, c + 1, QTableWidgetItem(f"{p[c]:.1f}"))
+
 
 class qSlicerMarkupsPlaceWidget(QWidget):
+    """Button that starts placing control points in the current markups node."""
+
+    activeMarkupsPlaceModeChanged = Signal("activeMarkupsPlaceModeChanged(bool)")
+
+    def __init__(self, parent=None):
+        from .widgets import QHBoxLayout, QPushButton
+
+        super().__init__(parent)
+        self._node = None
+        layout = QHBoxLayout(self)
+        self._button = QPushButton("Place", self)
+        self._button.setCheckable(True)
+        self._button.toggled.connect(self.setPlaceModeEnabled)
+        layout.addWidget(self._button)
+
     def setMRMLScene(self, scene):
         pass
 
     def setCurrentNode(self, node):
         self._node = node
 
-    def setPlaceModeEnabled(self, enabled):
+    def currentNode(self):
+        return self._node
+
+    def placeModeEnabled(self):
         import slicer
 
         interaction = slicer.app.applicationLogic().GetInteractionNode()
+        return interaction.GetCurrentInteractionMode() == interaction.Place
+
+    def setPlaceModeEnabled(self, enabled):
+        import slicer
+
+        appLogic = slicer.app.applicationLogic()
+        if enabled and self._node is not None:
+            selection = appLogic.GetSelectionNode()
+            selection.SetReferenceActivePlaceNodeClassName(self._node.GetClassName())
+            selection.SetActivePlaceNodeID(self._node.GetID())
+        interaction = appLogic.GetInteractionNode()
         interaction.SetCurrentInteractionMode(interaction.Place if enabled else interaction.ViewTransform)
+        self.activeMarkupsPlaceModeChanged.emit(bool(enabled))
+
+    def setPlaceModePersistency(self, persistent):
+        import slicer
+
+        slicer.app.applicationLogic().GetInteractionNode().SetPlaceModePersistence(1 if persistent else 0)
 
     def setButtonsVisible(self, v):
         pass
 
+    def setDeleteAllControlPointsOptionVisible(self, v):
+        pass
+
+    def setUnsetLastControlPointOptionVisible(self, v):
+        pass
+
     def setPlaceMultipleMarkups(self, v):
         pass
+
+    def placeButton(self):
+        return self._button
 
 
 class qMRMLSliderWidget(_ElementWidget):

@@ -114,3 +114,84 @@ class SubjectHierarchyPluginLogic:
         import slicer
 
         slicer.vtkMRMLSubjectHierarchyNode.ResolveSubjectHierarchy(self._scene)
+
+
+# ---------------------------------------------------------------------------- scripted plugins
+class qSlicerSubjectHierarchyPluginHandler:
+    """Registry of subject hierarchy plugins (desktop: Qt plugins that provide icons, context menu
+    actions and ownership of data nodes in the data tree). Plugins are registered, so that modules
+    that provide them load; the web data tree does not use them yet."""
+
+    _instance = None
+
+    def __init__(self):
+        self._plugins = []
+
+    @classmethod
+    def instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def registerPlugin(self, plugin):
+        if plugin not in self._plugins:
+            self._plugins.append(plugin)
+        return True
+
+    def pluginByName(self, name):
+        return next((p for p in self._plugins if getattr(p, "name", None) == name), None)
+
+    def allPlugins(self):
+        return list(self._plugins)
+
+    def subjectHierarchyNode(self):
+        import slicer
+
+        return slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(slicer.mrmlScene)
+
+
+class qSlicerSubjectHierarchyScriptedPlugin:
+    """Python-implemented subject hierarchy plugin adaptor (qSlicerSubjectHierarchyScriptedPlugin):
+    setPythonSource() instantiates the plugin class defined in the given Python file."""
+
+    def __init__(self, parent=None):
+        self.name = ""
+        self.self = None  # the Python plugin object (desktop: self())
+        self._pythonSource = None
+
+    def setPythonSource(self, filePath, className=None):
+        import importlib.util
+        import os
+        import sys
+
+        moduleName = os.path.splitext(os.path.basename(filePath))[0]
+        className = className or moduleName
+        module = sys.modules.get(moduleName)
+        if module is None or getattr(module, "__file__", None) != filePath:
+            spec = importlib.util.spec_from_file_location(moduleName, filePath)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[moduleName] = module
+            spec.loader.exec_module(module)
+        cls = getattr(module, className)
+        self._pythonSource = filePath
+        if not self.name:
+            self.name = className.replace("SubjectHierarchyPlugin", "")
+        self.self = cls(self)
+        return True
+
+    def pythonSource(self):
+        return self._pythonSource
+
+    def __call__(self):
+        return self.self
+
+    def setName(self, name):
+        self.name = name
+
+
+def install():
+    """Add the plugin classes to the slicer namespace (desktop: PythonQt wrappers)."""
+    import slicer
+
+    slicer.qSlicerSubjectHierarchyPluginHandler = qSlicerSubjectHierarchyPluginHandler
+    slicer.qSlicerSubjectHierarchyScriptedPlugin = qSlicerSubjectHierarchyScriptedPlugin

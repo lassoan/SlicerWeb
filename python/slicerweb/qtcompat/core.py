@@ -280,3 +280,37 @@ class _MetaObject:
 
     def className(self):
         return self._name
+
+
+# ---------------------------------------------------------------------------- property values
+# PythonQt exposes Qt properties as attributes (widget.currentNodeID, slicer.app.majorVersion), while
+# a getter with the same name is also callable in Slicer code (widget.currentNodeID()). Values of
+# such properties are returned as str/int subclasses that return themselves when called.
+class _CallableStr(str):
+    def __call__(self):
+        return str(self)
+
+
+class _CallableInt(int):
+    def __call__(self):
+        return int(self)
+
+
+class _CallableFloat(float):
+    def __call__(self):
+        return float(self)
+
+
+def property_value(value):
+    """Value of a Qt property, usable both as attribute and as getter call."""
+    if value is None:
+        return _CallableStr("")
+    if isinstance(value, bool):
+        return _CallableInt(int(value))
+    if isinstance(value, int):
+        return _CallableInt(value)
+    if isinstance(value, float):
+        return _CallableFloat(value)
+    if isinstance(value, str):
+        return _CallableStr(value)
+    return value

@@ -698,3 +698,52 @@ class QStandardPaths:
     @staticmethod
     def writableLocation(location):
         return {7: "/tmp", 8: os.path.expanduser("~")}.get(location, os.path.expanduser("~"))
+
+
+class QProcess(QObject):
+    """External processes cannot run in the browser. The class and its enumerations exist so that
+    modules which use QProcess for optional features (e.g. batch processing) can be imported."""
+
+    NotRunning, Starting, Running = 0, 1, 2
+    FailedToStart, Crashed, Timedout, WriteError, ReadError, UnknownError = 0, 1, 2, 3, 4, 5
+    NormalExit, CrashExit = 0, 1
+    SeparateChannels, MergedChannels, ForwardedChannels = 0, 1, 2
+
+    started = Signal("started()")
+    finished = Signal("finished(int,QProcess::ExitStatus)")
+    errorOccurred = Signal("errorOccurred(QProcess::ProcessError)")
+    readyReadStandardOutput = Signal("readyReadStandardOutput()")
+    readyReadStandardError = Signal("readyReadStandardError()")
+
+    def state(self):
+        return QProcess.NotRunning
+
+    def start(self, *args, **kwargs):
+        raise RuntimeError("External processes cannot be started in the web browser")
+
+    startDetached = start
+    execute = start
+
+    def waitForFinished(self, msecs=30000):
+        return False
+
+    def waitForStarted(self, msecs=30000):
+        return False
+
+    def setProcessChannelMode(self, mode):
+        pass
+
+    def setWorkingDirectory(self, path):
+        pass
+
+    def setProcessEnvironment(self, env):
+        pass
+
+    def readAllStandardOutput(self):
+        return b""
+
+    def readAllStandardError(self):
+        return b""
+
+    def exitCode(self):
+        return -1

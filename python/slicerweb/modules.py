@@ -15,6 +15,7 @@ Each module is available as ``slicer.modules.<lowercasename>`` with the familiar
 (``logic()``, ``name``, ``title``, ``categories``, ``path``, ``widgetRepresentation()``).
 """
 
+import builtins
 import glob
 import importlib
 import importlib.util
@@ -175,6 +176,14 @@ class _ModuleParent:
     def property(self, name):
         return getattr(self, name, None)
 
+    @builtins.property  # (this class defines a property() method, like QObject)
+    def defaultDocumentationLink(self):
+        """qSlicerAbstractCoreModule::defaultDocumentationLink"""
+        import slicer
+
+        url = slicer.app.moduleDocumentationUrl(self._name)
+        return f'<p>For more information see the <a href="{url}">online documentation</a>.</p>'
+
     def setObjectName(self, name):
         pass
 
@@ -213,6 +222,9 @@ class ModuleManager:
         self._descriptors = {}  # name -> descriptor, not yet loaded
         self._modulePaths = []
         self._scripted_sources = {}  # name -> (path)
+        # Python modules (packages) missing when a scripted module was imported: {package: [module names]}.
+        # The web page loads them (Pyodide packages or PyPI wheels) and loads the modules again.
+        self.missingPythonModules = {}
         self._register_builtin_descriptors()
 
     # ------------------------------------------------------------------ Qt-style signals
@@ -249,6 +261,11 @@ class ModuleManager:
         """Add a directory (or .py file) containing scripted modules (like Slicer's additional module paths)."""
         if path not in self._modulePaths:
             self._modulePaths.append(path)
+        # Packages next to scripted modules (e.g. SegmentEditorEffects, SubjectHierarchyPlugins) are
+        # importable, as in desktop Slicer
+        directory = path if os.path.isdir(path) else os.path.dirname(path)
+        if directory not in sys.path:
+            sys.path.insert(0, directory)
         for name, filename in _discover_scripted_modules(path).items():
             self._scripted_sources.setdefault(name, filename)
 
@@ -278,15 +295,51 @@ class ModuleManager:
         self._discover_extension_entry_points()
         from . import libs
 
-        for d in (libs.loadable_modules_lib_dir(),):
-            if d and os.path.isdir(d):
-                _import_module_python_extensions(d)
+        loadable_dir = libs.loadable_modules_lib_dir()
+        if loadable_dir and os.path.isdir(loadable_dir):
+            _import_module_python_extensions(loadable_dir)
+            if loadable_dir not in sys.path:
+                sys.path.append(loadable_dir)  # e.g. vtkvmtk*Python modules of extensions
+            self._register_described_loadable_modules(loadable_dir)
+        # Python scripted modules of the application and of installed extensions (same folder as the
+        # desktop application's lib/Slicer-X.Y/qt-scripted-modules)
+        scripted_dir = libs.scripted_modules_lib_dir()
+        if scripted_dir and os.path.isdir(scripted_dir):
+            self.addModulePath(scripted_dir)
+            # Python plugin packages imported at startup by desktop Slicer's Subject Hierarchy and
+            # Segmentations modules (their base classes are then importable by name)
+            for package in ("SubjectHierarchyPlugins", "SegmentEditorEffects"):
+                if package not in sys.modules and os.path.isdir(os.path.join(scripted_dir, package)):
+                    try:
+                        importlib.import_module(package)
+                    except Exception:
+                        logger.warning("Python package %s could not be imported", package, exc_info=True)
         self._initializeCoreDisplayableManagers()
 
         requested = list(names) if names else list(self._descriptors) + list(self._scripted_sources)
-        for name in requested:
-            self.loadModule(name)
+        loaded = [name for name in requested if name not in self._modules and self.loadModule(name) is not None]
         host.emit("modules-changed", self.moduleSummaries())
+        self._emit("modulesLoaded", loaded)
+
+    def _register_described_loadable_modules(self, directory):
+        """Loadable modules of extensions: <Name>.slicerweb-module.json files, written by the SlicerWeb
+        extension build instead of the Qt module class (see cmake/UseSlicerWeb.cmake)."""
+        import json
+
+        for filename in sorted(glob.glob(os.path.join(directory, "*.slicerweb-module.json"))):
+            try:
+                with open(filename, encoding="utf8") as f:
+                    info = json.load(f)
+            except (OSError, ValueError):
+                logger.exception("Invalid module description %s", filename)
+                continue
+            name = info.get("name")
+            if not name or name in self._descriptors or name in self._modules:
+                continue
+            self.registerLoadableModule(LoadableModuleDescriptor(
+                name, logicClass=info.get("logicClass") or None, title=info.get("title") or name,
+                dependencies=info.get("dependencies") or [], path=filename,
+                categories=info.get("categories") or [info.get("extension") or "Extensions"]))
 
     def _initializeCoreDisplayableManagers(self):
         import slicer
@@ -304,7 +357,23 @@ class ModuleManager:
             raise RuntimeError(f"Circular module dependency: {' -> '.join(_stack + (name,))}")
         descriptor = self._descriptors.get(name)
         if descriptor is None and name in self._scripted_sources:
-            descriptor = self._createScriptedModule(name, self._scripted_sources[name])
+            try:
+                descriptor = self._createScriptedModule(name, self._scripted_sources[name])
+            except ModuleNotFoundError as e:
+                missing = (e.name or "").split(".")[0]
+                if missing and missing not in self._scripted_sources and missing not in self._descriptors:
+                    self.missingPythonModules.setdefault(missing, [])
+                    if name not in self.missingPythonModules[missing]:
+                        self.missingPythonModules[missing].append(name)
+                    logger.info("Module %s needs Python package %s, which is not installed yet", name, missing)
+                else:
+                    logger.exception("Failed to load module %s", name)
+                sys.modules.pop(name, None)
+                return None
+            except Exception:
+                logger.exception("Failed to load module %s", name)
+                sys.modules.pop(name, None)
+                return None
         if descriptor is None:
             logger.warning("Module %s is not available", name)
             return None

@@ -49,6 +49,11 @@ def loadable_modules_lib_dir():
     return os.path.join(d, "qt-loadable-modules") if d else None
 
 
+def scripted_modules_lib_dir():
+    d = slicer_lib_dir()
+    return os.path.join(d, "qt-scripted-modules") if d else None
+
+
 def library_dirs():
     dirs = []
     for d in (slicer_lib_dir(), loadable_modules_lib_dir()):

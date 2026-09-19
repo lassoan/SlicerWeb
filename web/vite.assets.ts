@@ -11,6 +11,7 @@ import { preparePyodide } from "./scripts/prepare-pyodide.mjs";
  *                  of scripts/prepare-pyodide.mjs (needed for fast loading of ~300 shared libraries)
  *  - /wheels/*   : SlicerWeb wheels (VTK, ITK, Slicer libraries, modules, extensions)
  *  - /sample-data/* : optional local sample data
+ *  - /extensions/*  : extension wheels and their index (index.json), read by the Extensions Manager
  *
  * Wheels are taken from $SLICERWEB_WHEELS (default: D:/SlicerWeb-build/dist/wheels).
  */
@@ -19,10 +20,12 @@ export function slicerWebAssets(): Plugin {
   preparePyodide(path.resolve("node_modules/pyodide"), pyodideDir);
   const wheelsDir = path.resolve(process.env.SLICERWEB_WHEELS ?? "D:/SlicerWeb-build/dist/wheels");
   const sampleDir = path.resolve(process.env.SLICERWEB_SAMPLE_DATA ?? "D:/SlicerWeb-build/dist/sample-data");
+  const extensionsDir = path.resolve(process.env.SLICERWEB_EXTENSIONS ?? "D:/SlicerWeb-build/dist/extensions");
   const mounts: Record<string, string> = {
     "/pyodide/": pyodideDir,
     "/wheels/": wheelsDir,
     "/sample-data/": sampleDir,
+    "/extensions/": extensionsDir,
   };
 
   const contentType = (file: string) => {

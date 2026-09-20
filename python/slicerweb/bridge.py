@@ -534,6 +534,24 @@ def fitSliceViews():
 
 
 @method()
+def viewDoubleClick(layoutName, x, y):
+    """Deliver a double click at a position of a view (device pixels, origin top left).
+
+    Touch screens have no double click: the web page detects a double tap and calls this, so that
+    the same Slicer widgets handle it as for a mouse (maximizing the view, by default).
+    """
+    import slicer
+
+    view = slicer.app.layoutManager().view(layoutName)
+    if view is None:
+        return False
+    interactor = view.GetInteractor()
+    interactor.SetEventPositionFlipY(int(x), int(y))
+    interactor.InvokeEvent(vtk.vtkCommand.LeftButtonDoubleClickEvent)
+    return True
+
+
+@method()
 def maximizeView(layoutName):
     """Show the view alone, or restore the layout if it is already maximized (toggle)."""
     import slicer

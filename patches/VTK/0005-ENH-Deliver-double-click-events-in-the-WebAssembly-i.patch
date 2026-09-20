@@ -1,0 +1,29 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] ENH: Deliver double click events in the WebAssembly interactor
+
+EMSCRIPTEN_EVENT_DBLCLICK is translated to the double click events of the
+interactor, but the callback was never registered, so applications did not
+receive them.
+---
+diff --git a/Rendering/UI/vtkWebAssemblyRenderWindowInteractor.cxx b/Rendering/UI/vtkWebAssemblyRenderWindowInteractor.cxx
+index 1d6f6dd99d..09dbb7b4b3 100644
+--- a/Rendering/UI/vtkWebAssemblyRenderWindowInteractor.cxx
++++ b/Rendering/UI/vtkWebAssemblyRenderWindowInteractor.cxx
+@@ -295,6 +295,8 @@ void vtkWebAssemblyRenderWindowInteractor::RegisterUICallbacks()
+     EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
+   emscripten_set_mouseup_callback_on_thread(canvas, &internals, 0, vtkInternals::MaybeProxyEvent,
+     EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
++  emscripten_set_dblclick_callback_on_thread(canvas, &internals, 0, vtkInternals::MaybeProxyEvent,
++    EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
+ 
+   emscripten_set_touchmove_callback_on_thread(canvas, &internals, 0, vtkInternals::MaybeProxyEvent,
+     EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
+@@ -352,6 +354,8 @@ void vtkWebAssemblyRenderWindowInteractor::UnRegisterUICallbacks()
+     canvas, nullptr, 0, nullptr, EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
+   emscripten_set_mouseup_callback_on_thread(
+     canvas, nullptr, 0, nullptr, EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
++  emscripten_set_dblclick_callback_on_thread(
++    canvas, nullptr, 0, nullptr, EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);
+ 
+   emscripten_set_touchmove_callback_on_thread(
+     canvas, nullptr, 0, nullptr, EM_CALLBACK_THREAD_CONTEXT_MAIN_RUNTIME_THREAD);

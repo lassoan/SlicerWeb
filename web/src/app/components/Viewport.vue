@@ -52,6 +52,32 @@ async function attach() {
   await refreshVolumes();
 }
 
+// Double tap: touch screens have no double click, which maximizes a view in Slicer. Two taps at the
+// same place in quick succession are sent to the view as a double click.
+const DOUBLE_TAP_MS = 350;
+const DOUBLE_TAP_DISTANCE = 30; // CSS pixels
+let lastTap: { time: number; x: number; y: number } | null = null;
+
+function onTouchEnd(event: TouchEvent) {
+  if (event.changedTouches.length !== 1 || event.touches.length > 0) {
+    lastTap = null;
+    return;
+  }
+  const touch = event.changedTouches[0];
+  const now = Date.now();
+  const previous = lastTap;
+  lastTap = { time: now, x: touch.clientX, y: touch.clientY };
+  if (!previous || now - previous.time > DOUBLE_TAP_MS) return;
+  if (Math.hypot(touch.clientX - previous.x, touch.clientY - previous.y) > DOUBLE_TAP_DISTANCE) return;
+  lastTap = null;
+  const canvas = container.value?.querySelector("canvas");
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  event.preventDefault();
+  bridge.call("viewDoubleClick", [props.view.layoutName, (touch.clientX - rect.left) * dpr, (touch.clientY - rect.top) * dpr]);
+}
+
 /** Create the view again after it was destroyed, while this viewport is still in the page. */
 async function reattach() {
   if (attached || !container.value) return;
@@ -81,6 +107,7 @@ async function refreshVolumes() {
 onMounted(async () => {
   resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(container.value!);
+  container.value!.addEventListener("touchend", onTouchEnd);
   offs.push(
     bridge.events.on<{ id: string }>("node-modified", (p) => {
       if (p?.id === props.view.nodeID) refreshSliceState();
@@ -101,6 +128,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(async () => {
+  container.value?.removeEventListener("touchend", onTouchEnd);
   resizeObserver?.disconnect();
   offs.forEach((off) => off());
   if (attached) await bridge.call("detachView", [props.view.layoutName]);

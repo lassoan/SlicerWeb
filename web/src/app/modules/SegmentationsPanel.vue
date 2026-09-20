@@ -4,6 +4,7 @@ import { Eye, EyeOff, Trash2 } from "@lucide/vue";
 import { SwCheckBox, SwCollapsible, SwFormRow, SwNodeSelector, SwSlider, SwButton } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
+import { useSelectedNode } from "./useSelectedNode";
 
 interface SegmentationInfo {
   name: string;
@@ -15,7 +16,7 @@ interface SegmentationInfo {
   opacity3D: number;
 }
 
-const nodeID = ref<string | null>((store as any).selectedNodeID ?? null);
+const nodeID = useSelectedNode("Segmentation");
 const { state, bridge } = useNodeState<SegmentationInfo>("segmentationInfo", nodeID);
 const setSeg = (id: string, props: Record<string, unknown>) => nodeID.value && bridge.call("setSegment", [nodeID.value, id, props]);
 const setDisplay = (props: Record<string, unknown>) => nodeID.value && bridge.call("setSegmentationDisplay", [nodeID.value, props]);

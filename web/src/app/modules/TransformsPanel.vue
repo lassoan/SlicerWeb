@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { SwButton, SwCollapsible, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
+import { useSelectedNode } from "./useSelectedNode";
 
 interface TransformInfo {
   name: string;
@@ -10,7 +11,7 @@ interface TransformInfo {
   matrix: number[][];
 }
 
-const nodeID = ref<string | null>((store as any).selectedNodeID ?? null);
+const nodeID = useSelectedNode("Transform");
 const { state, bridge } = useNodeState<TransformInfo>("transformInfo", nodeID);
 const targetID = ref<string | null>(null);
 

@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
+import { useSelectedNode } from "./useSelectedNode";
 
 interface VolumeInfo {
   id: string;
@@ -24,7 +25,7 @@ interface VolumeInfo {
   colorNodeID?: string;
 }
 
-const nodeID = ref<string | null>((store as any).selectedNodeID ?? null);
+const nodeID = useSelectedNode("Volume");
 const { state, bridge } = useNodeState<VolumeInfo>("volumeInfo", nodeID);
 const presets = ref<{ id: string; name: string }[]>([]);
 const colors = ref<{ id: string; name: string }[]>([]);

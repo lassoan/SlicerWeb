@@ -4,6 +4,7 @@ import { Crosshair, Trash2, Lock, Unlock } from "@lucide/vue";
 import { SwCheckBox, SwCollapsible, SwColorPicker, SwFormRow, SwNodeSelector, SwSlider, SwButton } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
+import { useSelectedNode } from "./useSelectedNode";
 
 interface MarkupsInfo {
   name: string;
@@ -18,7 +19,7 @@ interface MarkupsInfo {
   fillOpacity: number;
 }
 
-const nodeID = ref<string | null>((store as any).selectedNodeID ?? null);
+const nodeID = useSelectedNode("Markups");
 const { state, bridge } = useNodeState<MarkupsInfo>("markupsInfo", nodeID);
 
 const set = (props: Record<string, unknown>) => nodeID.value && bridge.call("setMarkupsDisplay", [nodeID.value, props]);

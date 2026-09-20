@@ -42,7 +42,8 @@ function select(item: SubjectHierarchyItem) {
   const module = c.includes("Segmentation") ? "Segmentations" : c.includes("Volume") ? "Volumes" : c.includes("Model") ? "Models"
     : c.includes("Markups") ? "Markups" : c.includes("Transform") ? "Transforms" : store.activeModule;
   store.activeModule = module;
-  (store as any).selectedNodeID = item.nodeID;
+  store.selectedNodeClass = item.className;
+  store.selectedNodeID = item.nodeID;
 }
 
 async function rename(item: SubjectHierarchyItem) {
@@ -70,7 +71,7 @@ async function save(item: SubjectHierarchyItem) {
   <ul class="text-[13px]">
     <li v-for="item in items" :key="item.id">
       <div class="group flex h-7 items-center gap-1 rounded pr-1 hover:bg-accent/60"
-        :class="{ 'bg-accent': (store as any).selectedNodeID && (store as any).selectedNodeID === item.nodeID }"
+        :class="{ 'bg-accent': store.selectedNodeID && store.selectedNodeID === item.nodeID }"
         :style="{ paddingLeft: depth * 14 + 4 + 'px' }" @click="select(item)" @dblclick="rename(item)">
         <button v-if="item.children.length" type="button" class="text-muted-foreground" @click.stop="toggle(item)">
           <ChevronRight v-if="collapsed.has(item.id)" :size="14" /><ChevronDown v-else :size="14" />

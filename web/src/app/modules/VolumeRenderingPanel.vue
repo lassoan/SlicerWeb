@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { SwCheckBox, SwComboBox, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
+import { useSelectedNode } from "./useSelectedNode";
 
 interface VRInfo {
   visible: boolean;
@@ -13,7 +14,7 @@ interface VRInfo {
   croppingEnabled?: boolean;
 }
 
-const nodeID = ref<string | null>((store as any).selectedNodeID ?? null);
+const nodeID = useSelectedNode("Volume");
 const { state, bridge, refresh } = useNodeState<VRInfo>("volumeRenderingInfo", nodeID);
 
 async function set(props: Record<string, unknown>) {

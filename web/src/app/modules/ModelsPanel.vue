@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { SwCheckBox, SwCollapsible, SwColorPicker, SwComboBox, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
+import { useSelectedNode } from "./useSelectedNode";
 
 interface ModelInfo {
   name: string;
@@ -21,7 +22,7 @@ interface ModelInfo {
   scalars: string[];
 }
 
-const nodeID = ref<string | null>((store as any).selectedNodeID ?? null);
+const nodeID = useSelectedNode("Model");
 const { state, bridge } = useNodeState<ModelInfo>("modelInfo", nodeID);
 const representations = ["Points", "Wireframe", "Surface"];
 

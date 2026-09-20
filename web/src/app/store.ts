@@ -54,6 +54,10 @@ export const store = reactive({
   error: "" as string,
   modules: [] as ModuleSummary[],
   activeModule: "Data",
+  /** Node picked in the subject hierarchy or in a module panel (both follow it). */
+  selectedNodeID: null as string | null,
+  /** Class of that node, so that a panel can tell whether the selection is one of its own. */
+  selectedNodeClass: null as string | null,
   // maximized: layout name of the view shown alone (view controller "maximize" button)
   layout: { layout: 0, description: { type: "empty", children: [] } as LayoutTreeNode, maximized: null as string | null },
   availableLayouts: {} as Record<string, number>,

@@ -15,6 +15,8 @@ const props = withDefaults(
     removeEnabled?: boolean;
     renameEnabled?: boolean;
     showHidden?: boolean;
+    /** Only list nodes with these attributes (qMRMLNodeComboBox::addAttribute). */
+    nodeAttributes?: Record<string, string | null>;
     baseName?: string;
     noneDisplay?: string;
     enabled?: boolean;
@@ -28,6 +30,7 @@ const props = withDefaults(
     removeEnabled: false,
     renameEnabled: false,
     showHidden: false,
+    nodeAttributes: undefined,
     baseName: "",
     noneDisplay: "None",
     enabled: true,
@@ -49,13 +52,24 @@ function types(): string[] {
   return Array.isArray(t) ? t : String(t).split(/[,;\s]+/).filter(Boolean);
 }
 
+let refreshing = 0;
 async function refresh() {
+  const token = ++refreshing;
   const all: NodeSummary[] = [];
   for (const t of types()) {
-    all.push(...(await bridge().call<NodeSummary[]>("getNodes", [t, props.showHidden])));
+    all.push(...(await bridge().call<NodeSummary[]>("getNodes", [t, props.showHidden, props.nodeAttributes ?? null])));
   }
+  if (token !== refreshing) return;   // a newer refresh is on its way with a newer list
   const seen = new Set<string>();
   nodes.value = all.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)));
+  // The list is fetched asynchronously, so the module may have chosen a node in the meantime (it
+  // does so while a scene is loaded or a test runs): that choice wins, and is never reported back
+  // as a change of the selection, which would overwrite it with what this list happens to hold.
+  const chosen = current();
+  if (chosen) {
+    selected.value = chosen;
+    return;
+  }
   if (!props.noneEnabled && !selected.value && nodes.value.length) select(nodes.value[0].id);
   if (selected.value && !nodes.value.some((n) => n.id === selected.value)) select(props.noneEnabled ? null : nodes.value[0]?.id ?? null);
 }
@@ -91,6 +105,7 @@ onMounted(() => {
   refresh();
   off = bridge().events.on("scene-changed", refresh);
 });
+watch(() => props.nodeAttributes, refresh, { deep: true });
 onBeforeUnmount(() => off?.());
 </script>
 

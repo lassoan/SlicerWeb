@@ -16,31 +16,45 @@ class BoundSignal:
     def __init__(self, owner, name):
         self._owner = weakref.ref(owner)
         self._name = name
-        self._slots = []
+        self._slots = []  # (slot, number of arguments of the connected signature, or None for all)
 
-    def connect(self, slot, *args):
-        if slot not in self._slots:
-            self._slots.append(slot)
+    def connect(self, slot, *args, argumentCount=None):
+        if not any(existing is slot or existing == slot for existing, _ in self._slots):
+            self._slots.append((slot, argumentCount))
         return True
 
     def disconnect(self, slot=None):
         if slot is None:
             self._slots.clear()
-        elif slot in self._slots:
-            self._slots.remove(slot)
+        else:
+            self._slots = [entry for entry in self._slots if not (entry[0] is slot or entry[0] == slot)]
 
     def emit(self, *args):
         owner = self._owner()
         if owner is not None and getattr(owner, "_signalsBlocked", False):
             return
-        for slot in list(self._slots):
+        for slot, argumentCount in list(self._slots):
             try:
-                _call_slot(slot, args)
+                _call_slot(slot, args if argumentCount is None else args[:argumentCount])
             except Exception:
                 logger.exception("Error in slot connected to %s", self._name)
 
     def __call__(self, *args):  # PythonQt allows calling a signal to emit it
         self.emit(*args)
+
+
+def _signature_argument_count(signature):
+    """Number of arguments of a signal signature ("clicked(bool)" -> 1), or None if it has none.
+
+    A slot connected to "clicked()" is called without arguments, even though the signal carries one:
+    module code relies on it, for example a lambda that only captures a value
+    (``button.connect("clicked()", lambda role=role: self.onToggle(role))``), which would otherwise
+    be called with the signal argument in place of the captured one.
+    """
+    if "(" not in signature:
+        return None
+    arguments = signature[signature.index("(") + 1: signature.rindex(")")].strip() if ")" in signature else ""
+    return len([a for a in arguments.split(",") if a.strip()])
 
 
 def _call_slot(slot, args):
@@ -216,10 +230,10 @@ class QObject:
         """PythonQt connect: obj.connect("signal(args)", slot) or obj.connect(sender, "signal()", slot)."""
         if len(args) == 2:
             signal, slot = args
-            return self._signal(signal).connect(slot)
+            return self._signal(signal).connect(slot, argumentCount=_signature_argument_count(signal))
         if len(args) >= 3:
             sender, signal, slot = args[:3]
-            return sender._signal(signal).connect(slot)
+            return sender._signal(signal).connect(slot, argumentCount=_signature_argument_count(signal))
         raise TypeError("connect() expects (signal, slot) or (sender, signal, slot)")
 
     def disconnect(self, *args):

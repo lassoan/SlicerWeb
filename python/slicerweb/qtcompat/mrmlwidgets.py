@@ -99,10 +99,17 @@ class qMRMLNodeComboBox(_ElementWidget):
         self.mrmlSceneChanged.emit(scene)
 
     def addAttribute(self, nodeType, name, value=None):
+        """Only list nodes with this attribute (e.g. the parameter nodes of one module)."""
         self._attributeFilters[(nodeType, name)] = value
+        self._updateAttributeFilters()
 
     def removeAttribute(self, nodeType, name):
         self._attributeFilters.pop((nodeType, name), None)
+        self._updateAttributeFilters()
+
+    def _updateAttributeFilters(self):
+        # not "attributes": that is a read-only property of every DOM element
+        dom.set_prop(self._el, "nodeAttributes", {name: value for (_type, name), value in self._attributeFilters.items()})
 
     def addNode(self, className=None):
         import slicer

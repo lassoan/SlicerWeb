@@ -271,13 +271,23 @@ def _node_summary(node):
 
 
 @method()
-def getNodes(className="vtkMRMLNode", includeHidden=False):
+def getNodes(className="vtkMRMLNode", includeHidden=False, attributes=None):
+    """Nodes of a class, optionally only those with the given attributes.
+
+    attributes is {name: value} as qMRMLNodeComboBox::addAttribute() takes them: a value of None
+    matches any node that has the attribute (e.g. parameter nodes of one module).
+    """
     nodes = _scene().GetNodesByClass(className)
     result = []
     for i in range(nodes.GetNumberOfItems()):
         n = nodes.GetItemAsObject(i)
-        if includeHidden or not n.GetHideFromEditors():
-            result.append(_node_summary(n))
+        if not includeHidden and n.GetHideFromEditors():
+            continue
+        if attributes and not all(
+                n.GetAttribute(name) is not None and (value is None or n.GetAttribute(name) == str(value))
+                for name, value in attributes.items()):
+            continue
+        result.append(_node_summary(n))
     return result
 
 

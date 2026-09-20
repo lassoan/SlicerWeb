@@ -51,6 +51,32 @@ class QWidget(QObject):
     def element(self):
         return self._el
 
+    def _destroy(self):
+        """Release the widget: its element, its event listeners and its signal connections.
+
+        A page element holds the Python callbacks listening to it, and those hold the widget, so a
+        module GUI that is only dropped from the page stays alive (and its module with it). This is
+        what makes a reloaded module leave nothing of the old one behind.
+        """
+        for child in list(self._children):
+            destroy = getattr(child, "_destroy", None)
+            if destroy is not None:
+                destroy()
+        for event, proxy in getattr(self, "_listeners", ()):
+            try:
+                self._el.removeEventListener(event, proxy)
+                proxy.destroy()
+            except Exception:
+                logger.debug("Removing the %s listener failed", event, exc_info=True)
+        self._listeners = []
+        try:
+            self._el.remove()
+        except Exception:
+            pass
+        self.disconnect()
+        self._children = []
+        self._parent = None
+
     def setObjectName(self, value):
         """Name the element too (data-name="<objectName>"), for styling, tests and debugging."""
         super().setObjectName(value)
@@ -466,8 +492,11 @@ class _ElementWidget(QWidget):
     _events = {}  # element event name -> python handler method name
 
     def _init_element(self):
+        self._listeners = []
         for event, handler in self._events.items():
-            dom.listen(self._el, event, getattr(self, handler))
+            proxy = dom.listen(self._el, event, getattr(self, handler))
+            if proxy is not None:
+                self._listeners.append((event, proxy))
 
     def _setElementProperty(self, name, value):
         dom.set_prop(self._el, name, value)

@@ -536,7 +536,7 @@ def reload_scripted_module(moduleName):
     if module is None or module.kind != "scripted":
         raise KeyError(f"Scripted module {moduleName} is not loaded")
     filename = module.path
-    hide_scripted_module_widget(moduleName)
+    destroy_scripted_module_widget(moduleName)
     for name in [moduleName] + [n for n in list(sys.modules) if n.startswith(moduleName + ".")]:
         sys.modules.pop(name, None)
     module._hostWidget = None
@@ -574,6 +574,35 @@ def run_scripted_module_test(moduleName):
         return {"passed": False, "message": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc(),
                 "seconds": round(time.time() - start, 1)}
     return {"passed": True, "message": "Test passed", "seconds": round(time.time() - start, 1)}
+
+
+def destroy_scripted_module_widget(moduleName):
+    """Take the GUI of a scripted module down for good, before a new one is built.
+
+    The widget observes MRML nodes (and may show its own nodes, e.g. an interactive plane), so it
+    keeps working after its GUI is removed from the page: a reloaded module would then have two
+    widgets reacting to the same nodes and undoing each other's changes. cleanup() is what the
+    module implements for this, as in desktop Slicer's reloadScriptedModule.
+    """
+    import slicer
+
+    module = slicer.app.moduleManager().module(moduleName)
+    widget = getattr(module, "_widget", None) if module else None
+    hide_scripted_module_widget(moduleName)
+    if widget is not None and hasattr(widget, "cleanup"):
+        try:
+            widget.cleanup()
+        except Exception:
+            logger.exception("Cleanup of the %s module GUI failed", moduleName)
+    parent = getattr(module, "_hostWidget", None) if module else None
+    if parent is not None and hasattr(parent, "_destroy"):
+        parent._destroy()
+    if module is not None:
+        module._widget = None
+        module._hostWidget = None
+    if hasattr(slicer.modules, moduleName + "Widget"):
+        delattr(slicer.modules, moduleName + "Widget")
+    return True
 
 
 def hide_scripted_module_widget(moduleName):

@@ -1,6 +1,7 @@
 import { createApp } from "vue";
 import "./styles/main.css";
 import App from "./app/App.vue";
+import { store } from "./app/store";
 import { SlicerRuntime } from "./core/runtime";
 import { registerSlicerWidgets } from "./widgets/custom-elements";
 
@@ -15,5 +16,6 @@ export const runtime = new SlicerRuntime({
 
 createApp(App).provide("runtime", runtime).mount("#app");
 
-// Debugging and automated tests: window.slicerWeb.bridge.evalPython("...")
-(window as unknown as { slicerWeb: SlicerRuntime }).slicerWeb = runtime;
+// Debugging and automated tests: window.slicerWeb.bridge.evalPython("..."), window.slicerWeb.store
+(window as unknown as { slicerWeb: SlicerRuntime & { store: typeof store } }).slicerWeb =
+  Object.assign(runtime, { store });

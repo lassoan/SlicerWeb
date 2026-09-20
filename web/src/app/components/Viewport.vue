@@ -2,6 +2,8 @@
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
+import TableView from "./TableView.vue";
+import PlotView from "./PlotView.vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store, type LayoutTreeNode } from "../store";
 
@@ -12,6 +14,8 @@ const container = ref<HTMLDivElement>();
 const canvasId = computed(() => `slicer-view-${props.view.layoutName}`);
 const isSlice = computed(() => props.view.kind === "slice");
 const isThreeD = computed(() => props.view.kind === "threeD");
+const isTable = computed(() => props.view.kind === "table");
+const isPlot = computed(() => props.view.kind === "plot");
 const isActive = computed(() => store.activeView === props.view.layoutName);
 
 interface SliceState {
@@ -279,7 +283,7 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
     :class="isActive ? 'border-highlight' : 'border-input/60 hover:border-input'"
     @pointerdown="store.activeView = view.layoutName ?? ''">
     <!-- Slice / 3D view controller bar (Slicer's colored view controller, OHIF styling) -->
-    <div class="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-input/40 bg-card px-1.5 text-[12px]">
+    <div v-if="!isTable && !isPlot" class="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-input/40 bg-card px-1.5 text-[12px]">
       <span class="inline-block h-3 w-3 shrink-0 rounded-sm" :style="{ background: view.color ?? '#888' }" />
       <span class="shrink-0 font-medium text-foreground">{{ view.label ?? view.layoutName }}</span>
       <template v-if="isSlice">
@@ -315,6 +319,8 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       <canvas v-if="isSlice || isThreeD" :id="canvasId" class="sw-view-canvas" tabindex="-1"
         @contextmenu.prevent @pointerdown="onCanvasPointerDown" @pointerup="onCanvasPointerUp"
         @pointercancel="onCanvasPointerUp" />
+      <TableView v-else-if="isTable" :layout-name="view.layoutName ?? ''" />
+      <PlotView v-else-if="isPlot" :layout-name="view.layoutName ?? ''" />
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">
         {{ view.className }} is shown in the module panel
       </div>

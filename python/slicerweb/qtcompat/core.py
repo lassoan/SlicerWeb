@@ -29,6 +29,13 @@ class BoundSignal:
         else:
             self._slots = [entry for entry in self._slots if not (entry[0] is slot or entry[0] == slot)]
 
+    def disconnectReceiver(self, receiver):
+        """Drop the connections that call into a receiver being destroyed."""
+        kept = [entry for entry in self._slots if not slot_belongs_to(entry[0], receiver)]
+        removed = len(self._slots) - len(kept)
+        self._slots = kept
+        return removed
+
     def emit(self, *args):
         owner = self._owner()
         if owner is not None and getattr(owner, "_signalsBlocked", False):
@@ -70,6 +77,43 @@ def _call_slot(slot, args):
     except (TypeError, ValueError):
         pass
     return slot(*args)
+
+
+def slot_belongs_to(slot, receiver):
+    """Whether a slot calls into an object: its method, or a function that captured it.
+
+    Qt breaks a connection when the receiver is deleted. Nothing is deleted in Python, so a
+    connection keeps the receiver alive instead: a module widget that has been taken down is held by
+    every signal it was ever connected to. This is how those connections are found again.
+    """
+    if getattr(slot, "__self__", None) is receiver:
+        return True
+    for cell in getattr(slot, "__closure__", None) or ():
+        try:
+            if cell.cell_contents is receiver:
+                return True
+        except ValueError:  # empty cell
+            pass
+    inner = getattr(slot, "func", None)  # functools.partial
+    if inner is not None:
+        if slot_belongs_to(inner, receiver):
+            return True
+        if any(a is receiver for a in getattr(slot, "args", ())):
+            return True
+    return False
+
+
+def disconnect_receiver(slots, receiver):
+    """Remove the slots of a receiver from a {signal name: [slot]} registry. Returns the count."""
+    removed = 0
+    for name, connected in list(slots.items()):
+        kept = [slot for slot in connected if not slot_belongs_to(slot, receiver)]
+        removed += len(connected) - len(kept)
+        if kept:
+            slots[name] = kept
+        else:
+            slots.pop(name)
+    return removed
 
 
 class Signal:
@@ -258,6 +302,17 @@ class QObject:
             signals = self.__dict__.setdefault("_bound_signals", {})
             signal = signals.setdefault(name, BoundSignal(self, name))
         return signal
+
+    def disconnectReceiver(self, receiver):
+        """Disconnect everything this object's signals call on a receiver being destroyed."""
+        removed = 0
+        for signal in self.__dict__.get("_bound_signals", {}).values():
+            removed += signal.disconnectReceiver(receiver)
+        for child in self._children:
+            disconnectReceiver = getattr(child, "disconnectReceiver", None)
+            if disconnectReceiver is not None:
+                removed += disconnectReceiver(receiver)
+        return removed
 
     def blockSignals(self, block):
         previous = self._signalsBlocked

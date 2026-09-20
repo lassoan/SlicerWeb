@@ -256,6 +256,16 @@ class ModuleManager:
         elif slot in self._slots.get(name, []):
             self._slots[name].remove(slot)
 
+    def disconnectReceiver(self, receiver):
+        """Disconnect the module manager signals of a receiver being destroyed.
+
+        ScriptedLoadableModuleWidget connects to moduleAboutToBeUnloaded() when it is created, so
+        without this every module GUI ever built stays alive in this registry.
+        """
+        from .qtcompat.core import disconnect_receiver
+
+        return disconnect_receiver(self._slots, receiver)
+
     def _emit(self, name, *args):
         for slot in list(self._slots.get(name, [])):
             try:
@@ -594,15 +604,42 @@ def destroy_scripted_module_widget(moduleName):
             widget.cleanup()
         except Exception:
             logger.exception("Cleanup of the %s module GUI failed", moduleName)
-    parent = getattr(module, "_hostWidget", None) if module else None
-    if parent is not None and hasattr(parent, "_destroy"):
-        parent._destroy()
+    if widget is not None:
+        _release_module_widget(widget, parent=getattr(module, "_hostWidget", None))
     if module is not None:
         module._widget = None
         module._hostWidget = None
     if hasattr(slicer.modules, moduleName + "Widget"):
         delattr(slicer.modules, moduleName + "Widget")
     return True
+
+
+def _release_module_widget(widget, parent=None):
+    """Break what the widget and the application hold of each other, after its cleanup().
+
+    cleanup() takes back what the module set up itself (MRML observers, its own nodes). What is left
+    are the connections made on its behalf: the application and the module manager keep the slots it
+    connected, its GUI elements in the page keep the callbacks that reach it, and the qt objects it
+    owns (a timer, for example) keep the methods they call. Each of those is a reference back to the
+    widget, so none of it can be collected until they are undone here.
+    """
+    import slicer
+
+    from .qtcompat.core import QObject
+
+    app = slicer.app
+    for holder in (app, app.moduleManager()):
+        disconnectReceiver = getattr(holder, "disconnectReceiver", None)
+        if disconnectReceiver is not None:
+            disconnectReceiver(widget)
+    if parent is not None and hasattr(parent, "disconnectReceiver"):
+        parent.disconnectReceiver(widget)
+    # qt objects the widget owns outlive it only through what they call back into it
+    for value in list(vars(widget).values()):
+        if isinstance(value, QObject) and value is not parent:
+            value.disconnect()
+    if parent is not None and hasattr(parent, "_destroy"):
+        parent._destroy()
 
 
 def hide_scripted_module_widget(moduleName):

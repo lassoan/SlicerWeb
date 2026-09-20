@@ -95,6 +95,12 @@ console.log(`${stamp()} reloaded; module widgets in the page: ${await page.locat
 // the old widget must be gone: two widgets observing the same nodes fight over them
 // no widget of the reloaded module may still be watching the scene: two widgets reacting to the
 // same nodes undo each other's changes and can keep re-clipping while a point is dragged
+// reloading repeatedly must not pile up widgets
+for (let i = 0; i < 2; i++) {
+  await page.getByRole("button", { name: "Reload", exact: true }).last().click();
+  await page.waitForFunction(() => !/Reloading/.test(document.body.innerText), null, { timeout: 120000 });
+  await page.waitForTimeout(1500);
+}
 console.log(`${stamp()} widgets left over by the reload:`, await py(`json.dumps((lambda old: {
  "stale": len(old), "stillObserving": sum(len(getattr(o, "Observations", [])) for o in old)})(
  [o for o in __import__("gc").get_objects()

@@ -367,6 +367,13 @@ class SlicerWebApplication:
             self._slots[name].remove(slot)
         return True
 
+    def disconnectReceiver(self, receiver):
+        """Disconnect the application signals of a receiver being destroyed (e.g. a module widget)."""
+        from .qtcompat.core import disconnect_receiver, slot_belongs_to
+
+        self._pendingStartupSlots = [s for s in self._pendingStartupSlots if not slot_belongs_to(s, receiver)]
+        return disconnect_receiver(self._slots, receiver)
+
     def _flushStartupSlots(self):
         """Call startupCompleted() slots: at the end of startup, and for modules loaded later
         (installed extensions) after they are loaded."""

@@ -51,9 +51,16 @@ class LayoutManager:
         self._layoutLogic.SetMRMLScene(self._scene)
         self._layoutNode = self._layoutLogic.GetLayoutNode()
         self._layoutNode.AddObserver(vtk.vtkCommand.ModifiedEvent, self._onLayoutNodeModified)
+        # While the scene is closed, imported or updated in a batch, the layout node is reset too:
+        # the layout is published again when that finishes (see _publishLayout).
+        for event in (slicer.vtkMRMLScene.EndCloseEvent, slicer.vtkMRMLScene.EndImportEvent,
+                      slicer.vtkMRMLScene.EndBatchProcessEvent, slicer.vtkMRMLScene.EndRestoreEvent):
+            self._scene.AddObserver(event, self._onSceneUpdated)
         self._views = {}  # layout name -> vtkSlicerWebView
         self._widgets = {}  # layout name -> SliceWidget / ThreeDWidget proxy
         self._lastLayoutJson = None
+        self._viewsToDetach = set()
+        self._detachTimer = None
 
     # ------------------------------------------------------------------ layout selection
     def setLayout(self, layout):
@@ -110,6 +117,9 @@ class LayoutManager:
     # ------------------------------------------------------------------ layout description
     def _onLayoutNodeModified(self, caller=None, event=None):
         self._publishLayout()
+
+    def _onSceneUpdated(self, caller=None, event=None):
+        self._publishLayout(force=True)
 
     def layoutDescription(self):
         """Current layout as a JSON-serializable tree (see module documentation)."""
@@ -240,12 +250,35 @@ class LayoutManager:
         if not force and encoded == self._lastLayoutJson:
             return
         self._lastLayoutJson = encoded
-        # Views that are no longer part of the layout are destroyed to free their WebGL contexts
+        # Views that are no longer part of the layout are destroyed to free their WebGL contexts.
+        # Not while the scene is being closed, imported or updated in a batch: the layout node is
+        # reset during that (the view nodes are singletons and are kept, as in desktop Slicer), so
+        # the views would be destroyed and created again for the same view nodes.
+        # (the layout node is reset while the scene is closed or imported, and the layout is empty
+        # for a moment, so destroying is delayed and cancelled if the view is shown again)
         visible = set(self._visibleLayoutNames(desc))
+        self._viewsToDetach = {name for name in self._views if name not in visible}
+        if self._viewsToDetach:
+            self._scheduleDetach()
+        host.emit("layout-changed", payload)
+
+    def _scheduleDetach(self, delayMs=1000):
+        from .qtcompat.types import QTimer
+
+        if self._detachTimer is None:
+            self._detachTimer = QTimer()
+            self._detachTimer.setSingleShot(True)
+            self._detachTimer.timeout.connect(self._detachHiddenViews)
+        self._detachTimer.start(delayMs)
+
+    def _detachHiddenViews(self):
+        if self._scene.IsClosing() or self._scene.IsImporting() or self._scene.IsBatchProcessing():
+            self._scheduleDetach()
+            return
+        visible = set(self._visibleLayoutNames(self.layoutDescription()))
         for name in list(self._views):
             if name not in visible:
                 self.detachView(name)
-        host.emit("layout-changed", payload)
 
     def _visibleLayoutNames(self, desc):
         if desc.get("type") == "view":

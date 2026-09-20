@@ -50,11 +50,21 @@ _IGNORED = {"geometry", "sizePolicy", "minimumSize", "maximumSize", "baseSize", 
             "editTriggers", "horizontalScrollBarPolicy", "verticalScrollBarPolicy", "autoFillBackground"}
 
 
-def _apply_property(widget, name, value):
+def _apply_property(widget, name, value, dynamic=False):
+    """Apply one <property> of a .ui file.
+
+    A property marked stdset="0" is a dynamic property of the object, not a Qt property with a
+    setter: Slicer uses one of those ("SlicerParameterName") to say which parameter a widget shows,
+    and parameterNodeWrapper looks it up with widget.property(). Setting it as a plain attribute
+    instead would leave the widget unconnected from the parameter node.
+    """
     if name in _IGNORED or value is None:
         return
     if name == "objectName":
         widget.setObjectName(value)
+        return
+    if dynamic:
+        widget.setProperty(name, value)
         return
     setter = getattr(widget, "set" + name[0].upper() + name[1:], None)
     try:
@@ -98,7 +108,8 @@ class QUiLoader:
         for prop in element.findall("property"):
             children = list(prop)
             if children:
-                _apply_property(widget, prop.get("name"), _parse_value(children[0]))
+                _apply_property(widget, prop.get("name"), _parse_value(children[0]),
+                               dynamic=prop.get("stdset") == "0")
         layout_el = element.find("layout")
         if layout_el is not None:
             layout = self._create_layout(layout_el)

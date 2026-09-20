@@ -238,11 +238,15 @@ void vtkSlicerWebThreeDView::ResetFocalPoint()
     viewNode->SetBoxVisible(savedBoxVisible);
     viewNode->SetAxisLabelsVisible(savedAxisLabelsVisible);
     viewNode->EndModify(wasModifying);
+    // Tell the view displayable manager that the view was reset, so that the box around the scene
+    // and its axis labels are fitted to what is visible now (qMRMLThreeDView does the same).
+    viewNode->InvokeEvent(vtkMRMLViewNode::ResetFocalPointRequestedEvent);
   }
   if (crosshairNode)
   {
     crosshairNode->SetCrosshairMode(crosshairMode);
   }
+  renderer->ResetCameraClippingRange();
   this->ScheduleRender();
 }
 

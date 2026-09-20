@@ -146,19 +146,31 @@ class QWidget(QObject):
             except Exception:
                 pass
 
-    # Geometry: the web layout sizes the widgets, so these are accepted and have no effect
+    # Geometry: the page lays the widgets out, so the size is asked of it rather than computed here
+    def _elementSize(self):
+        """Size of the element in the page, or what the style sheet gives a control that is not shown
+        yet. Module code sizes other widgets from it (a row of buttons beside a selector), so zero
+        would not do: it is taken for a hint that was never filled in, and sizes come out negative."""
+        width = height = 0
+        try:
+            rect = self._el.getBoundingClientRect()
+            width, height = int(rect.width), int(rect.height)
+        except Exception:
+            pass
+        return width or 120, height or 28   # 28: height of a control (h-7) in slicerweb-widgets.css
+
     @property
     def sizeHint(self):
         # Qt property (PythonQt: widget.sizeHint.height()); QSize is callable, so sizeHint() also works
         from .types import QSize
 
-        return QSize(0, 0)
+        return QSize(*self._elementSize())
 
     @property
     def minimumSizeHint(self):
         from .types import QSize
 
-        return QSize(0, 0)
+        return QSize(*self._elementSize())
 
     def adjustSize(self):
         pass
@@ -611,7 +623,7 @@ class QAbstractButton(_ElementWidget):
 
     def setIconSize(self, size):
         width = getattr(size, "width", None)
-        if callable(width):
+        if callable(width) and int(width()) > 0:
             dom.set_prop(self._el, "iconSize", int(width()))
 
     def setShortcut(self, s):
@@ -872,6 +884,8 @@ class QLineEdit(_ElementWidget):
 
 
 class QTextEdit(_ElementWidget):
+    """Multi-line text (the view follows the text, so scrolling to the cursor is automatic)."""
+
     _tag = "sw-textedit"
     _classes = ""
     _events = {"textChanged": "_onTextChanged"}
@@ -908,6 +922,26 @@ class QTextEdit(_ElementWidget):
 
     def toHtml(self):
         return self.plainText
+
+    def ensureCursorVisible(self):
+        """Scroll to the end, which is where a log that is being appended to is read."""
+        try:
+            self._el.scrollTop = self._el.scrollHeight
+        except Exception:
+            pass
+
+    def moveCursor(self, *args):
+        self.ensureCursorVisible()
+
+    def append(self, text):
+        self.setPlainText((self.plainText + chr(10) + str(text)) if self.plainText else str(text))
+        self.ensureCursorVisible()
+
+    def insertPlainText(self, text):
+        self.setPlainText(self.plainText + str(text))
+
+    def clear(self):
+        self.setPlainText("")
 
     def append(self, text):
         self.setPlainText((self.plainText + "\n" if self.plainText else "") + str(text))

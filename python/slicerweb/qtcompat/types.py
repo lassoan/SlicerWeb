@@ -1,6 +1,7 @@
 """Qt value types, utilities and namespaces used by Slicer Python code."""
 
 import logging
+import datetime
 import os
 
 from . import dom
@@ -416,7 +417,11 @@ class QFile:
 
 
 class QFileInfo:
-    def __init__(self, path):
+    def __init__(self, path, name=None):
+        """QFileInfo(path) or QFileInfo(dir, name), as slicer.util.tempDirectory() builds it."""
+        if name is not None:
+            directory = path.absolutePath() if hasattr(path, "absolutePath") else str(path)
+            path = os.path.join(directory, str(name))
         self._path = str(path)
 
     def exists(self):
@@ -474,6 +479,74 @@ class QDir:
     @staticmethod
     def homePath():
         return os.path.expanduser("~")
+
+
+class QDateTime:
+    """Date and time (the part of QDateTime that Slicer code uses: the current time, formatted)."""
+
+    def __init__(self, value=None):
+        self._value = value or datetime.datetime.now()
+
+    @staticmethod
+    def currentDateTime():
+        return QDateTime()
+
+    def toPython(self):
+        return self._value
+
+    def toString(self, fmt=None):
+        return QLocale().toString(self, fmt)
+
+    def toSecsSinceEpoch(self):
+        return int(self._value.timestamp())
+
+    def isValid(self):
+        return True
+
+
+class QLocale:
+    """Number and date formatting. Only the C locale exists here, which is what Slicer asks for
+    (it formats dates with an en-US locale so that the digits are the usual ones)."""
+
+    C, English = 0, 31
+    UnitedStates, AnyCountry = 225, 0
+
+    def __init__(self, *args):
+        pass
+
+    @staticmethod
+    def c():
+        return QLocale()
+
+    def name(self):
+        return "en_US"
+
+    def toString(self, value, fmt=None):
+        """Qt date format (yyyy-MM-dd_hh+mm+ss.zzz) applied to a QDateTime, or a number as text."""
+        if isinstance(value, QDateTime):
+            value = value.toPython()
+        if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+            if not fmt:
+                return value.isoformat()
+            text = str(fmt)
+            milliseconds = "%03d" % (getattr(value, "microsecond", 0) // 1000)
+            for qt_format, py_format in (("yyyy", "%Y"), ("MM", "%m"), ("dd", "%d"),
+                                         ("hh", "%H"), ("mm", "%M"), ("ss", "%S")):
+                text = text.replace(qt_format, value.strftime(py_format))
+            return text.replace("zzz", milliseconds)
+        return str(value)
+
+    def toDouble(self, text):
+        try:
+            return float(text), True
+        except (TypeError, ValueError):
+            return 0.0, False
+
+    def toInt(self, text):
+        try:
+            return int(text), True
+        except (TypeError, ValueError):
+            return 0, False
 
 
 class QUrl:

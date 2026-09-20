@@ -326,6 +326,13 @@ class ctkCheckablePushButton(QPushButton):
         pass
 
 
+class ctkCheckBox(QCheckBox):
+    """ctkCheckBox: a check box whose indicator can be styled (the same control here)."""
+
+    def setIndicatorIcon(self, icon):
+        pass
+
+
 class ctkMenuButton(QPushButton):
     pass
 

@@ -68,6 +68,8 @@ class SegmentEditor:
         return self.state()
 
     def state(self):
+        import slicer
+
         seg = self.logic.GetSegmentationNode()
         segments = []
         if seg is not None:
@@ -92,6 +94,8 @@ class SegmentEditor:
             "canUndo": bool(self.logic.CanUndo()),
             "canRedo": bool(self.logic.CanRedo()),
             "scalarRange": scalarRange,
+            "show3D": bool(seg is not None and seg.GetSegmentation().ContainsRepresentation(
+                slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName())),
             "maskMode": self.editorNode.GetMaskMode(),
             "overwriteMode": self.editorNode.GetOverwriteMode(),
         }
@@ -114,7 +118,22 @@ class SegmentEditor:
         self.effect = name or None
         if self.effect in ("Paint", "Erase"):
             self._installObservers()
+        self._publishBrush()
         host.emit("segment-editor-changed", self.state())
+
+    def _publishBrush(self):
+        """Put the brush on the segment editor node, which is where the views read it from.
+
+        The brush circle is drawn by a displayable manager of the slice views
+        (vtkSlicerWebSegmentEditorDisplayableManager), so what it needs - the effect at work and how
+        wide its brush is - is kept on the node rather than in this object. The attribute is the one
+        desktop Slicer uses for the same setting.
+        """
+        self.editorNode.SetActiveEffectName(self.effect or "")
+        self.editorNode.SetAttribute("SegmentEditorEffect.ActiveEffect", self.effect or "")
+        for effect in ("Paint", "Erase"):
+            self.editorNode.SetAttribute("SegmentEditorEffect.%s.BrushAbsoluteDiameter" % effect,
+                                         str(2.0 * self.brushRadius))
 
     def _installObservers(self):
         import slicer
@@ -375,6 +394,26 @@ def segmentEditorSetBrush(radius=None, sphere=None):
         e.brushRadius = float(radius)
     if sphere is not None:
         e.sphereBrush = bool(sphere)
+    e._publishBrush()
+    return True
+
+
+@method()
+def segmentEditorShow3D(enabled):
+    """Show the segments in the 3D views, as the "Show 3D" button of the Segment Editor does.
+
+    A segmentation is shown in 3D by giving it a closed surface, which is built from the labelmaps
+    and kept up to date while they are edited.
+    """
+    e = editor()
+    segmentationNode = e.logic.GetSegmentationNode()
+    if segmentationNode is None:
+        return False
+    if enabled:
+        segmentationNode.CreateClosedSurfaceRepresentation()
+    else:
+        segmentationNode.RemoveClosedSurfaceRepresentation()
+    host.emit("segment-editor-changed", e.state())
     return True
 
 

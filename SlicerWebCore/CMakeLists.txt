@@ -5,6 +5,9 @@ set(SlicerWebCore_SRCS
   vtkSlicerWebView.cxx
   vtkSlicerWebSliceView.cxx
   vtkSlicerWebThreeDView.cxx
+  vtkSlicerWebSegmentEditorWidgetRepresentation.cxx
+  vtkSlicerWebSegmentEditorWidget.cxx
+  vtkSlicerWebSegmentEditorDisplayableManager.cxx
   )
 
 set(lib_name SlicerWebCore)
@@ -13,7 +16,8 @@ target_include_directories(${lib_name} PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Slicer_Libs_INCLUDE_DIRS}
-  ${Slicer_Base_INCLUDE_DIRS})
+  ${Slicer_Base_INCLUDE_DIRS}
+  )
 target_link_libraries(${lib_name} PUBLIC SlicerBaseLogic MRMLDisplayableManager MRMLLogic MRMLCore ${VTK_LIBRARIES})
 
 include(GenerateExportHeader)

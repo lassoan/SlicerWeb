@@ -8,6 +8,8 @@
 
 // MRML includes
 #include <vtkMRMLApplicationLogic.h>
+#include "vtkSlicerWebSegmentEditorDisplayableManager.h"
+
 #include <vtkMRMLDisplayableManagerGroup.h>
 #include <vtkMRMLScene.h>
 #include <vtkMRMLSliceLogic.h>
@@ -150,6 +152,11 @@ bool vtkSlicerWebSliceView::InitializeView(vtkMRMLApplicationLogic* appLogic, vt
   factory->SetMRMLApplicationLogic(appLogic);
   vtkSmartPointer<vtkMRMLDisplayableManagerGroup> group;
   group.TakeReference(factory->InstantiateDisplayableManagers(renderer));
+  // The brush of the Segment Editor (the effects of desktop Slicer draw it themselves, from Qt
+  // code). Added here rather than registered with the factory, which builds a displayable manager
+  // from its class name through a VTK object factory that only generated module libraries have.
+  vtkNew<vtkSlicerWebSegmentEditorDisplayableManager> segmentEditorManager;
+  group->AddDisplayableManager(segmentEditorManager);
   this->SetDisplayableManagerGroupInternal(group);
   this->SetViewNode(sliceNode);
 

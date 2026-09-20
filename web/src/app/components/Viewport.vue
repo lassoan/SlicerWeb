@@ -113,6 +113,29 @@ function hideMagnifier() {
   lastTouch = null;
 }
 
+// A drag is followed until the button is released, even outside the view: the pointer is captured,
+// so the view goes on receiving the moves (a rotation that stops at the edge of the view) and is
+// told about the release (without it the view believes the button is still down when the cursor
+// comes back).
+function onCanvasPointerDown(event: PointerEvent) {
+  const canvas = event.target as HTMLCanvasElement;
+  canvas.focus();
+  try {
+    canvas.setPointerCapture(event.pointerId);
+  } catch {
+    // no capture for this pointer (it has already been released): the view still gets the events
+  }
+}
+
+function onCanvasPointerUp(event: PointerEvent) {
+  const canvas = event.target as HTMLCanvasElement;
+  try {
+    if (canvas.hasPointerCapture?.(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+  } catch {
+    // already released
+  }
+}
+
 function renderView() {
   return bridge.call("renderView", [props.view.layoutName]);
 }
@@ -290,7 +313,8 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
     </div>
     <div ref="container" class="relative min-h-0 flex-1 overflow-hidden">
       <canvas v-if="isSlice || isThreeD" :id="canvasId" class="sw-view-canvas" tabindex="-1"
-        @contextmenu.prevent @pointerdown="($event.target as HTMLCanvasElement).focus()" />
+        @contextmenu.prevent @pointerdown="onCanvasPointerDown" @pointerup="onCanvasPointerUp"
+        @pointercancel="onCanvasPointerUp" />
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">
         {{ view.className }} is shown in the module panel
       </div>

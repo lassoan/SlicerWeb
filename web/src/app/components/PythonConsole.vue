@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Python interactor (like Slicer's Python console): the full Slicer Python API is available.
-import { inject, nextTick, onBeforeUnmount, ref } from "vue";
+import { inject, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store } from "../store";
@@ -63,6 +63,12 @@ let completionStart = 0;
 let completionCursor = 0;
 let completionTimer: number | undefined;
 let completionRequest = 0;
+
+const suggestionList = ref<HTMLElement>();
+watch(activeSuggestion, async () => {
+  await nextTick();
+  suggestionList.value?.querySelector<HTMLElement>("[data-active='true']")?.scrollIntoView({ block: "nearest" });
+});
 
 function closeSuggestions() {
   suggestions.value = [];
@@ -191,13 +197,22 @@ function startResize(e: PointerEvent) {
       <div v-for="(l, i) in lines" :key="i"
         :class="{ 'text-highlight': l.kind === 'in', 'text-red-400': l.kind === 'err', 'text-muted-foreground': l.kind === 'log' }">{{ l.text }}</div>
     </div>
-    <div v-if="suggestions.length" class="flex gap-1 overflow-x-auto px-2 pt-1 [scrollbar-width:thin]" role="listbox"
-      aria-label="Completions">
-      <button v-for="(s, i) in suggestions" :key="s.text" type="button" role="option" :aria-selected="i === activeSuggestion"
-        :title="s.text"
-        class="shrink-0 rounded border px-2 py-1 font-mono text-[12px] whitespace-nowrap"
-        :class="i === activeSuggestion ? 'border-primary bg-primary/25 text-foreground' : 'border-input bg-background text-muted-foreground'"
-        @pointerdown.prevent @click="applyCompletion(s)">{{ shortName(s.text) }}<span v-if="s.callable" class="opacity-60">()</span></button>
+    <!-- Completions: a list above the prompt, as a console on the web usually has, so that long
+         names can be read (a row of them along the prompt leaves no room for any of it). -->
+    <div v-if="suggestions.length" class="relative h-0">
+      <ul ref="suggestionList"
+        class="absolute right-2 bottom-1 left-2 z-30 max-h-56 overflow-y-auto rounded-md border border-input bg-popover py-1 shadow-xl"
+        role="listbox" aria-label="Completions">
+        <li v-for="(s, i) in suggestions" :key="s.text">
+          <button type="button" role="option" :aria-selected="i === activeSuggestion" :data-active="i === activeSuggestion"
+            class="flex w-full items-baseline gap-3 px-2 py-1 text-left font-mono text-[12px]"
+            :class="i === activeSuggestion ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
+            @pointerdown.prevent @click="applyCompletion(s)">
+            <span class="shrink-0 text-foreground/90">{{ shortName(s.text) }}<span v-if="s.callable" class="opacity-60">()</span></span>
+            <span class="ml-auto truncate text-[11px] opacity-70">{{ s.text }}</span>
+          </button>
+        </li>
+      </ul>
     </div>
     <textarea ref="inputEl" v-model="input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
       placeholder=">>> (Shift+Enter for a new line, Tab to complete)"

@@ -534,6 +534,37 @@ def fitSliceViews():
 
 
 @method()
+def renderView(layoutName):
+    """Render a view immediately (the magnifier reads the pixels of the rendered image)."""
+    import slicer
+
+    view = slicer.app.layoutManager().view(layoutName)
+    if view is None:
+        return False
+    view.Render()
+    return True
+
+
+@method()
+def markupsInteractionActive():
+    """True while control points are placed or one is being moved (the touch magnifier is shown then)."""
+    import slicer
+
+    interaction = slicer.app.applicationLogic().GetInteractionNode()
+    if interaction is not None and interaction.GetCurrentInteractionMode() == interaction.Place:
+        return True
+    nodes = slicer.mrmlScene.GetNodesByClass("vtkMRMLMarkupsDisplayNode")
+    try:
+        for i in range(nodes.GetNumberOfItems()):
+            display = nodes.GetItemAsObject(i)
+            if display.GetActiveComponentType() == display.ComponentControlPoint:
+                return True
+    finally:
+        nodes.UnRegister(None)
+    return False
+
+
+@method()
 def viewDoubleClick(layoutName, x, y):
     """Deliver a double click at a position of a view (device pixels, origin top left).
 

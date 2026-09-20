@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
+import TouchMagnifier from "./TouchMagnifier.vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store, type LayoutTreeNode } from "../store";
 
@@ -52,6 +53,70 @@ async function attach() {
   await refreshVolumes();
 }
 
+// Magnifier: a fingertip covers the point it touches, so while control points are placed or moved,
+// the image under the finger is shown enlarged above it.
+const magnifierPosition = ref<{ x: number; y: number } | null>(null);
+const viewCanvas = ref<HTMLCanvasElement | null>(null);
+let magnifierTouch: number | null = null;
+let magnifierChecked = false; // the view has been asked whether a control point is placed or moved
+let magnifierEnabled = false; // ... and it is
+
+function touchInContainer(touch: Touch) {
+  const rect = container.value!.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+async function updateMagnifier(touch: Touch) {
+  if (!magnifierChecked) {
+    magnifierChecked = true;
+    // the press is processed by the view before this answer arrives (it starts moving a control point)
+    magnifierEnabled = await bridge.call<boolean>("markupsInteractionActive").catch(() => false);
+    viewCanvas.value = (container.value?.querySelector("canvas") as HTMLCanvasElement) ?? null;
+  }
+  if (!magnifierEnabled || !viewCanvas.value || magnifierTouch !== touch.identifier) return;
+  magnifierPosition.value = touchInContainer(touch);
+}
+
+function onTouchStart(event: TouchEvent) {
+  if (event.touches.length !== 1) {
+    hideMagnifier();
+    return;
+  }
+  magnifierTouch = event.touches[0].identifier;
+  magnifierChecked = false;
+  magnifierEnabled = false;
+  lastTouch = event.touches[0];
+  // the view processes the press in its next frame: ask after that, and refresh once more, because
+  // the first image is read while the view is still being rendered
+  for (const delay of [60, 160]) {
+    window.setTimeout(() => {
+      if (magnifierTouch !== null && lastTouch) updateMagnifier(lastTouch);
+    }, delay);
+  }
+}
+
+let lastTouch: Touch | null = null;
+function onTouchMove(event: TouchEvent) {
+  if (event.touches.length !== 1) {
+    hideMagnifier();
+    return;
+  }
+  lastTouch = event.touches[0];
+  updateMagnifier(event.touches[0]);
+}
+
+function hideMagnifier() {
+  magnifierTouch = null;
+  magnifierChecked = true;
+  magnifierEnabled = false;
+  magnifierPosition.value = null;
+  lastTouch = null;
+}
+
+function renderView() {
+  return bridge.call("renderView", [props.view.layoutName]);
+}
+
 // Double tap: touch screens have no double click, which maximizes a view in Slicer. Two taps at the
 // same place in quick succession are sent to the view as a double click.
 const DOUBLE_TAP_MS = 350;
@@ -59,6 +124,7 @@ const DOUBLE_TAP_DISTANCE = 30; // CSS pixels
 let lastTap: { time: number; x: number; y: number } | null = null;
 
 function onTouchEnd(event: TouchEvent) {
+  hideMagnifier();
   if (event.changedTouches.length !== 1 || event.touches.length > 0) {
     lastTap = null;
     return;
@@ -107,6 +173,8 @@ async function refreshVolumes() {
 onMounted(async () => {
   resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(container.value!);
+  container.value!.addEventListener("touchstart", onTouchStart, { passive: true });
+  container.value!.addEventListener("touchmove", onTouchMove, { passive: true });
   container.value!.addEventListener("touchend", onTouchEnd);
   offs.push(
     bridge.events.on<{ id: string }>("node-modified", (p) => {
@@ -128,6 +196,8 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(async () => {
+  container.value?.removeEventListener("touchstart", onTouchStart);
+  container.value?.removeEventListener("touchmove", onTouchMove);
   container.value?.removeEventListener("touchend", onTouchEnd);
   resizeObserver?.disconnect();
   offs.forEach((off) => off());
@@ -224,6 +294,7 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">
         {{ view.className }} is shown in the module panel
       </div>
+      <TouchMagnifier :canvas="viewCanvas" :position="magnifierPosition" :render="renderView" />
     </div>
   </div>
 </template>

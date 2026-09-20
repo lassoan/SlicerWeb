@@ -546,6 +546,9 @@ def viewDoubleClick(layoutName, x, y):
     if view is None:
         return False
     interactor = view.GetInteractor()
+    # Process the queued browser events first (the taps): the widgets act on a double click only
+    # when they are not interacting (e.g. the camera widget of a 3D view).
+    interactor.ProcessEvents()
     interactor.SetEventPositionFlipY(int(x), int(y))
     interactor.InvokeEvent(vtk.vtkCommand.LeftButtonDoubleClickEvent)
     return True

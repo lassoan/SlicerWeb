@@ -45,6 +45,8 @@ public:
   vtkNew<vtkCallbackCommand> SceneCallback;
   vtkNew<vtkCallbackCommand> RenderRequestCallback;
   vtkNew<vtkCallbackCommand> GestureCallback;
+  vtkNew<vtkCallbackCommand> ButtonPressCallback;
+  bool InButtonPressHandler = false;
   /// Pan translation of the current touch gesture accumulated so far (see OnGestureEvent)
   double PanTranslation[2] = { 0.0, 0.0 };
   bool Started{ false };
@@ -82,6 +84,8 @@ vtkSlicerWebView::vtkSlicerWebView()
   this->Internal->SceneCallback->SetCallback(&vtkSlicerWebView::OnSceneEvent);
   this->Internal->GestureCallback->SetClientData(this->Internal);
   this->Internal->GestureCallback->SetCallback(&vtkSlicerWebView::OnGestureEvent);
+  this->Internal->ButtonPressCallback->SetClientData(this->Internal);
+  this->Internal->ButtonPressCallback->SetCallback(&vtkSlicerWebView::OnButtonPressEvent);
   this->Internal->RenderRequestCallback->SetClientData(this);
   this->Internal->RenderRequestCallback->SetCallback(&vtkSlicerWebView::OnRenderRequest);
 }
@@ -152,6 +156,8 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
   d->RenderWindow->AddRenderer(d->Renderer);
   d->Interactor->SetRenderWindow(d->RenderWindow);
   // Runs before the Slicer interactor styles (priority 0)
+  // Runs before the interactor style, so that the widgets know what is under the pointer
+  d->Interactor->AddObserver(vtkCommand::LeftButtonPressEvent, d->ButtonPressCallback, 100.0);
   d->Interactor->AddObserver(vtkCommand::StartPanEvent, d->GestureCallback, 100.0);
   d->Interactor->AddObserver(vtkCommand::PanEvent, d->GestureCallback, 100.0);
 
@@ -484,4 +490,23 @@ void vtkSlicerWebView::OnGestureEvent(vtkObject* caller, unsigned long eid, void
   d->PanTranslation[0] = total[0];
   d->PanTranslation[1] = total[1];
   interactor->SetTranslation(increment);
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::OnButtonPressEvent(vtkObject* caller, unsigned long vtkNotUsed(eid), void* clientData,
+                                          void* vtkNotUsed(callData))
+{
+  // A touch screen has no pointer that moves before the press, while Slicer widgets act on what is
+  // under the pointer (e.g. dragging the control point of a markup starts on a press on a control
+  // point that the pointer is already over). A move event at the position of the press is sent
+  // first, so that touch behaves like a mouse. (For a mouse, the pointer is already there.)
+  vtkRenderWindowInteractor* interactor = vtkRenderWindowInteractor::SafeDownCast(caller);
+  vtkInternal* d = static_cast<vtkInternal*>(clientData);
+  if (!interactor || !d || d->InButtonPressHandler)
+  {
+    return;
+  }
+  d->InButtonPressHandler = true;
+  interactor->InvokeEvent(vtkCommand::MouseMoveEvent);
+  d->InButtonPressHandler = false;
 }

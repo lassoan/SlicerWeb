@@ -22,11 +22,11 @@ async function doubleTap(box) {
     await page.waitForTimeout(90);
   }
 }
-await doubleTap(await page.locator("#slicer-view-Red").boundingBox());
+await doubleTap(await page.locator(process.env.VIEW ? "#slicer-view-" + process.env.VIEW : "#slicer-view-Red").boundingBox());
 await page.waitForTimeout(2500);
 console.log("after double tap:", await canvases());
 if (shot) await page.screenshot({ path: shot });
-await doubleTap(await page.locator("#slicer-view-Red").boundingBox());
+await doubleTap(await page.locator(process.env.VIEW ? "#slicer-view-" + process.env.VIEW : "#slicer-view-Red").boundingBox());
 await page.waitForTimeout(2500);
 console.log("after second double tap:", await canvases());
 await browser.close();

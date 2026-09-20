@@ -107,6 +107,7 @@ protected:
   void SetInteractorObserverInternal(vtkMRMLViewInteractorStyle* style);
   void SetDisplayableManagerGroupInternal(vtkMRMLDisplayableManagerGroup* group);
 
+  static void OnButtonPressEvent(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
   static void OnGestureEvent(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
   static void OnSceneEvent(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
   static void OnRenderRequest(vtkObject* caller, unsigned long eid, void* clientData, void* callData);

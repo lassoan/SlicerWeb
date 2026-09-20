@@ -282,6 +282,7 @@ class LayoutManager:
         if viewNode is None:
             logger.error("attachView: no view node with layout name %s", layoutName)
             return False
+        self._app.applyScreenScaleFactor(viewNode)
 
         if viewNode.IsA("vtkMRMLSliceNode"):
             view = slicer.vtkSlicerWebSliceView()

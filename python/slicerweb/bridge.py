@@ -623,6 +623,24 @@ def showScriptedModuleWidget(moduleName, containerSelector):
 
 
 @method()
+def reloadScriptedModule(moduleName):
+    """Developer tools: reload the module's Python file and rebuild its GUI."""
+    from .modules import reload_scripted_module
+
+    return reload_scripted_module(moduleName)
+
+
+@method()
+def runScriptedModuleTest(moduleName, reload=False):
+    """Developer tools: run the module's self test (optionally after reloading it)."""
+    from .modules import reload_scripted_module, run_scripted_module_test
+
+    if reload:
+        reload_scripted_module(moduleName)
+    return run_scripted_module_test(moduleName)
+
+
+@method()
 def hideScriptedModuleWidget(moduleName):
     from .modules import hide_scripted_module_widget
 

@@ -14,6 +14,7 @@ export interface ModuleSummary {
   acknowledgementText: string;
   contributors: string[];
   webWidget: string | null;
+  hasTest?: boolean;
   icon: string | null;
 }
 

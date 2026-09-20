@@ -265,6 +265,39 @@ class ctkPushButton(QPushButton):
         pass
 
 
+class ctkCheckablePushButton(QPushButton):
+    """Push button with a check box (ctkCheckablePushButton, e.g. "Apply" with auto-update)."""
+
+    checkBoxToggled = Signal("checkBoxToggled(bool)")
+
+    def __init__(self, text="", parent=None, *args):
+        super().__init__(text, parent, *args)
+        self.setCheckable(True)
+        self._checkBoxVisible = True
+        self.toggled.connect(lambda checked: self.checkBoxToggled.emit(bool(checked)))
+
+    def setCheckBoxVisible(self, visible):
+        self._checkBoxVisible = bool(visible)
+
+    def isCheckBoxVisible(self):
+        return self._checkBoxVisible
+
+    def setCheckBoxControlsButton(self, enabled):
+        pass
+
+    def checkBoxControlsButton(self):
+        return True
+
+    def setCheckState(self, state):
+        self.setChecked(bool(state))
+
+    def checkState(self):
+        return 2 if self.isChecked() else 0
+
+    def setIndicatorAlignment(self, alignment):
+        pass
+
+
 class ctkMenuButton(QPushButton):
     pass
 

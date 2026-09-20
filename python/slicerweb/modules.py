@@ -55,6 +55,10 @@ class ModuleBase:
     def isHidden(self):
         return self.hidden
 
+    def hasTest(self):
+        """The module provides a self test (<Name>Test class), which "Reload and Test" runs."""
+        return False
+
     def widgetRepresentation(self):
         return self._widget
 
@@ -73,6 +77,7 @@ class ModuleBase:
             "acknowledgementText": self.acknowledgementText,
             "contributors": self.contributors,
             "webWidget": self.webWidget,
+            "hasTest": self.hasTest(),
             "icon": self.icon,
         }
 
@@ -137,6 +142,18 @@ class ScriptedModule(ModuleBase):
         # creates an empty vtkSlicerScriptedLoadableModuleLogic); logic() returns the widget's logic.
         if hasattr(self.instance, "setup"):
             pass
+
+    def hasTest(self):
+        return getattr(self.pythonModule, self.name + "Test", None) is not None
+
+    def widgetRepresentation(self):
+        """The module's widget, created when it is first needed (as qSlicerScriptedLoadableModule does)."""
+        if self._widget is None:
+            create_scripted_module_widget(self.name)
+        return self._widget
+
+    def createNewWidgetRepresentation(self):
+        return self.widgetRepresentation()
 
     def logic(self):
         widget = self._widget
@@ -454,6 +471,38 @@ class ModuleManager:
             module._widget = widget
 
 
+def create_scripted_module_widget(moduleName):
+    """Create the GUI of a scripted module (ScriptedLoadableModuleWidget.setup() runs unchanged).
+
+    The widget is created in a container that the page can show later, so that module code and tests
+    can use slicer.util.getModuleWidget() before the module panel is shown.
+    """
+    import slicer
+
+    from .qtcompat import mrmlwidgets, widgets
+
+    manager = slicer.app.moduleManager()
+    module = manager.module(moduleName)
+    if module is None or module.kind != "scripted":
+        raise KeyError(f"Scripted module {moduleName} is not loaded")
+    parent = getattr(module, "_hostWidget", None)
+    if parent is not None:
+        return module._widget
+    parent = mrmlwidgets.qMRMLWidget()
+    parent.setLayout(widgets.QVBoxLayout())
+    parent.setMRMLScene(slicer.mrmlScene)
+    parent.setObjectName(moduleName + "WidgetParent")
+    widget_cls = getattr(module.pythonModule, moduleName + "Widget", None)
+    if widget_cls is None:
+        raise RuntimeError(f"{moduleName} does not define a {moduleName}Widget class")
+    instance = widget_cls(parent)
+    instance.setup()
+    module._widget = instance
+    module._hostWidget = parent
+    setattr(slicer.modules, moduleName + "Widget", instance)
+    return instance
+
+
 def show_scripted_module_widget(moduleName, containerSelector):
     """Create (once) and show the GUI of a scripted module inside a container element of the page.
 
@@ -462,32 +511,69 @@ def show_scripted_module_widget(moduleName, containerSelector):
     """
     import slicer
 
-    from .qtcompat import dom, mrmlwidgets, widgets
+    from .qtcompat import dom
 
     manager = slicer.app.moduleManager()
     module = manager.module(moduleName)
     if module is None or module.kind != "scripted":
         raise KeyError(f"Scripted module {moduleName} is not loaded")
-    parent = getattr(module, "_hostWidget", None)
-    if parent is None:
-        parent = mrmlwidgets.qMRMLWidget()
-        parent.setLayout(widgets.QVBoxLayout())
-        parent.setMRMLScene(slicer.mrmlScene)
-        parent.setObjectName(moduleName + "WidgetParent")
-        widget_cls = getattr(module.pythonModule, moduleName + "Widget", None)
-        if widget_cls is None:
-            raise RuntimeError(f"{moduleName} does not define a {moduleName}Widget class")
-        instance = widget_cls(parent)
-        instance.setup()
-        module._widget = instance
-        module._hostWidget = parent
-        setattr(slicer.modules, moduleName + "Widget", instance)
+    create_scripted_module_widget(moduleName)
+    parent = module._hostWidget
     container = dom.query(containerSelector)
     if container is not None:
         container.appendChild(parent.element())
     if hasattr(module._widget, "enter"):
         module._widget.enter()
     return True
+
+
+def reload_scripted_module(moduleName):
+    """Reload the Python file of a scripted module and rebuild its GUI (slicer.util.reloadScriptedModule)."""
+    import slicer
+
+    manager = slicer.app.moduleManager()
+    module = manager.module(moduleName)
+    if module is None or module.kind != "scripted":
+        raise KeyError(f"Scripted module {moduleName} is not loaded")
+    filename = module.path
+    hide_scripted_module_widget(moduleName)
+    for name in [moduleName] + [n for n in list(sys.modules) if n.startswith(moduleName + ".")]:
+        sys.modules.pop(name, None)
+    module._hostWidget = None
+    module._widget = None
+    manager._modules.pop(moduleName, None)
+    manager._scripted_sources[moduleName] = filename
+    reloaded = manager.loadModule(moduleName)
+    if reloaded is None:
+        raise RuntimeError(f"Failed to reload {moduleName}")
+    host.emit("modules-changed", manager.moduleSummaries())
+    return True
+
+
+def run_scripted_module_test(moduleName):
+    """Run the self test of a scripted module (its <Name>Test class), as "Reload and Test" does."""
+    import time
+    import traceback
+
+    import slicer
+
+    module = slicer.app.moduleManager().module(moduleName)
+    if module is None or module.kind != "scripted":
+        raise KeyError(f"Scripted module {moduleName} is not loaded")
+    testClass = getattr(module.pythonModule, moduleName + "Test", None)
+    if testClass is None:
+        raise RuntimeError(f"{moduleName} does not define a {moduleName}Test class")
+    test = testClass()
+    if hasattr(test, "messageDelay"):
+        test.messageDelay = 0  # no message popups in the web page
+    start = time.time()
+    try:
+        test.runTest()
+    except Exception as e:
+        logger.exception("Test of module %s failed", moduleName)
+        return {"passed": False, "message": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc(),
+                "seconds": round(time.time() - start, 1)}
+    return {"passed": True, "message": "Test passed", "seconds": round(time.time() - start, 1)}
 
 
 def hide_scripted_module_widget(moduleName):

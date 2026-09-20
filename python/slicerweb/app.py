@@ -98,8 +98,10 @@ class SlicerWebApplication:
 
         qtcompat.install_slicer_widgets()
 
-        from . import packages
+        from . import cli_modules, downloads, packages
 
+        cli_modules.install()
+        downloads.install()
         packages.install()
 
         # Python console namespace, as in the desktop Python interactor
@@ -137,6 +139,44 @@ class SlicerWebApplication:
         os.makedirs(self._temp, exist_ok=True)
         os.makedirs(self.defaultScenePath, exist_ok=True)
 
+    def screenScaleFactor(self):
+        """vtkMRMLAbstractViewNode ScreenScaleFactor for this display.
+
+        Markups control point glyphs, their labels and the picking tolerance are sized as
+        screen diagonal * ScreenScaleFactor * glyph scale (see vtkSlicerMarkupsWidgetRepresentation).
+        The screen size reported by the browser is in CSS pixels while the views render in device
+        pixels, and screens are much smaller than a desktop monitor on phones and tablets: the factor
+        is scaled accordingly, so that markups have about the same size as in desktop Slicer.
+        """
+        default = 0.2                      # vtkMRMLAbstractViewNode default
+        referenceDiagonal = 2200.0         # desktop monitor (1920x1080), for which the default is set
+        ratio = float(self._config.get("devicePixelRatio") or 1.0)
+        width = float(self._config.get("screenWidth") or 0.0)
+        height = float(self._config.get("screenHeight") or 0.0)
+        diagonal = (width ** 2 + height ** 2) ** 0.5
+        if diagonal <= 0:
+            return default * ratio
+        factor = default * ratio * referenceDiagonal / diagonal
+        return min(max(factor, default), 5.0)
+
+    def markupsTextScale(self, defaultTextScale=3.0):
+        """Default markups TextScale for this display.
+
+        Label size is font size * TextScale * ScreenScaleFactor * 5 (vtkSlicerMarkupsWidgetRepresentation),
+        so it grows with the screen scale factor while the glyphs are sized relative to the screen:
+        the text scale compensates, keeping labels in proportion with the control points.
+        """
+        factor = self.screenScaleFactor()
+        ratio = float(self._config.get("devicePixelRatio") or 1.0)
+        if factor <= 0:
+            return defaultTextScale
+        return max(0.5, defaultTextScale * 0.2 * ratio / factor)
+
+    def applyScreenScaleFactor(self, viewNode):
+        """Set the screen scale factor of a view node (called for every view of the layout)."""
+        if viewNode is not None:
+            viewNode.SetScreenScaleFactor(self.screenScaleFactor())
+
     def _setMRMLScene(self, scene):
         """Same as qSlicerCoreApplication::setMRMLScene + qSlicerCoreApplicationPrivate::init."""
         import vtk
@@ -145,6 +185,22 @@ class SlicerWebApplication:
         scene.SetRootDirectory(self.defaultScenePath)
         # Register the node type for command line modules
         scene.RegisterNodeClass(slicer.vtkMRMLCommandLineModuleNode())
+        # Default view nodes: markups and other widgets are sized for this display (see
+        # screenScaleFactor); new view nodes of the layout inherit these defaults.
+        for className in ("vtkMRMLViewNode", "vtkMRMLSliceNode"):
+            defaultNode = scene.GetDefaultNodeByClass(className)
+            if defaultNode is None:
+                defaultNode = scene.CreateNodeByClass(className)
+                scene.AddDefaultNode(defaultNode)
+            defaultNode.SetScreenScaleFactor(self.screenScaleFactor())
+
+        # Markups: keep labels in proportion with the control point glyphs on this display
+        markupsDisplay = scene.GetDefaultNodeByClass("vtkMRMLMarkupsDisplayNode")
+        if markupsDisplay is None:
+            markupsDisplay = scene.CreateNodeByClass("vtkMRMLMarkupsDisplayNode")
+            scene.AddDefaultNode(markupsDisplay)
+        markupsDisplay.SetTextScale(self.markupsTextScale(markupsDisplay.GetTextScale()))
+
         # First scene needs a crosshair to be added manually
         crosshair = slicer.vtkMRMLCrosshairNode()
         crosshair.SetCrosshairName("default")
@@ -332,6 +388,20 @@ class SlicerWebApplication:
     def topLevelWidgets(self):
         """No Qt main window in the browser (slicer.util.mainWindow() returns None)."""
         return []
+
+    # Mouse cursor of long operations (qSlicerApplication): the page shows its own busy indicator
+    def setOverrideCursor(self, cursor=None):
+        from . import host
+
+        host.emit("busy", {"busy": True})
+
+    def restoreOverrideCursor(self):
+        from . import host
+
+        host.emit("busy", {"busy": False})
+
+    def overrideCursor(self):
+        return None
 
     def documentationBaseUrl(self):
         return "https://slicer.readthedocs.io/en/latest"

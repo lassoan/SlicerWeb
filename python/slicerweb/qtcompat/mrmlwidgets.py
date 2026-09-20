@@ -164,12 +164,23 @@ class qMRMLSegmentSelectorWidget(qMRMLNodeComboBox):
         self.nodeTypes = ["vtkMRMLSegmentationNode"]
         self._segmentID = ""
 
+    @property
     def currentSegmentID(self):
-        return self._segmentID
+        """Qt property (attribute in PythonQt); also callable as currentSegmentID()."""
+        return property_value(self._segmentID or "")
 
     def setCurrentSegmentID(self, segmentID):
-        self._segmentID = segmentID
-        self.currentSegmentChanged.emit(segmentID)
+        self._segmentID = segmentID or ""
+        self.currentSegmentChanged.emit(self._segmentID)
+
+    def setCurrentSegmentIDs(self, segmentIDs):
+        self.setCurrentSegmentID(segmentIDs[0] if segmentIDs else "")
+
+    def segmentationNode(self):
+        return self.currentNode()
+
+    def setSegmentationNode(self, node):
+        self.setCurrentNode(node)
 
 
 class qMRMLSegmentsTableView(QWidget):
@@ -534,6 +545,18 @@ class qMRMLTableView(QWidget):
 
 class qSlicerModuleWidget(qMRMLWidget):
     pass
+
+
+class qSlicerScriptedLoadableModuleWidget(QWidget):
+    """Qt wrapper of a Python module widget in desktop Slicer.
+
+    Scripted module widgets are plain Python objects here, so nothing is an instance of this class;
+    it exists because slicer.util.getModuleWidget() checks for it (and then returns the Python
+    object, which is what this application already provides).
+    """
+
+    def self(self):
+        return self
 
 
 WIDGETS = {name: obj for name, obj in globals().items() if name.startswith(("qMRML", "qSlicer"))}

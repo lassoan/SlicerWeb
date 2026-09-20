@@ -109,7 +109,13 @@ os.environ["LD_LIBRARY_PATH"] = ":".join(_dirs + [os.environ.get("LD_LIBRARY_PAT
     const init = pyodide.runPython(`
 import json, slicerweb
 from slicerweb import bridge
-slicerweb.initialize(json.loads(${JSON.stringify(JSON.stringify({ layout: this.config.layout }))}))
+slicerweb.initialize(json.loads(${JSON.stringify(JSON.stringify({
+      layout: this.config.layout,
+      // display properties: markups glyphs and picking tolerance are sized for this screen
+      devicePixelRatio: window.devicePixelRatio || 1,
+      screenWidth: window.screen?.width ?? 0,
+      screenHeight: window.screen?.height ?? 0,
+    }))}))
 bridge.call
 `);
     this.bridge.attach((method: string, args: string) => init(method, args));

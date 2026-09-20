@@ -112,6 +112,50 @@ class QWidget(QObject):
             except Exception:
                 pass
 
+    # Geometry: the web layout sizes the widgets, so these are accepted and have no effect
+    @property
+    def sizeHint(self):
+        # Qt property (PythonQt: widget.sizeHint.height()); QSize is callable, so sizeHint() also works
+        from .types import QSize
+
+        return QSize(0, 0)
+
+    @property
+    def minimumSizeHint(self):
+        from .types import QSize
+
+        return QSize(0, 0)
+
+    def adjustSize(self):
+        pass
+
+    def updateGeometry(self):
+        pass
+
+    def setSizePolicy(self, *args):
+        pass
+
+    def setMinimumWidth(self, width):
+        pass
+
+    def setMinimumHeight(self, height):
+        pass
+
+    def setMaximumWidth(self, width):
+        pass
+
+    def setMaximumHeight(self, height):
+        pass
+
+    def setFixedWidth(self, width):
+        pass
+
+    def setFixedHeight(self, height):
+        pass
+
+    def setFixedSize(self, *args):
+        pass
+
     def setToolTip(self, text):
         self._toolTip = str(text)
         try:
@@ -711,8 +755,14 @@ class QComboBox(_ElementWidget):
     currentIndex = property(lambda self: self._currentIndex, lambda self, v: self.setCurrentIndex(v))
     currentText = property(lambda self: self.itemText(self._currentIndex), lambda self, v: self.setCurrentText(v))
 
-    def currentData(self, role=None):
-        return self.itemData(self._currentIndex)
+    @property
+    def currentData(self):
+        """Qt property (PythonQt: comboBox.currentData); also callable as currentData()."""
+        from .core import property_value
+
+        index = self.currentIndex
+        data = self._itemData[index] if 0 <= index < len(self._itemData) else None
+        return property_value(data)
 
     def setEditable(self, v):
         pass

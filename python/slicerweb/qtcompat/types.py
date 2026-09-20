@@ -72,6 +72,9 @@ class QSize:
     def height(self):
         return self._h
 
+    def __call__(self):
+        # Qt property in PythonQt (widget.sizeHint), also called as a getter (widget.sizeHint())
+        return self
 
 class QPoint:
     def __init__(self, x=0, y=0):

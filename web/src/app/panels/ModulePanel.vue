@@ -21,7 +21,9 @@ const webOnlyModules: ModuleSummary[] = [
 ];
 
 const modules = computed<ModuleSummary[]>(() => {
-  const list = store.modules.filter((m) => !m.hidden).slice();
+  // Hidden modules are left out, unless this application has a GUI for one (Terminologies is hidden
+  // in desktop Slicer, which has no panel for it)
+  const list = store.modules.filter((m) => !m.hidden || m.name in modulePanels).slice();
   for (const w of webOnlyModules) if (!list.some((m) => m.name === w.name)) list.push(w);
   return list.sort((a, b) => a.title.localeCompare(b.title));
 });

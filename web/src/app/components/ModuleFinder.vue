@@ -21,7 +21,6 @@ const list = ref<HTMLElement>();
 const results = computed(() => {
   const text = filter.value.trim().toLowerCase();
   return props.modules
-    .filter((m) => !m.hidden)
     .filter((m) => builtIn.value || m.extension)
     .filter((m) => {
       if (!text) return true;

@@ -93,7 +93,7 @@ class SlicerWebApplication:
         slicer.mrmlScene = scene
         self._installLogging()
 
-        from . import bridge, panels, panels_markupstomodel, sample_data, segment_editor, views_data  # noqa: F401  (register module GUI bridge methods)
+        from . import bridge, panels, panels_markupstomodel, panels_more, sample_data, segment_editor, views_data  # noqa: F401  (register module GUI bridge methods)
         from . import qtcompat
 
         qtcompat.install_slicer_widgets()

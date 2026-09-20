@@ -10,19 +10,24 @@ import { store } from "../store";
  * shows the same node as the module.
  */
 export function useSelectedNode(className?: string): Ref<string | null> {
-  const nodeID = ref<string | null>(store.selectedNodeID);
+  const matches = (cls: string | null | undefined) => !className || (cls ?? "").includes(className);
+  // Only a selection of the kind this panel shows: the node picked in another module is not one of
+  // its own (a text node opened in Texts must not become the table of the Tables panel).
+  const nodeID = ref<string | null>(matches(store.selectedNodeClass) ? store.selectedNodeID : null);
 
   watch(
     () => store.selectedNodeID,
     (id) => {
       if (!id || id === nodeID.value) return;
       // Nodes of another kind belong to another panel; this one keeps what it has.
-      if (className && !(store.selectedNodeClass ?? "").includes(className)) return;
+      if (!matches(store.selectedNodeClass)) return;
       nodeID.value = id;
     },
   );
   watch(nodeID, (id) => {
-    if (id) store.selectedNodeID = id;
+    if (!id) return;
+    store.selectedNodeID = id;
+    if (className) store.selectedNodeClass = "vtkMRML" + className + "Node";
   });
 
   return nodeID;

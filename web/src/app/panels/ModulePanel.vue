@@ -1,47 +1,47 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { Search, Info } from "@lucide/vue";
-import { store } from "../store";
+import { store, type ModuleSummary } from "../store";
 import { modulePanels } from "../modules";
+import ModuleFinder from "../components/ModuleFinder.vue";
 import ScriptedModuleHost from "../modules/ScriptedModuleHost.vue";
 import GenericModulePanel from "../modules/GenericModulePanel.vue";
 
-const filter = ref("");
 const selectorOpen = ref(false);
 const showHelp = ref(false);
 
 // Web GUIs that are not tied to a loadable module name
-const webOnlyModules = [
-  { name: "SegmentEditor", title: "Segment Editor", categories: ["Segmentation"] },
-  { name: "Data", title: "Data", categories: [""] },
+const webOnlyModules: ModuleSummary[] = [
+  { name: "SegmentEditor", title: "Segment Editor", categories: ["Segmentation"], kind: "scripted",
+    helpText: "Edit the segments of a segmentation with the paint, draw, erase and threshold effects.",
+    dependencies: [], hidden: false, acknowledgementText: "", contributors: [], webWidget: null, icon: null },
+  { name: "Data", title: "Data", categories: ["Informatics"], kind: "loadable",
+    helpText: "The nodes of the scene, as a subject hierarchy tree.",
+    dependencies: [], hidden: false, acknowledgementText: "", contributors: [], webWidget: null, icon: null },
 ];
 
-const modules = computed(() => {
-  const list = store.modules.filter((m) => !m.hidden).map((m) => ({ name: m.name, title: m.title, categories: m.categories }));
+const modules = computed<ModuleSummary[]>(() => {
+  const list = store.modules.filter((m) => !m.hidden).slice();
   for (const w of webOnlyModules) if (!list.some((m) => m.name === w.name)) list.push(w);
   return list.sort((a, b) => a.title.localeCompare(b.title));
-});
-
-const grouped = computed(() => {
-  const f = filter.value.toLowerCase();
-  const groups = new Map<string, { name: string; title: string }[]>();
-  for (const m of modules.value) {
-    if (f && !m.title.toLowerCase().includes(f) && !m.name.toLowerCase().includes(f)) continue;
-    const cat = m.categories[0] || "Main";
-    if (!groups.has(cat)) groups.set(cat, []);
-    groups.get(cat)!.push(m);
-  }
-  return [...groups.entries()].sort(([a], [b]) => (a === "Main" ? -1 : b === "Main" ? 1 : a.localeCompare(b)));
 });
 
 const active = computed(() => store.modules.find((m) => m.name === store.activeModule));
 const activeTitle = computed(() => active.value?.title ?? webOnlyModules.find((w) => w.name === store.activeModule)?.title ?? store.activeModule);
 const panel = computed(() => modulePanels[store.activeModule] ?? (active.value?.webWidget ? modulePanels[active.value.webWidget] : undefined));
 
+// Opening the finder puts the cursor in its search box, so that a module can be typed straight away
+// (on a phone this is also what brings the keyboard up).
+const finder = ref<InstanceType<typeof ModuleFinder>>();
+watch(selectorOpen, async (open) => {
+  if (!open) return;
+  await nextTick();
+  finder.value?.focus();
+});
+
 function select(name: string) {
   store.activeModule = name;
   selectorOpen.value = false;
-  filter.value = "";
 }
 </script>
 
@@ -56,13 +56,8 @@ function select(name: string) {
           <Info :size="14" />
         </button>
       </button>
-      <div v-if="selectorOpen" class="absolute right-2 left-2 z-30 mt-1 max-h-[65vh] overflow-y-auto rounded-lg border border-input bg-popover p-1 shadow-xl">
-        <input v-model="filter" autofocus placeholder="Search modules" class="mb-1 h-7 w-full rounded border border-input bg-background px-2 text-[13px] outline-none" />
-        <template v-for="[category, items] in grouped" :key="category">
-          <div class="px-2 pt-1.5 pb-0.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{{ category }}</div>
-          <button v-for="m in items" :key="m.name" type="button" class="block w-full rounded px-2 py-1 text-left text-[13px] hover:bg-accent"
-            :class="m.name === store.activeModule ? 'text-highlight' : ''" @click="select(m.name)">{{ m.title }}</button>
-        </template>
+      <div v-if="selectorOpen" class="absolute right-2 left-2 z-30 mt-1">
+        <ModuleFinder ref="finder" :modules="modules" :current="store.activeModule" @select="select" @close="selectorOpen = false" />
       </div>
     </div>
     <div v-if="showHelp && active" class="mx-2 mb-2 rounded-md bg-card p-2 text-[12px] text-muted-foreground">

@@ -16,6 +16,10 @@ export interface ModuleSummary {
   webWidget: string | null;
   hasTest?: boolean;
   icon: string | null;
+  /** File the module was loaded from (shown by the module finder). */
+  path?: string;
+  /** Extension the module came from, or null for a module of the application itself. */
+  extension?: string | null;
 }
 
 export interface LayoutTreeNode {

@@ -32,7 +32,8 @@ class ModuleBase:
     """Common API of loadable and scripted modules (subset of qSlicerAbstractCoreModule)."""
 
     def __init__(self, name, title=None, categories=None, dependencies=None, path="", hidden=False,
-                 helpText="", acknowledgementText="", contributors=None, webWidget=None, icon=None):
+                 helpText="", acknowledgementText="", contributors=None, webWidget=None, icon=None,
+                 extension=None):
         self.name = name
         self.title = title or name
         self.categories = list(categories or [])
@@ -44,6 +45,7 @@ class ModuleBase:
         self.contributors = list(contributors or [])
         self.webWidget = webWidget
         self.icon = icon
+        self.extension = extension  # name of the extension the module came from, or None
         self._logic = None
         self._widget = None
         self._app = None
@@ -79,6 +81,8 @@ class ModuleBase:
             "webWidget": self.webWidget,
             "hasTest": self.hasTest(),
             "icon": self.icon,
+            "path": self.path,
+            "extension": self.extension or extension_of_path(self.path),
         }
 
     def __repr__(self):
@@ -223,6 +227,41 @@ def _parent_info(instance):
     }
 
 
+_extension_paths = None
+
+
+def extension_of_path(path):
+    """Name of the extension a module file came from, or None for a module of the application.
+
+    Extension modules are installed into the same directories as the application's own (as in
+    desktop Slicer), so what tells them apart is the wheel that brought them: each extension wheel
+    records the files it installed.
+    """
+    global _extension_paths
+    if not path:
+        return None
+    if _extension_paths is None:
+        import importlib.metadata
+
+        _extension_paths = {}
+        for dist in importlib.metadata.distributions():
+            name = (dist.metadata["Name"] or "").replace("_", "-")
+            if not name.startswith("slicer-ext-"):
+                continue
+            for entry in dist.files or []:
+                try:
+                    _extension_paths[os.path.normpath(str(dist.locate_file(entry)))] = name[len("slicer-ext-"):]
+                except Exception:
+                    continue
+    return _extension_paths.get(os.path.normpath(path))
+
+
+def forget_extension_paths():
+    """Read the installed extensions again (an extension was installed while running)."""
+    global _extension_paths
+    _extension_paths = None
+
+
 def module_share_directory(app, name):
     """vtkSlicerApplicationLogic::GetModuleShareDirectory equivalent for built-in modules."""
     return os.path.join(app.slicerSharePath, "qt-loadable-modules", name)
@@ -320,6 +359,7 @@ class ModuleManager:
         import slicer
 
         self._discover_extension_entry_points()
+        forget_extension_paths()   # an extension installed since the last load brought new files
         from . import libs
 
         loadable_dir = libs.loadable_modules_lib_dir()
@@ -366,6 +406,7 @@ class ModuleManager:
             self.registerLoadableModule(LoadableModuleDescriptor(
                 name, logicClass=info.get("logicClass") or None, title=info.get("title") or name,
                 dependencies=info.get("dependencies") or [], path=filename,
+                extension=info.get("extension") or None,
                 categories=info.get("categories") or [info.get("extension") or "Extensions"]))
 
     def _initializeCoreDisplayableManagers(self):

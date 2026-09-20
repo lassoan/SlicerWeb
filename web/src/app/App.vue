@@ -16,7 +16,7 @@ const runtime = inject<SlicerRuntime>("runtime")!;
 provide("bridge", runtime.bridge);
 
 const events = runtime.bridge.events;
-events.on<{ layout: number; description: LayoutTreeNode }>("layout-changed", (p) => {
+events.on<{ layout: number; description: LayoutTreeNode; maximized: string | null }>("layout-changed", (p) => {
   store.layout = p;
 });
 events.on<ModuleSummary[]>("modules-changed", (modules) => {
@@ -68,10 +68,10 @@ onMounted(async () => {
   runtime.onProgress((p) => (store.progress = p));
   try {
     await runtime.start();
-    const layout = await runtime.bridge.call<{ layout: number; description: LayoutTreeNode; available: Record<string, number> }>(
+    const layout = await runtime.bridge.call<{ layout: number; description: LayoutTreeNode; maximized: string | null; available: Record<string, number> }>(
       "getLayoutDescription",
     );
-    store.layout = { layout: layout.layout, description: layout.description };
+    store.layout = { layout: layout.layout, description: layout.description, maximized: layout.maximized ?? null };
     store.availableLayouts = layout.available;
     store.modules = await runtime.bridge.call("getModules");
     store.status = "ready";

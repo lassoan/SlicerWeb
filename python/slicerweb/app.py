@@ -93,7 +93,7 @@ class SlicerWebApplication:
         slicer.mrmlScene = scene
         self._installLogging()
 
-        from . import bridge, panels, panels_markupstomodel, segment_editor  # noqa: F401  (register module GUI bridge methods)
+        from . import bridge, panels, panels_markupstomodel, sample_data, segment_editor  # noqa: F401  (register module GUI bridge methods)
         from . import qtcompat
 
         qtcompat.install_slicer_widgets()
@@ -252,7 +252,7 @@ class SlicerWebApplication:
     def applicationVersion(self):
         from . import libs
 
-        return libs.slicer_version_full()
+        return property_value(libs.slicer_version_full())
 
     # Qt properties of qSlicerCoreApplication (attributes in PythonQt; also callable, see property_value)
     @property
@@ -281,11 +281,11 @@ class SlicerWebApplication:
 
     @property
     def slicerHome(self):
-        return self._home
+        return property_value(self._home)
 
     @property
     def slicerSharePath(self):
-        return self._share
+        return property_value(self._share)
 
     # ------------------------------------------------------------------ Qt-style signals
     def __getattr__(self, name):
@@ -346,17 +346,17 @@ class SlicerWebApplication:
 
     @property
     def temporaryPath(self):
-        return self._temp
+        return property_value(self._temp)
 
     @property
     def cachePath(self):
         path = os.path.join(self._temp, "Cache")
         os.makedirs(path, exist_ok=True)
-        return path
+        return property_value(path)
 
     @property
     def defaultScenePath(self):
-        return os.path.join(self._temp, "Scenes")
+        return property_value(os.path.join(self._temp, "Scenes"))
 
     @property
     def extensionsInstallPath(self):
@@ -373,11 +373,11 @@ class SlicerWebApplication:
 
     @property
     def arch(self):
-        return "wasm32"
+        return property_value("wasm32")
 
     @property
     def testingEnabled(self):
-        return bool(self._config.get("testing", False))
+        return property_value(bool(self._config.get("testing", False)))
 
     @property
     def isInstalled(self):

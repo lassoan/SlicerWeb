@@ -246,8 +246,20 @@ bridge.call
 
   /** Download a URL into the virtual file system. */
   async downloadFile(url: string, fileName?: string, directory = "/data/downloads"): Promise<string> {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`Download failed (${response.status}): ${url}`);
+    let response: Response | null = null;
+    try {
+      response = await fetch(url);
+    } catch {
+      response = null; // other origin without cross-origin headers: use the download proxy
+    }
+    if (!response || !response.ok) {
+      const proxied = new URL("download?url=" + encodeURIComponent(new URL(url, document.baseURI).href), document.baseURI).href;
+      const previous = response;
+      response = await fetch(proxied).catch(() => null);
+      if (!response || !response.ok) {
+        throw new Error(`Download failed (${response?.status ?? previous?.status ?? "no response"}): ${url}`);
+      }
+    }
     const name = fileName ?? decodeURIComponent(new URL(url, document.baseURI).pathname.split("/").pop() || "download");
     const FS = this.pyodide!.FS;
     FS.mkdirTree(directory);

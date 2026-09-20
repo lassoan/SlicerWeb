@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { Pin, RotateCcw, Maximize2 } from "@lucide/vue";
+import { Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store, type LayoutTreeNode } from "../store";
 
@@ -116,9 +116,11 @@ async function rotateTo(direction: number) {
   await bridge.evalPython(`slicer.app.layoutManager().view(${JSON.stringify(props.view.layoutName)}).ResetCamera(${direction})`);
 }
 
+const maximized = computed(() => store.layout.maximized === props.view.layoutName);
+
+/** Show this view alone; when it is already maximized, restore the layout. */
 async function maximize() {
-  if (!props.view.nodeID) return;
-  await bridge.invoke("layout", "maximizeView", [{ __node__: props.view.nodeID }]);
+  await bridge.call("maximizeView", [props.view.layoutName]);
 }
 
 const orientations = ["Axial", "Sagittal", "Coronal", "Reformat"];
@@ -167,7 +169,8 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       </template>
       <div v-else class="flex-1" />
       <button type="button" class="text-muted-foreground hover:text-highlight" title="Reset view" @click="resetView"><RotateCcw :size="13" /></button>
-      <button type="button" class="text-muted-foreground hover:text-highlight" title="Maximize view" @click="maximize"><Maximize2 :size="13" /></button>
+      <button type="button" class="text-muted-foreground hover:text-highlight" :title="maximized ? 'Restore view layout' : 'Maximize view'"
+        @click="maximize"><Minimize2 v-if="maximized" :size="13" /><Maximize2 v-else :size="13" /></button>
       <Pin v-if="false" :size="13" />
     </div>
     <div ref="container" class="relative min-h-0 flex-1 overflow-hidden">

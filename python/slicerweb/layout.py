@@ -26,6 +26,17 @@ SLICE_VIEW_CLASSES = ("vtkMRMLSliceNode",)
 THREED_VIEW_CLASSES = ("vtkMRMLViewNode",)
 
 
+def _find_view_element(description, nodeID):
+    """The element of a view node in a layout description tree."""
+    if description.get("type") == "view":
+        return description if description.get("nodeID") == nodeID else None
+    for child in description.get("children", []):
+        found = _find_view_element(child, nodeID)
+        if found is not None:
+            return found
+    return None
+
+
 def _rgb_to_hex(rgb):
     return "#%02x%02x%02x" % tuple(int(max(0.0, min(1.0, c)) * 255 + 0.5) for c in rgb[:3])
 
@@ -111,7 +122,14 @@ class LayoutManager:
         except ET.ParseError:
             logger.error("Invalid layout description: %s", xml)
             return {"type": "empty", "children": []}
-        return self._convertLayoutElement(root, viewNodes)
+        description = self._convertLayoutElement(root, viewNodes)
+        # A maximized view (view controller "maximize" button) is shown alone, as in desktop Slicer
+        maximized = self.maximizedViewNode()
+        if maximized is not None:
+            view = _find_view_element(description, maximized.GetID())
+            if view is not None:
+                return view
+        return description
 
     def _viewNodesByTag(self):
         import slicer
@@ -186,11 +204,38 @@ class LayoutManager:
             info["orientation"] = viewNode.GetOrientation()
         return info
 
+    def viewNode(self, layoutName):
+        """View node with this layout name (Red, Green, Yellow, 1, ...)."""
+        for (_cls, name), node in self._viewNodesByTag().items():
+            if name == layoutName:
+                return node
+        return None
+
+    def maximizedViewNode(self):
+        """View node shown alone (vtkMRMLLayoutNode maximized view nodes), or None."""
+        if self._layoutNode.GetNumberOfMaximizedViewNodes() < 1:
+            return None
+        return self._layoutNode.GetMaximizedViewNode(0)
+
+    def maximizeView(self, viewNode):
+        """Show this view alone; called again for the same view, restore the layout (toggle)."""
+        if viewNode is None:
+            self._layoutNode.RemoveAllMaximizedViewNodes()
+            return
+        if self._layoutNode.IsMaximizedViewNode(viewNode):
+            self._layoutNode.RemoveMaximizedViewNode(viewNode)
+        else:
+            self._layoutNode.RemoveAllMaximizedViewNodes()
+            self._layoutNode.AddMaximizedViewNode(viewNode)
+        self._publishLayout(force=True)
+
     def _publishLayout(self, force=False):
         import json
 
         desc = self.layoutDescription()
-        payload = {"layout": self.layout(), "description": desc}
+        maximized = self.maximizedViewNode()
+        payload = {"layout": self.layout(), "description": desc,
+                   "maximized": maximized.GetLayoutName() if maximized is not None else None}
         encoded = json.dumps(payload, sort_keys=True)
         if not force and encoded == self._lastLayoutJson:
             return
@@ -334,8 +379,6 @@ class LayoutManager:
     def mrmlViewLogics(self):
         return self._app.applicationLogic().GetViewLogics()
 
-    def maximizeView(self, viewNode):
-        self._layoutLogic.MaximizeView(viewNode)
 
 
 class _ViewAdapter:

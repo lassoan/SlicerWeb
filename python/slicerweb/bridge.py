@@ -440,7 +440,9 @@ def getLayoutDescription():
     import slicer
 
     lm = slicer.app.layoutManager()
-    return {"layout": lm.layout(), "description": lm.layoutDescription(), "available": lm.availableLayouts()}
+    maximized = lm.maximizedViewNode()
+    return {"layout": lm.layout(), "description": lm.layoutDescription(), "available": lm.availableLayouts(),
+            "maximized": maximized.GetLayoutName() if maximized is not None else None}
 
 
 @method()
@@ -529,6 +531,17 @@ def fitSliceViews():
 
     slicer.app.layoutManager().resetSliceViews()
     return True
+
+
+@method()
+def maximizeView(layoutName):
+    """Show the view alone, or restore the layout if it is already maximized (toggle)."""
+    import slicer
+
+    manager = slicer.app.layoutManager()
+    view = manager.viewNode(layoutName) if hasattr(manager, "viewNode") else None
+    manager.maximizeView(view)
+    return manager.maximizedViewNode() is not None
 
 
 @method()

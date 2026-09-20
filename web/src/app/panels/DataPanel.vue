@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { inject, ref } from "vue";
+import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import { FolderOpen, FileUp, Link, Database, Save, Trash2 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import type { SlicerRuntime } from "@/core/runtime";
@@ -14,6 +14,60 @@ const folderInput = ref<HTMLInputElement>();
 const busy = ref("");
 const dragOver = ref(false);
 const sampleOpen = ref(false);
+
+/**
+ * Sample data sets registered by modules (SampleData module registry, e.g. of installed extensions),
+ * shown in the Samples menu after the data sets of the application.
+ */
+interface SampleDataSource {
+  category: string;
+  categoryTitle: string;
+  name: string;
+  description: string;
+  uris: string[];
+  fileNames: (string | null)[];
+  nodeNames: (string | null)[];
+  loadFiles: boolean[];
+  loadFileTypes: (string | null)[];
+  loadFileProperties: Record<string, unknown>;
+  customDownloader: boolean;
+}
+const moduleSamples = ref<SampleDataSource[]>([]);
+
+async function refreshModuleSamples() {
+  moduleSamples.value = await bridge.call<SampleDataSource[]>("getSampleDataSources").catch(() => []);
+}
+const sampleCategories = computed(() => {
+  const groups = new Map<string, SampleDataSource[]>();
+  for (const s of moduleSamples.value) {
+    if (!groups.has(s.categoryTitle)) groups.set(s.categoryTitle, []);
+    groups.get(s.categoryTitle)!.push(s);
+  }
+  return [...groups.entries()];
+});
+const offModules = bridge.events.on("modules-changed", refreshModuleSamples);
+onBeforeUnmount(() => offModules());
+watch(sampleOpen, (open) => open && refreshModuleSamples(), { immediate: true });
+
+/** Download the files of a registered sample data set and load them with the SampleData module. */
+async function loadModuleSample(source: SampleDataSource) {
+  sampleOpen.value = false;
+  busy.value = `Downloading ${source.name}`;
+  try {
+    const files = [];
+    for (let i = 0; i < source.uris.length; i++) {
+      const fileName = source.fileNames[i] ?? undefined;
+      const path = await runtime.downloadFile(source.uris[i], fileName);
+      files.push({ path, nodeName: source.nodeNames[i], fileType: source.loadFileTypes[i], load: source.loadFiles[i] !== false });
+    }
+    busy.value = `Loading ${source.name}`;
+    await bridge.call("loadSampleDataFiles", [files, source]);
+  } catch (e: any) {
+    alert(`${source.name}: ${e.message ?? e}`);
+  } finally {
+    busy.value = "";
+  }
+}
 
 async function loadBrowserFiles(files: File[]) {
   if (!files.length) return;
@@ -110,12 +164,22 @@ async function closeScene() {
       <button type="button" class="sw-data-btn" title="Load from URL" @click="loadUrl"><Link :size="15" />URL</button>
       <div class="relative">
         <button type="button" class="sw-data-btn" title="Sample data" @click="sampleOpen = !sampleOpen"><Database :size="15" />Samples</button>
-        <div v-if="sampleOpen" class="absolute top-8 left-0 z-20 w-60 rounded-lg border border-input bg-popover p-1 shadow-xl">
+        <div v-if="sampleOpen" class="absolute top-8 left-0 z-20 max-h-[70vh] w-72 overflow-y-auto rounded-lg border border-input bg-popover p-1 shadow-xl">
           <button v-for="s in SAMPLE_DATA" :key="s.name" type="button" class="block w-full rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent"
             @click="loadSample(s)">
             <div>{{ s.name }}</div>
             <div class="text-[11px] text-muted-foreground">{{ s.description }}</div>
           </button>
+          <template v-for="[category, items] in sampleCategories" :key="category">
+            <div class="px-2 pt-2 pb-0.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{{ category }}</div>
+            <button v-for="s in items" :key="category + s.name" type="button"
+              class="block w-full rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent disabled:opacity-40"
+              :disabled="s.customDownloader" :title="s.customDownloader ? 'This data set can only be downloaded by its module' : s.uris.join(', ')"
+              @click="loadModuleSample(s)">
+              <div>{{ s.name }}</div>
+              <div v-if="s.description" class="text-[11px] text-muted-foreground">{{ s.description }}</div>
+            </button>
+          </template>
         </div>
       </div>
       <button type="button" class="sw-data-btn" title="Save scene" @click="saveScene"><Save :size="15" /></button>

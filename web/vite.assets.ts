@@ -12,6 +12,8 @@ import { preparePyodide } from "./scripts/prepare-pyodide.mjs";
  *  - /wheels/*   : SlicerWeb wheels (VTK, ITK, Slicer libraries, modules, extensions)
  *  - /sample-data/* : optional local sample data
  *  - /extensions/*  : extension wheels and their index (index.json), read by the Extensions Manager
+ *  - /download?url= : downloads a file for the page (sample data of modules is hosted on servers that
+ *                     do not allow cross-origin requests)
  *
  * Wheels are taken from $SLICERWEB_WHEELS (default: D:/SlicerWeb-build/dist/wheels).
  */
@@ -36,10 +38,29 @@ export function slicerWebAssets(): Plugin {
     return "application/octet-stream";
   };
 
-  return {
-    name: "slicerweb-assets",
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
+  /** Downloads a file server side and sends it to the page (no cross-origin restrictions). */
+  const downloadProxy = (req: any, res: any, next: any) => {
+    const url = new URL(req.url ?? "", "http://localhost");
+    if (!url.pathname.startsWith("/download")) return next();
+    const target = url.searchParams.get("url");
+    if (!target || !/^https?:\/\//.test(target)) {
+      res.statusCode = 400;
+      res.end("download: url parameter is missing or not http(s)");
+      return;
+    }
+    fetch(target, { redirect: "follow" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        res.setHeader("Content-Type", response.headers.get("content-type") ?? "application/octet-stream");
+        res.end(Buffer.from(await response.arrayBuffer()));
+      })
+      .catch((e) => {
+        res.statusCode = 502;
+        res.end(`download failed: ${e}`);
+      });
+  };
+
+  const serveMounts = (req: any, res: any, next: any) => {
         const url = decodeURIComponent((req.url ?? "").split("?")[0]);
         for (const [prefix, dir] of Object.entries(mounts)) {
           if (!url.startsWith(prefix)) continue;
@@ -73,8 +94,18 @@ export function slicerWebAssets(): Plugin {
             return;
           }
         }
-        next();
-      });
+    next();
+  };
+
+  return {
+    name: "slicerweb-assets",
+    configureServer(server) {
+      server.middlewares.use(downloadProxy);
+      server.middlewares.use(serveMounts);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(downloadProxy);
+      server.middlewares.use(serveMounts);
     },
     writeBundle(options) {
       const outDir = options.dir ?? "dist/app";

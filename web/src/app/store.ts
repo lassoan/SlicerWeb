@@ -49,7 +49,8 @@ export const store = reactive({
   error: "" as string,
   modules: [] as ModuleSummary[],
   activeModule: "Data",
-  layout: { layout: 0, description: { type: "empty", children: [] } as LayoutTreeNode },
+  // maximized: layout name of the view shown alone (view controller "maximize" button)
+  layout: { layout: 0, description: { type: "empty", children: [] } as LayoutTreeNode, maximized: null as string | null },
   availableLayouts: {} as Record<string, number>,
   activeView: "" as string,
   subjectHierarchy: [] as SubjectHierarchyItem[],

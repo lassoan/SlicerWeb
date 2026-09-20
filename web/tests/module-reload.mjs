@@ -46,28 +46,32 @@ await page.getByPlaceholder("Search modules").fill("Clip Vessel");
 await page.locator("div.absolute.right-2 button").first().click();
 await page.waitForTimeout(5000);
 const named = (name) => page.locator(`[data-name="${name}"]`).first();
-for (const [selector, label] of [["inputSurfaceSelector", "Tube"], ["inputCenterlinesSelector", "Centerline"]]) {
+const bare = process.argv.includes("--bare");   // run the test on a panel nothing has been set on
+for (const [selector, label] of bare ? [] : [["inputSurfaceSelector", "Tube"], ["inputCenterlinesSelector", "Centerline"]]) {
   await named(selector).locator("select").selectOption({ label });
   await page.waitForTimeout(600);
 }
-const clipSelect = named("clipPointsMarkupsSelector").locator("select");
-await clipSelect.selectOption({ label: (await clipSelect.locator("option").allTextContents()).find((t) => /Create new/i.test(t)) });
-await page.waitForTimeout(800);
-await named("clipPointsMarkupsPlaceWidget").getByRole("button", { name: /place/i }).first().click();
-await page.waitForTimeout(400);
-const red = await page.locator("#slicer-view-Red").boundingBox();
-await page.mouse.click(red.x + red.width * 0.5, red.y + red.height * 0.5);
-await page.waitForTimeout(1200);
-console.log(`${stamp()} clip points placed: ${await py('(_clipPoints or slicer.util.getNode("Clip points")).GetNumberOfControlPoints()')}`);
+if (!bare) {
+  const clipSelect = named("clipPointsMarkupsSelector").locator("select");
+  await clipSelect.selectOption({ label: (await clipSelect.locator("option").allTextContents()).find((t) => /Create new/i.test(t)) });
+  await page.waitForTimeout(800);
+  await named("clipPointsMarkupsPlaceWidget").getByRole("button", { name: /place/i }).first().click();
+  await page.waitForTimeout(400);
+  const red = await page.locator("#slicer-view-Red").boundingBox();
+  await page.mouse.click(red.x + red.width * 0.5, red.y + red.height * 0.5);
+  await page.waitForTimeout(1200);
+  console.log(`${stamp()} clip points placed: ${await py('(_clipPoints or slicer.util.getNode("Clip points")).GetNumberOfControlPoints()')}`);
+}
 
 // reload the module (with its self test when --test is given), from the "Reload and Test" section
 const withTest = process.argv.includes("--test");
+const testOnly = process.argv.includes("--test-only");   // the "Test" button, without reloading
 await page.getByText("Reload and Test").first().click();
 await page.waitForTimeout(300);
-await page.getByRole("button", { name: withTest ? "Reload and Test" : "Reload", exact: true }).last().click();
+await page.getByRole("button", { name: testOnly ? "Test" : withTest ? "Reload and Test" : "Reload", exact: true }).last().click();
 await page.waitForFunction(() => !/Reloading|Testing/.test(document.body.innerText), null, { timeout: 600000 });
 await page.waitForTimeout(2500);
-if (withTest) {
+if (withTest || testOnly) {
   const panelText = await page.locator(".sw-panel-scroll").last().innerText();
   console.log(`${stamp()} test result:`, panelText.split("\n").filter((l) => /passed|failed|Error|Traceback|seconds/.test(l)).slice(0, 6).join(" | ").slice(0, 400));
   // the self test clears the scene and builds its own: work with the clip points it left
@@ -88,6 +92,38 @@ _clipName = _clipPoints.GetName() if _clipPoints else None
   console.log(`${stamp()} selectors in the page:`, JSON.stringify(selectors));
   console.log(`${stamp()} parameter nodes:`, await py(`json.dumps([(n.GetName(), n.GetAttribute("ModuleName"), n.GetID()) for n in slicer.util.getNodesByClass("vtkMRMLScriptedModuleNode")])`));
   console.log(`${stamp()} parameter node of the panel:`, await py(`json.dumps([slicer.modules.ClipVesselWidget._parameterNode.GetID() if slicer.modules.ClipVesselWidget._parameterNode else None, (slicer.modules.ClipVesselWidget.ui.parameterNodeSelector.currentNode().GetID() if slicer.modules.ClipVesselWidget.ui.parameterNodeSelector.currentNode() else None)])`));
+  const buttons = () => page.evaluate(() => {
+    const out = {};
+    for (const name of ["applyButton", "outputSurfaceModelSelector", "toggleOutputVisibilityButton",
+                        "toggleOutputEdgesButton", "toggleInputSurfaceVisibilityButton", "detectClipPointsButton"]) {
+      const host = document.querySelector(`[data-name="${name}"]`);
+      const control = host?.matches("button, select") ? host : host?.querySelector("button, select");
+      out[name] = control ? (control.tagName === "SELECT" ? { value: control.value, disabled: control.disabled } : { disabled: control.disabled }) : null;
+    }
+    return out;
+  });
+  console.log(`${stamp()} buttons after the test:`, JSON.stringify(await buttons()));
+  if (process.argv.includes("--twice")) {
+    await page.getByRole("button", { name: testOnly ? "Test" : "Reload and Test", exact: true }).last().click();
+    await page.waitForFunction(() => !/Reloading|Testing/.test(document.body.innerText), null, { timeout: 600000 });
+    await page.waitForTimeout(3000);
+    console.log(`${stamp()} buttons after a second run:`, JSON.stringify(await buttons()));
+    console.log(`${stamp()} references then:`, await py('json.dumps([(k, (slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k).GetName() if slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k) else None)) for k in ("InputSurface", "InputCenterlines", "ClipPoints", "OutputSurfaceModel")])'));
+  }
+  console.log(`${stamp()} output reference:`, await py('json.dumps([(k, (slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k).GetName() if slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k) else None)) for k in ("InputSurface", "InputCenterlines", "ClipPoints", "OutputSurfaceModel")])'));
+  if (process.argv.includes("--switch")) {
+    // leave the module and come back, as a user does after looking at the result
+    await page.locator("button.h-8.w-full").first().click();
+    await page.getByPlaceholder("Search modules").fill("Models");
+    await page.locator("div.absolute.right-2 button").first().click();
+    await page.waitForTimeout(2500);
+    await page.locator("button.h-8.w-full").first().click();
+    await page.getByPlaceholder("Search modules").fill("Clip Vessel");
+    await page.locator("div.absolute.right-2 button").first().click();
+    await page.waitForTimeout(4000);
+    console.log(`${stamp()} buttons after leaving and reopening the module:`, JSON.stringify(await buttons()));
+    console.log(`${stamp()} references then:`, await py('json.dumps([(k, (slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k).GetName() if slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k) else None)) for k in ("InputSurface", "InputCenterlines", "ClipPoints", "OutputSurfaceModel")])'));
+  }
   console.log(`${stamp()} markups nodes in the scene:`, await py('json.dumps([n.GetName() + " " + n.GetID() for n in slicer.util.getNodesByClass("vtkMRMLMarkupsFiducialNode")])'));
   console.log(`${stamp()} panel selection:`, await py('json.dumps({k: (v.GetName() if v else None) for k, v in {"surface": slicer.modules.ClipVesselWidget.ui.inputSurfaceSelector.currentNode(), "centerlines": slicer.modules.ClipVesselWidget.ui.inputCenterlinesSelector.currentNode(), "clipPoints": slicer.modules.ClipVesselWidget.ui.clipPointsMarkupsSelector.currentNode()}.items()})'));
 }

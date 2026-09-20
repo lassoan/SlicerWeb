@@ -69,6 +69,7 @@ export function slicerWebAssets(): Plugin {
           if (!file.startsWith(dir)) break;
           if (rel === "index.json" && prefix === "/wheels/") {
             res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-cache");
             res.end(JSON.stringify(listWheels(dir)));
             return;
           }
@@ -88,8 +89,20 @@ export function slicerWebAssets(): Plugin {
             }
           }
           if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+            const stat = fs.statSync(file);
             res.setHeader("Content-Type", contentType(file));
             res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+            // A rebuilt wheel keeps its name, so it must never be served from a cache (the browser's
+            // or one in front of the site) without asking: the tag changes whenever the file does.
+            const tag = `"${stat.size.toString(16)}-${stat.mtimeMs.toString(16)}"`;
+            res.setHeader("ETag", tag);
+            res.setHeader("Last-Modified", stat.mtime.toUTCString());
+            res.setHeader("Cache-Control", "no-cache");
+            if (req.headers["if-none-match"] === tag) {
+              res.statusCode = 304;
+              res.end();
+              return;
+            }
             fs.createReadStream(file).pipe(res);
             return;
           }

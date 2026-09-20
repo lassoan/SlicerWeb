@@ -16,6 +16,7 @@ vtk, slicerweb-itk, slicer-core, slicer-modules-core, slicerweb.
 
 import argparse
 import base64
+import datetime
 import glob
 import hashlib
 import io
@@ -265,6 +266,8 @@ def main():
     # ---------------------------------------------------------------- slicerweb runtime (pure Python)
     w = Wheel("slicerweb", "0.1.0", pure=True, summary="3D Slicer application services for the web browser")
     w.add_tree(args.python, "", exclude=lambda rel: rel.endswith(".pyc") or rel.startswith("tests"))
+    stamp = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    w.add_bytes("BUILD_TIME = " + repr(stamp) + chr(10), "slicerweb/_build.py")
     w.write(args.out)
 
     write_extension_wheels(args, slicer_ver)

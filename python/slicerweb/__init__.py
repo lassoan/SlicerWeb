@@ -11,6 +11,7 @@ Typical use (done by the web application at startup)::
     slicer.util.loadVolume("/data/MRHead.nrrd")
 """
 
+import logging
 from .version import __version__  # noqa: F401
 
 _application = None
@@ -28,9 +29,23 @@ def initialize(config=None):
 
         _application = SlicerWebApplication(config or {})
         _application.startup()
+        logging.getLogger("slicerweb").info("SlicerWeb Python build %s", buildTime() or "unknown")
     return _application
 
 
 def application():
     """Return the application singleton (``None`` before :func:`initialize`)."""
     return _application
+
+
+def buildTime():
+    """When the Python code running in this page was built, or "" if it is not known.
+
+    The wheel keeps its name from build to build, so this is what tells which code a page is running
+    (a browser or a cache in front of the site may still hold an earlier one).
+    """
+    try:
+        from ._build import BUILD_TIME
+    except ImportError:
+        return ""
+    return BUILD_TIME

@@ -55,6 +55,7 @@ class SubjectHierarchyPluginLogic:
         self._scene = scene
         self._tags = [
             scene.AddObserver(slicer.vtkMRMLScene.NodeAddedEvent, self._onNodeAdded),
+            scene.AddObserver(slicer.vtkMRMLScene.NodeRemovedEvent, self._onNodeRemoved),
             scene.AddObserver(slicer.vtkMRMLScene.EndImportEvent, self._onSceneImportEnded),
             scene.AddObserver(slicer.vtkMRMLScene.EndCloseEvent, self._onSceneCloseEnded),
         ]
@@ -103,6 +104,24 @@ class SubjectHierarchyPluginLogic:
             self.addNodeToSubjectHierarchy(node)
         except Exception:
             logger.exception("Failed to add %s to the subject hierarchy", node.GetID())
+
+    @vtk.calldata_type(vtk.VTK_OBJECT)
+    def _onNodeRemoved(self, caller, event, node):
+        """Remove the subject hierarchy item of a removed data node (e.g. temporary nodes of a module)."""
+        if node is None or self._scene.IsClosing():
+            return
+        shNode = self._shNode()
+        if shNode is None:
+            return
+        itemID = shNode.GetItemByDataNode(node)
+        if not itemID:
+            return
+        import vtk as _vtk
+
+        children = _vtk.vtkIdList()
+        shNode.GetItemChildren(itemID, children, False)
+        if children.GetNumberOfIds() == 0:
+            shNode.RemoveItem(itemID, False, False)
 
     def _onSceneImportEnded(self, caller, event):
         import slicer

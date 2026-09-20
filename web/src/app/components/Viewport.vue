@@ -52,6 +52,16 @@ async function attach() {
   await refreshVolumes();
 }
 
+/** Create the view again after it was destroyed, while this viewport is still in the page. */
+async function reattach() {
+  if (attached || !container.value) return;
+  for (let i = 0; i < 10 && !attached; i++) {
+    await attach().catch(() => {});
+    if (attached) return;
+    await new Promise((resolve) => window.setTimeout(resolve, 200));
+  }
+}
+
 let resizeFrame = 0;
 function onResize() {
   cancelAnimationFrame(resizeFrame);
@@ -78,6 +88,13 @@ onMounted(async () => {
     bridge.events.on("scene-changed", () => {
       refreshVolumes();
       refreshSliceState();
+    }),
+    // The view is destroyed when its view node disappears (e.g. the scene is closed by a module or
+    // a self test). The canvas stays in the page, so a new view is created for the new view node.
+    bridge.events.on<{ layoutName: string }>("view-detached", (p) => {
+      if (p?.layoutName !== props.view.layoutName || !container.value) return;
+      attached = false;
+      window.setTimeout(reattach, 0);
     }),
   );
   await attach();

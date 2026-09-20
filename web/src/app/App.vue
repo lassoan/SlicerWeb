@@ -7,6 +7,7 @@ import SidePanel from "./components/SidePanel.vue";
 import ViewportGrid from "./components/ViewportGrid.vue";
 import LoadingScreen from "./components/LoadingScreen.vue";
 import PythonConsole from "./components/PythonConsole.vue";
+import LogWindow from "./components/LogWindow.vue";
 import ExtensionsManager from "./components/ExtensionsManager.vue";
 import DataPanel from "./panels/DataPanel.vue";
 import ModulePanel from "./panels/ModulePanel.vue";
@@ -96,6 +97,7 @@ onMounted(async () => {
       <main class="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <ViewportGrid v-if="store.status === 'ready'" :node="store.layout.description" />
         <LoadingScreen v-else />
+        <LogWindow v-if="store.logWindowOpen" />
         <PythonConsole v-if="store.pythonConsoleOpen" />
       </main>
       <SidePanel side="right" :open="store.rightPanelOpen" @toggle="store.rightPanelOpen = !store.rightPanelOpen"

@@ -68,6 +68,7 @@ export const store = reactive({
   leftPanelOpen: true,
   rightPanelOpen: true,
   pythonConsoleOpen: false,
+  logWindowOpen: false,
   extensionsManagerOpen: false,
   sceneVersion: 0,
 });

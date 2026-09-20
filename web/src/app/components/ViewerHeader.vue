@@ -15,6 +15,7 @@ import {
   RotateCcw,
   Ruler,
   Spline,
+  ScrollText,
   Terminal,
   Triangle,
   Brush,
@@ -159,6 +160,9 @@ const currentMarkupTool = computed(() =>
     </nav>
 
     <div class="flex shrink-0 items-center justify-end gap-1 md:min-w-[240px]">
+      <ToolButton label="Application log" :active="store.logWindowOpen" @click="store.logWindowOpen = !store.logWindowOpen">
+        <ScrollText :size="20" />
+      </ToolButton>
       <ToolButton label="Python console" :active="store.pythonConsoleOpen" @click="store.pythonConsoleOpen = !store.pythonConsoleOpen">
         <Terminal :size="20" />
       </ToolButton>

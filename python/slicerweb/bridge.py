@@ -271,6 +271,42 @@ def _node_summary(node):
 
 
 @method()
+def errorLogEntries(limit=500, levels=None):
+    """Messages of the application log (the error log model of desktop Slicer).
+
+    The page is sent each message as it happens; this is what a log window opened later shows.
+    """
+    from .logging_handler import error_log
+
+    entries = error_log().entries
+    if levels:
+        wanted = {str(level).upper() for level in levels}
+        entries = [e for e in entries if str(e["level"]).upper() in wanted]
+    return entries[-int(limit):]
+
+
+@method()
+def setLogLevel(level):
+    """How much is logged ("DEBUG", "INFO", "WARNING", "ERROR").
+
+    Debug messages are not kept unless they are asked for: every message is sent to the page, and
+    the debug ones are many.
+    """
+    import logging
+
+    logging.getLogger().setLevel(getattr(logging, str(level).upper(), logging.INFO))
+    return logging.getLogger().level
+
+
+@method()
+def clearErrorLog():
+    from .logging_handler import error_log
+
+    error_log().clear()
+    return True
+
+
+@method()
 def getNodes(className="vtkMRMLNode", includeHidden=False, attributes=None):
     """Nodes of a class, optionally only those with the given attributes.
 

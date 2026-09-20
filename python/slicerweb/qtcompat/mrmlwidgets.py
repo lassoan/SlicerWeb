@@ -156,31 +156,193 @@ class qMRMLSubjectHierarchyComboBox(qMRMLNodeComboBox):
         return sh.GetItemByDataNode(node)
 
 
-class qMRMLSegmentSelectorWidget(qMRMLNodeComboBox):
+class qMRMLSegmentSelectorWidget(qMRMLWidget):
+    """Segmentation node selector with the list of its segments (qMRMLSegmentSelectorWidget).
+
+    The node selection API of the desktop widget (currentNode, setCurrentNode, nodeTypes, ...) is
+    provided by the embedded node selector (segmentationNodeComboBox()).
+    """
+
     currentSegmentChanged = Signal("currentSegmentChanged(QString)")
+    segmentSelectionChanged = Signal("segmentSelectionChanged(QStringList)")
+    currentNodeChanged = Signal("currentNodeChanged(vtkMRMLNode*)")
+    currentNodeIDChanged = Signal("currentNodeIDChanged(QString)")
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.nodeTypes = ["vtkMRMLSegmentationNode"]
-        self._segmentID = ""
+        from .widgets import QComboBox
 
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        self._selector = qMRMLNodeComboBox(self)
+        self._selector.nodeTypes = ["vtkMRMLSegmentationNode"]
+        layout.addWidget(self._selector)
+        self._segments = QComboBox(self)
+        layout.addWidget(self._segments)
+        self._segmentID = ""
+        self._noneEnabled = False
+        self._observed = None
+        self._observerTags = []
+        self._selector.currentNodeChanged.connect(self._onNodeChanged)
+        self._segments.currentIndexChanged.connect(self._onSegmentIndexChanged)
+
+    # --- node selection (forwarded to the node selector)
+    def segmentationNodeComboBox(self):
+        return self._selector
+
+    def segmentationNode(self):
+        return self._selector.currentNode()
+
+    def setSegmentationNode(self, node):
+        self._selector.setCurrentNode(node)
+
+    def currentNode(self):
+        return self._selector.currentNode()
+
+    def setCurrentNode(self, node):
+        self._selector.setCurrentNode(node)
+
+    @property
+    def currentNodeID(self):
+        return self._selector.currentNodeID
+
+    currentNodeId = currentNodeID
+
+    def setCurrentNodeID(self, nodeID):
+        self._selector.setCurrentNodeID(nodeID)
+
+    def setMRMLScene(self, scene):
+        super().setMRMLScene(scene)
+        self._selector.setMRMLScene(scene)
+
+    # node properties are set on the widget itself in .ui files and in module code
+    _NODE_PROPERTIES = ("nodeTypes", "addEnabled", "removeEnabled", "renameEnabled", "editEnabled",
+                        "baseName", "showChildNodeTypes", "selectNodeUponCreation", "showHidden",
+                        "noneDisplay")
+
+    def __getattr__(self, name):
+        if name in qMRMLSegmentSelectorWidget._NODE_PROPERTIES:
+            return getattr(self.__dict__["_selector"], name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if name in qMRMLSegmentSelectorWidget._NODE_PROPERTIES and "_selector" in self.__dict__:
+            setattr(self._selector, name, value)
+            return
+        super().__setattr__(name, value)
+
+    # --- segment selection
     @property
     def currentSegmentID(self):
         """Qt property (attribute in PythonQt); also callable as currentSegmentID()."""
         return property_value(self._segmentID or "")
 
     def setCurrentSegmentID(self, segmentID):
-        self._segmentID = segmentID or ""
-        self.currentSegmentChanged.emit(self._segmentID)
+        segmentID = segmentID or ""
+        if segmentID:
+            index = self._segments.findData(segmentID)
+            if index < 0:
+                return  # not a segment of this segmentation (e.g. read from a saved scene)
+        else:
+            index = -1 if self._noneEnabled else 0
+        self._setSegmentIndex(index)
 
-    def setCurrentSegmentIDs(self, segmentIDs):
+    def selectedSegmentIDs(self):
+        return [self._segmentID] if self._segmentID else []
+
+    def setSelectedSegmentIDs(self, segmentIDs):
         self.setCurrentSegmentID(segmentIDs[0] if segmentIDs else "")
 
-    def segmentationNode(self):
-        return self.currentNode()
+    def clearSelection(self):
+        self.setCurrentSegmentID("")
 
-    def setSegmentationNode(self, node):
-        self.setCurrentNode(node)
+    def setNoneEnabled(self, enabled):
+        self._noneEnabled = bool(enabled)
+        self._updateSegments()
+
+    def noneEnabled(self):
+        return self._noneEnabled
+
+    def setSegmentationNodeSelectorVisible(self, visible):
+        self._selector.setVisible(bool(visible))
+
+    def setMultiSelection(self, enabled):
+        pass
+
+    def setHideSegments(self, segmentIDs):
+        pass
+
+    def setEditEnabled(self, enabled):
+        pass
+
+    # --- keeping the segment list up to date
+    def _onNodeChanged(self, node=None):
+        self._observeSegmentation(node)
+        self._updateSegments()
+        self.currentNodeChanged.emit(node)
+        self.currentNodeIDChanged.emit(node.GetID() if node is not None else "")
+
+    def _observeSegmentation(self, node):
+        import vtk
+
+        segmentation = node.GetSegmentation() if node is not None else None
+        if segmentation is self._observed:
+            return
+        if self._observed is not None:
+            for tag in self._observerTags:
+                self._observed.RemoveObserver(tag)
+        self._observerTags = []
+        self._observed = segmentation
+        if segmentation is None:
+            return
+        events = [vtk.vtkCommand.ModifiedEvent]
+        for name in ("SegmentAdded", "SegmentRemoved", "SegmentModified"):
+            event = getattr(type(segmentation), name, None)
+            if isinstance(event, int):
+                events.append(event)
+        for event in events:
+            self._observerTags.append(segmentation.AddObserver(event, self._onSegmentationModified))
+
+    def _onSegmentationModified(self, caller=None, event=None):
+        self._updateSegments()
+
+    def _updateSegments(self):
+        node = self._selector.currentNode()
+        segmentation = node.GetSegmentation() if node is not None else None
+        items = []
+        if segmentation is not None:
+            for index in range(segmentation.GetNumberOfSegments()):
+                segmentID = segmentation.GetNthSegmentID(index)
+                segment = segmentation.GetNthSegment(index)
+                items.append((segment.GetName() or segmentID, segmentID))
+        self._segments.blockSignals(True)
+        self._segments.clear()
+        if self._noneEnabled:
+            self._segments.addItem("None", "")
+        for text, segmentID in items:
+            self._segments.addItem(text, segmentID)
+        self._segments.blockSignals(False)
+        self._segments.setVisible(bool(items))
+        # keep the selected segment if it is still there, otherwise select the first one
+        index = self._segments.findData(self._segmentID) if self._segmentID else -1
+        if index < 0:
+            index = -1 if (self._noneEnabled or not items) else 0
+        self._setSegmentIndex(index)
+
+    def _setSegmentIndex(self, index):
+        self._segments.blockSignals(True)
+        self._segments.currentIndex = index
+        self._segments.blockSignals(False)
+        self._setSegmentID(str(self._segments.itemData(index) or "") if index >= 0 else "")
+
+    def _onSegmentIndexChanged(self, index=None):
+        self._setSegmentID(str(self._segments.itemData(self._segments.currentIndex) or ""))
+
+    def _setSegmentID(self, segmentID):
+        if segmentID == self._segmentID:
+            return
+        self._segmentID = segmentID
+        self.currentSegmentChanged.emit(self._segmentID)
+        self.segmentSelectionChanged.emit(self.selectedSegmentIDs())
 
 
 class qMRMLSegmentsTableView(QWidget):

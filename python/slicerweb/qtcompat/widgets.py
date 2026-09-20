@@ -51,6 +51,14 @@ class QWidget(QObject):
     def element(self):
         return self._el
 
+    def setObjectName(self, value):
+        """Name the element too (data-name="<objectName>"), for styling, tests and debugging."""
+        super().setObjectName(value)
+        try:
+            self._el.setAttribute("data-name", self._objectName)
+        except Exception:
+            pass
+
     # --- layout
     def setLayout(self, layout):
         if layout is None:
@@ -375,7 +383,8 @@ class QFormLayout(QLayout):
     LabelRole, FieldRole, SpanningRole = 0, 1, 2
 
     def addRow(self, label, field=None):
-        row = dom.create("div", "grid grid-cols-[minmax(80px,38%)_1fr] items-center gap-2 min-w-0")
+        # sw-form-row: label and field side by side, stacked when the panel is narrow (main.css)
+        row = dom.create("div", "sw-form-row min-w-0")
         if field is None:
             # single widget/layout spanning the row
             item = label
@@ -383,7 +392,7 @@ class QFormLayout(QLayout):
             self._appendItem(row, item)
         else:
             if isinstance(label, str):
-                span = dom.create("span", "truncate text-[12px] text-muted-foreground")
+                span = dom.create("span", "sw-form-label truncate text-[12px] text-muted-foreground")
                 span.textContent = label
                 row.appendChild(span)
             else:
@@ -419,7 +428,9 @@ class QFormLayout(QLayout):
 
 
 class QGridLayout(QLayout):
-    _classes = "grid gap-1.5 min-w-0"
+    # Tracks are sized by their content by default, which makes wide cells (a row of buttons, a long
+    # label) overflow the module panel; minmax(0, auto) lets them shrink to the width available.
+    _classes = "grid gap-1.5 min-w-0 [grid-auto-columns:minmax(0,auto)]"
 
     def addWidget(self, widget, row=0, column=0, rowSpan=1, columnSpan=1, *args):
         self._place(widget, row, column, rowSpan, columnSpan)
@@ -435,6 +446,8 @@ class QGridLayout(QLayout):
         try:
             el.style.gridRow = f"{int(row) + 1} / span {max(1, int(rowSpan))}"
             el.style.gridColumn = f"{int(column) + 1} / span {max(1, int(columnSpan))}"
+            el.style.minWidth = "0"
+            el.style.maxWidth = "100%"
         except Exception:
             pass
         self._el.appendChild(el)
@@ -561,10 +574,16 @@ class QAbstractButton(_ElementWidget):
         self.setChecked(not self.checked)
 
     def setIcon(self, icon):
-        pass
+        """Show the icon of the button (a module resource file, or a Slicer application icon)."""
+        from . import icons
+
+        path = getattr(icon, "_path", icon if isinstance(icon, str) else None)
+        dom.set_prop(self._el, "icon", icons.icon_url(path))
 
     def setIconSize(self, size):
-        pass
+        width = getattr(size, "width", None)
+        if callable(width):
+            dom.set_prop(self._el, "iconSize", int(width()))
 
     def setShortcut(self, s):
         pass

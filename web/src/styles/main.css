@@ -82,3 +82,29 @@ canvas.sw-view-canvas {
   outline: none;
   touch-action: none;
 }
+
+/* Form layouts of Python module GUIs (slicerweb.qtcompat): label beside the field, and above it when
+   the module panel is narrow, as on a phone, where a 38% label column leaves nothing for the field. */
+.sw-scripted-module {
+  container-type: inline-size;
+}
+
+.sw-form-row {
+  display: grid;
+  grid-template-columns: minmax(70px, 36%) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+@container (max-width: 380px) {
+  .sw-form-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.125rem;
+  }
+
+  .sw-form-row > .sw-form-label {
+    overflow: visible;
+    white-space: normal;
+  }
+}

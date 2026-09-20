@@ -16,6 +16,7 @@ from .widgets import (
     QTextBrowser,
     QWidget,
     _ElementWidget,
+    _bool,
     _float,
 )
 
@@ -266,27 +267,54 @@ class ctkPushButton(QPushButton):
 
 
 class ctkCheckablePushButton(QPushButton):
-    """Push button with a check box (ctkCheckablePushButton, e.g. "Apply" with auto-update)."""
+    """Push button with its own check box (e.g. "Apply" with an auto-update option).
+
+    The check box is a separate control inside the button: clicking it switches the option
+    (checkBoxToggled) without running the button's action (clicked). The check box also sets the
+    button's checked state, unless setCheckBoxControlsButtonToggleState(False) is called.
+    """
 
     checkBoxToggled = Signal("checkBoxToggled(bool)")
 
+    _events = dict(QPushButton._events, checkBoxToggled="_onCheckBoxToggled")
+
+    # the check box shows the checked state (the button itself is not highlighted)
+    checked = QProp(False, el="checkBoxChecked", convert=_bool)
+
     def __init__(self, text="", parent=None, *args):
         super().__init__(text, parent, *args)
-        self.setCheckable(True)
         self._checkBoxVisible = True
-        self.toggled.connect(lambda checked: self.checkBoxToggled.emit(bool(checked)))
+        self._checkBoxControlsButton = True
+        self._checkBoxControlsButtonToggleState = True
+        dom.set_prop(self._el, "checkBoxVisible", True)
+
+    def _onCheckBoxToggled(self, checked):
+        checked = bool(checked)
+        if self._checkBoxControlsButtonToggleState:
+            type(self).checked.set_silently(self, checked)
+            dom.set_prop(self._el, "checkBoxChecked", checked)
+        self.checkBoxToggled.emit(checked)
+        if self._checkBoxControlsButtonToggleState:
+            self.toggled.emit(checked)
 
     def setCheckBoxVisible(self, visible):
         self._checkBoxVisible = bool(visible)
+        dom.set_prop(self._el, "checkBoxVisible", self._checkBoxVisible)
 
     def isCheckBoxVisible(self):
         return self._checkBoxVisible
 
     def setCheckBoxControlsButton(self, enabled):
-        pass
+        self._checkBoxControlsButton = bool(enabled)
 
     def checkBoxControlsButton(self):
-        return True
+        return self._checkBoxControlsButton
+
+    def setCheckBoxControlsButtonToggleState(self, enabled):
+        self._checkBoxControlsButtonToggleState = bool(enabled)
+
+    def checkBoxControlsButtonToggleState(self):
+        return self._checkBoxControlsButtonToggleState
 
     def setCheckState(self, state):
         self.setChecked(bool(state))

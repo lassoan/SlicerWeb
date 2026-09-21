@@ -60,9 +60,15 @@ console.log("finder open from the search icon:", await page.locator("[data-name=
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 
-// and the help of the module that is open
-await bar.locator("[data-name='moduleHelp']").click();
-await page.waitForTimeout(400);
-console.log("help shown:", (await page.locator("aside .bg-card").first().innerText().catch(() => "")).slice(0, 70));
+// and the help of the module that is open, which says something for every module
+for (const name of ["Volumes", "Data"]) {
+  await open(name);
+  await bar.locator("[data-name='moduleHelp']").click();
+  await page.waitForTimeout(500);
+  const help = (await page.locator("[data-name='moduleHelp']").last().innerText().catch(() => "")).replace(/\s+/g, " ");
+  console.log(`help for ${name}: ${help.slice(0, 80)}`);
+  await bar.locator("[data-name='moduleHelp']").click();
+  await page.waitForTimeout(300);
+}
 if (shot) await page.screenshot({ path: shot });
 await browser.close();

@@ -46,6 +46,21 @@ function toBase64(data: Uint8Array): string {
   return btoa(text);
 }
 
+/** A number of bytes, as it is written for a person to read ("1.2 GB"). */
+export function formatBytes(bytes: number): string {
+  if (!bytes) {
+    return "unknown size";
+  }
+  const units = ["bytes", "KB", "MB", "GB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value < 10 && unit > 1 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`;
+}
+
 export class SlicerRuntime {
   readonly bridge = new PyodideBridge();
   pyodide: PyodideAPI | null = null;
@@ -293,7 +308,24 @@ bridge.call
   }
 
   /** Download a URL into the virtual file system. */
-  async downloadFile(url: string, fileName?: string, directory = "/data/downloads"): Promise<string> {
+  /**
+   * Fetch a file into the virtual file system, reporting how far along it is.
+   *
+   * The data arrives in chunks rather than in one piece: a large data set would otherwise be held
+   * twice over (once as the response, once in the file system) before anything could be said about
+   * it, and there would be nothing to show while it downloads. *onProgress* is called with the
+   * bytes received and the size, where the server said what the size is.
+   *
+   * *tooLarge* is asked before anything is downloaded, when the size is known and above
+   * *warnAboveBytes*; answering false gives up. Files of a gigabyte or more are on the edge of what
+   * a browser tab can hold - and reading one into a scene needs about as much again.
+   */
+  async downloadFile(url: string, fileName?: string, directory = "/data/downloads",
+                     options: {
+                       onProgress?: (received: number, total: number) => void;
+                       tooLarge?: (total: number, name: string) => boolean | Promise<boolean>;
+                       warnAboveBytes?: number;
+                     } = {}): Promise<string> {
     let response: Response | null = null;
     try {
       response = await fetch(url);
@@ -309,10 +341,42 @@ bridge.call
       }
     }
     const name = fileName ?? decodeURIComponent(new URL(url, document.baseURI).pathname.split("/").pop() || "download");
+    const total = Number(response.headers.get("content-length") ?? 0);
+    const warnAbove = options.warnAboveBytes ?? 512 * 1024 * 1024;
+    if (total > warnAbove && options.tooLarge && !(await options.tooLarge(total, name))) {
+      throw new Error(`${name} (${formatBytes(total)}) was not downloaded.`);
+    }
+
     const FS = this.pyodide!.FS;
     FS.mkdirTree(directory);
     const path = `${directory}/${name}`;
-    FS.writeFile(path, new Uint8Array(await response.arrayBuffer()));
+    const reader = response.body?.getReader();
+    if (!reader) {
+      // a response that cannot be read in pieces (an older browser): all at once, as before
+      FS.writeFile(path, new Uint8Array(await response.arrayBuffer()));
+      options.onProgress?.(total, total);
+      return path;
+    }
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    options.onProgress?.(0, total);
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      options.onProgress?.(received, total);
+    }
+    const data = new Uint8Array(received);
+    let offset = 0;
+    for (const chunk of chunks) {
+      data.set(chunk, offset);
+      offset += chunk.length;
+      // the pieces are released as they are copied, so that only one whole copy is held
+      chunk.fill(0, 0, 0);
+    }
+    chunks.length = 0;
+    FS.writeFile(path, data);
     return path;
   }
 

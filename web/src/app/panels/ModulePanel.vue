@@ -4,6 +4,7 @@ import { openModule, store } from "../store";
 import { modulePanels } from "../modules";
 import { moduleList, webOnlyModules } from "../modules/list";
 import ModuleFinder from "../components/ModuleFinder.vue";
+import ModuleInformation from "../components/ModuleInformation.vue";
 import ScriptedModuleHost from "../modules/ScriptedModuleHost.vue";
 import GenericModulePanel from "../modules/GenericModulePanel.vue";
 
@@ -11,11 +12,9 @@ import GenericModulePanel from "../modules/GenericModulePanel.vue";
 // and whether the finder is open, is decided in the title bar above the panel (ModuleTitleBar).
 const active = computed(() => store.modules.find((m) => m.name === store.activeModule));
 const panel = computed(() => modulePanels[store.activeModule] ?? (active.value?.webWidget ? modulePanels[active.value.webWidget] : undefined));
-const help = computed(() => {
-  // Nothing to show for a module that says nothing about itself, rather than an empty box
-  const module = active.value ?? webOnlyModules.find((w) => w.name === store.activeModule);
-  return module && (module.helpText || module.acknowledgementText || module.contributors.length) ? module : undefined;
-});
+// What the "i" in the title bar shows: everything known about the module that is open. A module
+// with no help text of its own still has a name, a category and a file it came from.
+const help = computed(() => active.value ?? webOnlyModules.find((w) => w.name === store.activeModule));
 
 // Opening the finder puts the cursor in its search box, so that a module can be typed straight away
 // (on a phone this is also what brings the keyboard up).
@@ -40,10 +39,11 @@ function select(name: string) {
           @close="store.moduleFinderOpen = false" />
       </div>
     </div>
-    <div v-if="store.moduleHelpOpen && help" class="mx-2 mt-2 mb-1 rounded-md bg-card p-2 text-[12px] text-muted-foreground">
-      <div v-if="help.helpText" v-html="help.helpText" />
-      <div v-if="help.acknowledgementText" class="mt-2" v-html="help.acknowledgementText" />
-      <div v-if="help.contributors.length" class="mt-2">Contributors: {{ help.contributors.join(", ") }}</div>
+    <div v-if="store.moduleHelpOpen" class="mx-2 mt-2 mb-1 rounded-md bg-card p-2" data-name="moduleHelp">
+      <ModuleInformation v-if="help" :module="help" />
+      <div v-else class="text-[12px] text-muted-foreground">
+        Nothing is known about “{{ store.activeModule }}”: it is not one of the modules that are loaded.
+      </div>
     </div>
     <div class="sw-panel-scroll min-h-0 flex-1 px-2 pt-2 pb-3">
       <component :is="panel" v-if="panel" :key="store.activeModule" />

@@ -5,6 +5,7 @@
 import { computed, nextTick, ref, watch } from "vue";
 import { FileText, Package, Search, X } from "@lucide/vue";
 import { store, type ModuleSummary } from "../store";
+import ModuleInformation from "./ModuleInformation.vue";
 
 const props = defineProps<{ modules: ModuleSummary[]; current: string }>();
 const emit = defineEmits<{ select: [string]; close: [] }>();
@@ -68,8 +69,6 @@ function toggle(option: "fullText" | "builtIn") {
   searchBox.value?.focus();
 }
 
-const kindLabel = (m: ModuleSummary) =>
-  m.kind === "loadable" ? "C++ Loadable" : m.kind === "scripted" ? "Python Scripted" : m.kind;
 
 defineExpose({ focus });
 </script>
@@ -110,18 +109,7 @@ defineExpose({ focus });
         <button type="button" class="shrink-0 rounded bg-primary px-2 py-1 text-[12px] text-primary-foreground hover:bg-primary/85"
           @click="open()">Switch to module</button>
       </div>
-      <p v-if="selected.helpText" class="mt-1 text-muted-foreground" v-html="selected.helpText" />
-      <dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-2">
-        <dt class="font-semibold">Category:</dt><dd class="truncate">{{ selected.categories.join(", ") || "—" }}</dd>
-        <template v-if="selected.contributors.length">
-          <dt class="font-semibold">Contributors:</dt><dd>{{ selected.contributors.join(", ") }}</dd>
-        </template>
-        <dt class="font-semibold">Internal name:</dt><dd class="truncate">{{ selected.name }}</dd>
-        <dt class="font-semibold">Type:</dt><dd>{{ kindLabel(selected) }}<span v-if="selected.extension"> (extension {{ selected.extension }})</span></dd>
-        <template v-if="selected.path">
-          <dt class="font-semibold">Location:</dt><dd class="break-all">{{ selected.path }}</dd>
-        </template>
-      </dl>
+      <ModuleInformation :module="selected" />
     </div>
   </div>
 </template>

@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import { FolderOpen, FileUp, Link, Database, Save, Trash2 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
-import type { SlicerRuntime } from "@/core/runtime";
+import { formatBytes, type SlicerRuntime } from "@/core/runtime";
 import { store } from "../store";
 import ShTree from "../components/ShTree.vue";
 import { SAMPLE_DATA } from "../sampleData";
@@ -34,6 +34,27 @@ interface SampleDataSource {
 }
 const moduleSamples = ref<SampleDataSource[]>([]);
 
+/** How a download reports itself: "Downloading X — 240 MB of 1.2 GB (19%)". */
+function downloadOptions(what: string) {
+  return {
+    onProgress(received: number, total: number) {
+      const done = formatBytes(received);
+      busy.value = total
+        ? `Downloading ${what} — ${done} of ${formatBytes(total)} (${Math.round((received / total) * 100)}%)`
+        : `Downloading ${what} — ${done}`;
+    },
+    // A data set of this size needs about as much again to be read into the scene, which is more
+    // than a phone, and often a computer, can give a single page.
+    tooLarge(total: number, name: string) {
+      return window.confirm(
+        `${name} is ${formatBytes(total)}.\n\n` +
+        "Reading it into the scene needs about twice that in memory, which a browser tab may not " +
+        "have - on a phone it almost certainly has not. Desktop Slicer opens it without trouble.\n\n" +
+        "Download it anyway?");
+    },
+  };
+}
+
 async function refreshModuleSamples() {
   moduleSamples.value = await bridge.call<SampleDataSource[]>("getSampleDataSources").catch(() => []);
 }
@@ -57,7 +78,7 @@ async function loadModuleSample(source: SampleDataSource) {
     const files = [];
     for (let i = 0; i < source.uris.length; i++) {
       const fileName = source.fileNames[i] ?? undefined;
-      const path = await runtime.downloadFile(source.uris[i], fileName);
+      const path = await runtime.downloadFile(source.uris[i], fileName, undefined, downloadOptions(source.name));
       files.push({ path, nodeName: source.nodeNames[i], fileType: source.loadFileTypes[i], load: source.loadFiles[i] !== false });
     }
     busy.value = `Loading ${source.name}`;
@@ -118,7 +139,7 @@ async function loadUrl() {
   if (!url) return;
   busy.value = "Downloading";
   try {
-    const path = await runtime.downloadFile(url);
+    const path = await runtime.downloadFile(url, undefined, undefined, downloadOptions(url.split("/").pop() || "file"));
     await bridge.call("loadFiles", [[path]]);
   } catch (e: any) {
     alert(e.message ?? e);
@@ -131,7 +152,7 @@ async function loadSample(sample: (typeof SAMPLE_DATA)[number]) {
   sampleOpen.value = false;
   busy.value = `Downloading ${sample.name}`;
   try {
-    const path = await runtime.downloadFile(sample.url, sample.fileName);
+    const path = await runtime.downloadFile(sample.url, sample.fileName, undefined, downloadOptions(sample.name));
     await bridge.call("loadFiles", [[path], sample.properties ?? {}]);
   } catch (e: any) {
     alert(e.message ?? e);

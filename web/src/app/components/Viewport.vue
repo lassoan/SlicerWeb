@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
+import { Eye, EyeOff, Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
+import PopupMenu from "./PopupMenu.vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
 import TableView from "./TableView.vue";
 import PlotView from "./PlotView.vue";
@@ -28,6 +29,7 @@ interface SliceState {
   labelVolumeID: string | null;
   foregroundOpacity: number;
   labelOpacity: number;
+  sliceVisible: boolean;
   fieldOfView: number[];
 }
 const slice = reactive<Partial<SliceState>>({});
@@ -246,6 +248,13 @@ async function setLayer(layer: "background" | "foreground" | "label", id: string
   await refreshSliceState();
 }
 
+/** Show or hide this slice in the 3D views, as the image button of Slicer's slice controller does. */
+async function setSliceVisible(visible: boolean) {
+  slice.sliceVisible = visible;
+  await bridge.call("setSliceVisible", [props.view.layoutName, visible]);
+  await refreshSliceState();
+}
+
 async function resetView() {
   if (isSlice.value) {
     await bridge.evalPython(`slicer.app.layoutManager().sliceWidget(${JSON.stringify(props.view.layoutName)}).sliceLogic().FitSliceToAll()`);
@@ -284,8 +293,24 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
     @pointerdown="store.activeView = view.layoutName ?? ''">
     <!-- Slice / 3D view controller bar (Slicer's colored view controller, OHIF styling) -->
     <div v-if="!isTable && !isPlot" class="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-input/40 bg-card px-1.5 text-[12px]">
-      <span class="inline-block h-3 w-3 shrink-0 rounded-sm" :style="{ background: view.color ?? '#888' }" />
-      <span class="shrink-0 font-medium text-foreground">{{ view.label ?? view.layoutName }}</span>
+      <PopupMenu v-if="isSlice">
+        <template #trigger="{ open, toggle }">
+          <button type="button" data-name="viewMenu" class="flex h-5 items-center gap-1.5 rounded px-1 hover:bg-accent/60"
+            :class="open ? 'bg-accent/60' : ''" :title="`${view.label ?? view.layoutName} view menu`" @click="toggle">
+            <span class="inline-block h-3 w-3 shrink-0 rounded-sm" :style="{ background: view.color ?? '#888' }" />
+            <span class="shrink-0 font-medium text-foreground">{{ view.label ?? view.layoutName }}</span>
+          </button>
+        </template>
+        <button type="button" role="menuitem" data-name="menu:showIn3D"
+          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          :class="slice.sliceVisible ? 'text-highlight' : ''" @click="setSliceVisible(!slice.sliceVisible)">
+          <Eye v-if="slice.sliceVisible" :size="16" /><EyeOff v-else :size="16" />Show in 3D
+        </button>
+      </PopupMenu>
+      <template v-else>
+        <span class="inline-block h-3 w-3 shrink-0 rounded-sm" :style="{ background: view.color ?? '#888' }" />
+        <span class="shrink-0 font-medium text-foreground">{{ view.label ?? view.layoutName }}</span>
+      </template>
       <template v-if="isSlice">
         <select class="h-5 shrink-0 rounded bg-input/60 px-1 text-[11px] text-foreground outline-none"
           :value="slice.orientation" @change="setOrientation(($event.target as HTMLSelectElement).value)">

@@ -571,6 +571,26 @@ def setSliceOrientation(layoutName, orientation):
 
 
 @method()
+def setSliceVisible(layoutName, visible):
+    """Show or hide the slice in the 3D views (the image button of Slicer's slice controller).
+
+    The change is made between StartSliceNodeInteraction and EndSliceNodeInteraction, as
+    qMRMLSliceControllerWidget::setSliceVisible does, so that slice views linked to this one are
+    shown and hidden with it.
+    """
+    import slicer
+
+    widget = slicer.app.layoutManager().sliceWidget(layoutName)
+    if widget is None:
+        return False
+    logic = widget.sliceLogic()
+    logic.StartSliceNodeInteraction(slicer.vtkMRMLSliceNode.SliceVisibleFlag)
+    widget.mrmlSliceNode().SetSliceVisible(bool(visible))
+    logic.EndSliceNodeInteraction()
+    return True
+
+
+@method()
 def setSliceLayerVolume(layoutName, layer, volumeNodeID):
     import slicer
 

@@ -173,39 +173,81 @@ class ctkDoubleRangeSlider(ctkRangeWidget):
     positionsChanged = Signal("positionsChanged(double,double)")
 
 
-class ctkPathLineEdit(QLineEdit):
+class ctkPathLineEdit(_ElementWidget):
+    """A file (or folder) for a module to work on.
+
+    A browser has no paths of its own, so the file is chosen with the file picker of the browser
+    and copied into the virtual file system; what the module is given is the path it landed on,
+    which it can open like any other file (see SwPathLineEdit.vue).
+    """
+
+    _tag = "sw-pathlineedit"
+    _classes = ""
+    _events = {"currentPathChanged": "_onCurrentPathChanged"}
+
     currentPathChanged = Signal("currentPathChanged(QString)")
-    Files, Dirs, Drives, NoDot = 1, 2, 4, 0x2000
+    # ctkPathLineEdit::Filters
+    Files, Dirs, Drives, NoDot, NoDotDot, AllDirs, Readable, Writable, Executable = 1, 2, 4, 0x2000, 0x4000, 0x400, 0x10, 0x20, 0x40
 
-    def __init__(self, parent=None):
-        super().__init__("", parent)
-        self.textChanged.connect(self.currentPathChanged.emit)
+    currentPath = QProp("", el="currentPath", signal="currentPathChanged", convert=str)
+    nameFilters = QProp([], el="nameFilters")
+    placeholderText = QProp("", el="placeholderText", convert=str)
+    chooseDirectory = QProp(False, el="chooseDirectory", convert=_bool)
 
-    currentPath = property(lambda self: self.text, lambda self, v: self.setCurrentPath(v))
+    def _onCurrentPathChanged(self, path):
+        type(self).currentPath.set_silently(self, path)
+        self.currentPathChanged.emit(str(path))
 
+    # --- the API of ctkPathLineEdit that module code uses
     def setCurrentPath(self, path):
-        self.text = path
+        self.currentPath = path or ""
+
+    def setNameFilters(self, filters):
+        """The kinds of file offered: ``["Mimics project (*.mcs *.mxp)"]``."""
+        self.nameFilters = [str(f) for f in (filters or [])]
+
+    def setFilters(self, filters):
+        """ctkPathLineEdit::Filters: whether files or folders are wanted."""
+        self.chooseDirectory = bool(int(filters) & self.Dirs) and not bool(int(filters) & self.Files)
+
+    def setSettingKey(self, key):
+        """Where the last path would be remembered; nothing is remembered here."""
+
+    def setShowHistoryButton(self, v):
+        pass
+
+    def setShowBrowseButton(self, v):
+        pass
 
     def addCurrentPathToHistory(self):
         pass
 
-    def setNameFilters(self, filters):
+    def retrieveHistory(self):
         pass
 
-    def setFilters(self, filters):
-        pass
+    # ctkPathLineEdit is a line edit as well: text and currentPath are the same thing
+    @property
+    def text(self):
+        return self.currentPath
 
-    def setSettingKey(self, key):
-        pass
+    @text.setter
+    def text(self, value):
+        self.currentPath = value
 
-    def setShowHistoryButton(self, v):
-        pass
+    def setText(self, value):
+        self.currentPath = value
 
 
 class ctkDirectoryButton(ctkPathLineEdit):
     directoryChanged = Signal("directoryChanged(QString)")
 
-    directory = property(lambda self: self.text, lambda self, v: self.setCurrentPath(v))
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.chooseDirectory = True
+        self.currentPathChanged.connect(self.directoryChanged.emit)
+
+    # ctkDirectoryButton::directory is the folder that was chosen
+    directory = property(lambda self: self.currentPath, lambda self, v: self.setCurrentPath(v))
 
 
 class ctkComboBox(QComboBox):

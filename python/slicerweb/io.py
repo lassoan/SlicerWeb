@@ -75,38 +75,67 @@ class IOManager:
         return self._app.applicationLogic()
 
     # ------------------------------------------------------------------ file types
+    #
+    # Which readers and writers there are is kept by vtkSlicerFileIOManager (see io_registry): the
+    # application registers its own at startup and a module adds the ones it brings. These methods
+    # ask it, so that a module's reader counts wherever a file type is looked up.
+
+    def readerForFile(self, fileName):
+        """The reader that is to read this file, or None.
+
+        Every reader that knows the extension is asked how sure it is (a module's reader may look
+        inside the file); the surest one wins, as qSlicerCoreIOManager does it.
+        """
+        from . import io_registry, io_scripted
+
+        best, bestConfidence = None, 0.0
+        for reader in io_registry.readers_for_file(fileName):
+            confidence = (io_scripted.confidence_for_file(reader, fileName) if reader.GetOwner()
+                          else reader.CanLoadFileConfidence(str(fileName)))
+            if confidence > bestConfidence:
+                best, bestConfidence = reader, confidence
+        return best
+
     def fileType(self, fileName):
-        ext = _lower_ext(str(fileName))
-        for fileType, extensions in FILE_TYPES:
-            if ext in extensions:
-                return fileType
-        return "NoFile"
+        reader = self.readerForFile(fileName)
+        return reader.GetFileType() if reader is not None else "NoFile"
 
     def fileTypesFromFileName(self, fileName):
-        ext = _lower_ext(str(fileName))
-        return [ft for ft, exts in FILE_TYPES if ext in exts]
+        from . import io_registry
+
+        return [reader.GetFileType() for reader in io_registry.readers_for_file(fileName)]
 
     def fileDescriptions(self, fileType):
-        return [WRITER_DESCRIPTIONS.get(fileType, fileType)]
+        from . import io_registry
+
+        description = io_registry.description_for_file_type(fileType)
+        return [description or WRITER_DESCRIPTIONS.get(fileType, fileType)]
 
     def registeredFileReaderCount(self, fileType=None):
-        types = [ft for ft, _ in FILE_TYPES]
-        return len(types) if fileType is None else int(fileType in types)
+        from . import io_registry
+
+        types = io_registry.file_types()
+        return len(types) if fileType is None else types.count(fileType)
 
     def readerFileTypes(self):
-        return [ft for ft, _ in FILE_TYPES]
+        from . import io_registry
+
+        return io_registry.file_types()
 
     def fileExtensions(self, fileType):
-        for ft, exts in FILE_TYPES:
-            if ft == fileType:
-                return list(exts)
-        return []
+        from . import io_registry
+
+        return io_registry.extensions_for_file_type(fileType)
 
     def allReadableFileExtensions(self):
-        exts = []
-        for _, e in FILE_TYPES:
-            exts.extend(e)
-        return exts
+        from . import io_registry
+
+        extensions = []
+        for fileType in io_registry.file_types():
+            for extension in io_registry.extensions_for_file_type(fileType):
+                if extension not in extensions:
+                    extensions.append(extension)
+        return extensions
 
     # ------------------------------------------------------------------ loading
     def loadNodes(self, fileType, properties, loadedNodes=None, userMessages=None):
@@ -116,6 +145,10 @@ class IOManager:
         if not fileName or not os.path.exists(fileName):
             self._addMessage(userMessages, f"File not found: {fileName}")
             return False
+        scripted = self._scriptedReader(fileType, fileName)
+        if scripted is not None:
+            return self._loadWithScriptedReader(scripted, properties, loadedNodes, userMessages)
+
         reader = getattr(self, "_read" + fileType, None)
         if reader is None:
             self._addMessage(userMessages, f"No reader for file type {fileType}")
@@ -161,12 +194,43 @@ class IOManager:
         for fileName in others:
             fileType = self.fileType(fileName)
             if fileType == "NoFile":
-                logger.warning("Unknown file type: %s", fileName)
+                logger.warning("Nothing reads %s", fileName)
                 continue
             nodes = vtk.vtkCollection()
             self.loadNodes(fileType, dict(properties, fileName=fileName), nodes)
             loadedIDs += [nodes.GetItemAsObject(i).GetID() for i in range(nodes.GetNumberOfItems())]
         return loadedIDs
+
+    def _scriptedReader(self, fileType, fileName):
+        """The reader a module registered for this file type, where it can read this file."""
+        from . import io_registry, io_scripted
+
+        for reader in io_registry.readers_for_file(fileName):
+            if (reader.GetOwner() and reader.GetFileType() == fileType
+                    and io_scripted.confidence_for_file(reader, fileName) > 0.0):
+                return reader
+        return None
+
+    def _loadWithScriptedReader(self, reader, properties, loadedNodes, userMessages):
+        """Let a module's reader read the file, and collect what it put in the scene."""
+        from . import io_scripted
+
+        fileName = str(properties.get("fileName", ""))
+        try:
+            nodeIDs = io_scripted.load(reader, properties)
+        except Exception as e:
+            logger.exception("The reader of %s failed on %s", reader.GetOwner(), fileName)
+            self._addMessage(userMessages, f"Failed to load {fileName}: {e}")
+            return False
+        if userMessages is not None:
+            userMessages.AddMessages(reader.GetUserMessages())
+        scene = self._scene()
+        for nodeID in nodeIDs:
+            node = scene.GetNodeByID(nodeID)
+            if node is not None and loadedNodes is not None:
+                loadedNodes.AddItem(node)
+        host.emit("nodes-loaded", {"fileName": fileName, "nodeIDs": list(nodeIDs)})
+        return bool(nodeIDs)
 
     @staticmethod
     def _addMessage(userMessages, text, error=True):
@@ -361,7 +425,30 @@ class IOManager:
         return [n for n in nodes if n and n.GetID() and n.GetID() not in before]
 
     # ------------------------------------------------------------------ saving
+    def writerForNode(self, node, fileName=None):
+        """The writer that is to write this node, or None.
+
+        A writer a module brought is asked how sure it is (it may look at what the node holds);
+        one of the application answers by the node's class. The surest one wins, as
+        qSlicerCoreIOManager does it. Where a file name is given, a writer whose extensions do not
+        cover it is passed over.
+        """
+        from . import io_registry, io_scripted
+
+        best, bestConfidence = None, 0.0
+        for writer in io_registry.writers_for_node(node):
+            confidence = (io_scripted.confidence_for_node(writer, node) if writer.GetOwner()
+                          else writer.CanWriteObjectConfidence(node))
+            if fileName and writer.GetExtensions() and not writer.MatchesExtension(str(fileName)):
+                continue
+            if confidence > bestConfidence:
+                best, bestConfidence = writer, confidence
+        return best
+
     def fileWriterFileType(self, node):
+        writer = self.writerForNode(node)
+        if writer is not None and writer.GetOwner():
+            return writer.GetFileType()
         for fileType, cls in (("SegmentationFile", "vtkMRMLSegmentationNode"),
                               ("VolumeFile", "vtkMRMLVolumeNode"),
                               ("ModelFile", "vtkMRMLModelNode"),
@@ -403,7 +490,37 @@ class IOManager:
         if node is None:
             self._addMessage(userMessages, f"Node not found: {properties.get('nodeID')}")
             return False
+        scripted = self._scriptedWriter(node, fileName, fileType)
+        if scripted is not None:
+            return self._writeWithScriptedWriter(scripted, node, properties, userMessages)
         return self._writeNode(node, fileName, properties, userMessages)
+
+    def _scriptedWriter(self, node, fileName, fileType=None):
+        """The writer a module registered for this node, where it is the one to use."""
+        from . import io_scripted
+
+        writer = self.writerForNode(node, fileName)
+        if writer is None or not writer.GetOwner():
+            return None
+        if fileType and fileType not in ("NoFile", writer.GetFileType()):
+            return None
+        return writer if io_scripted.confidence_for_node(writer, node) > 0.0 else None
+
+    def _writeWithScriptedWriter(self, writer, node, properties, userMessages):
+        """Let a module's writer write the file."""
+        from . import io_scripted
+
+        properties = dict(properties)
+        properties.setdefault("nodeID", node.GetID())
+        try:
+            io_scripted.write(writer, properties)
+        except Exception as e:
+            logger.exception("The writer of %s failed", writer.GetOwner())
+            self._addMessage(userMessages, f"Failed to write {properties.get('fileName')}: {e}")
+            return False
+        if userMessages is not None:
+            userMessages.AddMessages(writer.GetUserMessages())
+        return True
 
     def exportNodes(self, nodeIDs, fileNames, properties, hardenTransform=False, userMessages=None):
         ok = True

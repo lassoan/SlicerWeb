@@ -26,6 +26,7 @@ const tagNames: Record<string, string> = {
   SwGroupBox: "sw-groupbox",
   SwLabel: "sw-label",
   SwLineEdit: "sw-lineedit",
+  SwPathLineEdit: "sw-pathlineedit",
   SwNodeSelector: "sw-node-selector",
   SwProgressBar: "sw-progressbar",
   SwRangeSlider: "sw-range-slider",

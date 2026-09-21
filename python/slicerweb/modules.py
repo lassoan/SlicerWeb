@@ -146,6 +146,29 @@ class ScriptedModule(ModuleBase):
         # creates an empty vtkSlicerScriptedLoadableModuleLogic); logic() returns the widget's logic.
         if hasattr(self.instance, "setup"):
             pass
+        self.registerIO()
+
+    def registerIO(self):
+        """Register the reader and writer the module brings, if it has any.
+
+        Same as qSlicerScriptedLoadableModule::registerIO: a module that defines a class named
+        <ModuleName>FileReader or <ModuleName>FileWriter has it added to the list of readers and
+        writers, so that its files can be opened like any other (see slicerweb.io_scripted).
+        """
+        from . import io_scripted
+
+        try:
+            io_scripted.register_module_handlers(self.name, self.pythonModule)
+        except Exception:
+            logger.exception("The readers and writers of module %s could not be registered", self.name)
+
+    def unregisterIO(self):
+        from . import io_scripted
+
+        try:
+            io_scripted.unregister_module_handlers(self.name)
+        except Exception:
+            logger.debug("The readers of module %s could not be taken away", self.name, exc_info=True)
 
     def hasTest(self):
         return getattr(self.pythonModule, self.name + "Test", None) is not None
@@ -648,6 +671,7 @@ def reload_scripted_module(moduleName):
     if module is None or module.kind != "scripted":
         raise KeyError(f"Scripted module {moduleName} is not loaded")
     filename = module.path
+    module.unregisterIO()   # the reloaded module registers its readers and writers again
     destroy_scripted_module_widget(moduleName)
     for name in [moduleName] + [n for n in list(sys.modules) if n.startswith(moduleName + ".")]:
         sys.modules.pop(name, None)

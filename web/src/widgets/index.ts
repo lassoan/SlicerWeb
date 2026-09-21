@@ -12,6 +12,7 @@ export { default as SwFormRow } from "./SwFormRow.vue";
 export { default as SwGroupBox } from "./SwGroupBox.vue";
 export { default as SwLabel } from "./SwLabel.vue";
 export { default as SwLineEdit } from "./SwLineEdit.vue";
+export { default as SwPathLineEdit } from "./SwPathLineEdit.vue";
 export { default as SwNodeSelector } from "./SwNodeSelector.vue";
 export { default as SwProgressBar } from "./SwProgressBar.vue";
 export { default as SwRangeSlider } from "./SwRangeSlider.vue";

@@ -91,6 +91,7 @@ class SlicerWebApplication:
         # Expose application objects in the slicer namespace, same as slicerqt.py does on desktop.
         slicer.app = self
         slicer.mrmlScene = scene
+        self._registerFileHandlers()
         self._installLogging()
 
         from . import bridge, panels, panels_markupstomodel, panels_more, sample_data, segment_editor, views_data  # noqa: F401  (register module GUI bridge methods)
@@ -103,6 +104,14 @@ class SlicerWebApplication:
         cli_modules.install()
         downloads.install()
         packages.install()
+
+        # Reloading a module is done the way this application loads them; slicer.util's own way
+        # rebuilds the GUI with Qt calls that do not exist here.
+        import slicer.util
+
+        from .modules import reload_scripted_module
+
+        slicer.util.reloadScriptedModule = reload_scripted_module
 
         # Python console namespace, as in the desktop Python interactor
         import __main__
@@ -253,6 +262,20 @@ class SlicerWebApplication:
 
     def ioManager(self):
         return self._ioManager
+
+    def _registerFileHandlers(self):
+        """Put the readers and writers of the application into the list (vtkSlicerFileIOManager).
+
+        A module adds its own when it is loaded (ScriptedModuleDescriptor.registerIO), which is how
+        a module that brings a file format - ImportMimics and its .mcs projects, say - is asked to
+        open such a file wherever files are opened.
+        """
+        from . import io, io_registry
+
+        try:
+            io_registry.register_application_handlers(io.FILE_TYPES, io.WRITER_DESCRIPTIONS)
+        except Exception:
+            logger.exception("The readers and writers of the application could not be registered")
 
     def coreIOManager(self):
         return self._ioManager

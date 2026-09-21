@@ -1,9 +1,13 @@
 # VTK as Pyodide side modules (VTK kits as shared libraries + Python extension modules).
+# VTK_USE_64BIT_IDS is given on the command line rather than in cmake/vtk/wasm.cmake, so that a
+# build tree that was configured before it was set takes it up as well (an initial cache is only
+# read when the tree is first configured).
 source /work/scripts/env.sh
 B=$SW_BUILD/vtk
 CT=$(dirname "$(find "$SW_INSTALL/vtk-compiletools" -name vtkcompiletools-config.cmake | head -1)")
 cmake -S "$SW_SRC/VTK" -B "$B" "${SW_CMAKE_SIDE_ARGS[@]}" "${SW_OPENGL_ARGS[@]}" \
   -DCMAKE_PROJECT_VTK_INCLUDE=/work/cmake/vtk/project-include.cmake \
+  -DVTK_USE_64BIT_IDS=ON \
   -DSW_VTK_COMPILETOOLS_DIR="$CT" \
   -DPython3_EXECUTABLE=/usr/local/bin/python3.14 -DPython3_INCLUDE_DIR="$PYTHON_INCLUDE_DIR" \
   -DPython3_SOABI=$SW_PY_SOABI -DPython3_FIND_STRATEGY=LOCATION \

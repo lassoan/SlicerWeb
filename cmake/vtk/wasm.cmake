@@ -11,6 +11,12 @@ set(VTK_ENABLE_WEBGPU OFF CACHE BOOL "")
 set(VTK_ENABLE_CATALYST OFF CACHE BOOL "")
 set(VTK_JPEG_ENABLE_SIMD OFF CACHE BOOL "")
 set(VTK_LEGACY_REMOVE ON CACHE BOOL "")
+# Point and cell ids are 64 bit, as they are in desktop Slicer. A 32-bit build is smaller and
+# would do for the meshes a page can hold, but module code written for the desktop hands VTK the
+# index arrays NumPy makes, which are 64 bit: with 32-bit ids vtk.util.numpy_support refuses them
+# ("Expecting a numpy.int32 array, got int64 instead") and the module fails where it works on the
+# desktop.
+set(VTK_USE_64BIT_IDS ON CACHE BOOL "")
 set(VTK_SMP_IMPLEMENTATION_TYPE Sequential CACHE STRING "")
 set(VTK_WEBASSEMBLY_THREADS OFF CACHE BOOL "")
 set(VTK_WEBASSEMBLY_64_BIT OFF CACHE BOOL "")

@@ -208,7 +208,12 @@ class ctkPathLineEdit(_ElementWidget):
 
     def setFilters(self, filters):
         """ctkPathLineEdit::Filters: whether files or folders are wanted."""
-        self.chooseDirectory = bool(int(filters) & self.Dirs) and not bool(int(filters) & self.Files)
+        self._filters = int(filters)
+        self.chooseDirectory = bool(self._filters & self.Dirs) and not bool(self._filters & self.Files)
+
+    # PythonQt exposes Qt properties as attributes, and modules set this one that way
+    filters = property(lambda self: getattr(self, "_filters", ctkPathLineEdit.Files), setFilters)
+
 
     def setSettingKey(self, key):
         """Where the last path would be remembered; nothing is remembered here."""

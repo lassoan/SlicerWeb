@@ -2,7 +2,7 @@
 // Application log, like the error log of desktop Slicer: what the application, its modules and VTK
 // have reported, with the levels to show chosen, a search, and a way to clear it.
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Trash2, X } from "@lucide/vue";
+import { Check, Copy, Download, Trash2, X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store } from "../store";
 
@@ -55,6 +55,42 @@ async function toggleLevel(name: string) {
   if (name === "DEBUG") await bridge.call("setLogLevel", [shown.value.DEBUG ? "DEBUG" : "INFO"]);
 }
 
+/** The messages as they are shown, as plain text. */
+function asText() {
+  return visible.value
+    .map((e) => `${new Date(e.time * 1000).toISOString()} ${e.level} ${e.origin}: ${e.message}`)
+    .join(String.fromCharCode(10));
+}
+
+const copied = ref(false);
+async function copy() {
+  const text = asText();
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // no clipboard permission (or an insecure page): copy from a selection instead
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    document.execCommand("copy");
+    area.remove();
+  }
+  copied.value = true;
+  window.setTimeout(() => (copied.value = false), 1500);
+}
+
+function download() {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([asText()], { type: "text/plain" }));
+  link.download = `SlicerWeb-log-${stamp}.txt`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+}
+
 async function clear() {
   await bridge.call("clearErrorLog");
   entries.value = [];
@@ -91,12 +127,18 @@ watch(visible, scrollToEnd);
       </button>
       <input v-model="search" placeholder="Search"
         class="ml-1 h-6 min-w-24 flex-1 rounded border border-input bg-background px-2 text-[12px] outline-none focus:border-primary" />
+      <button type="button" :title="copied ? 'Copied' : 'Copy the messages shown'" data-name="copyLog"
+        class="rounded p-1 text-muted-foreground hover:text-highlight" @click="copy">
+        <Check v-if="copied" :size="14" class="text-emerald-400" /><Copy v-else :size="14" />
+      </button>
+      <button type="button" title="Save the messages shown to a file" data-name="downloadLog"
+        class="rounded p-1 text-muted-foreground hover:text-highlight" @click="download"><Download :size="14" /></button>
       <button type="button" title="Clear the log" data-name="clearLog"
         class="rounded p-1 text-muted-foreground hover:text-highlight" @click="clear"><Trash2 :size="14" /></button>
       <button type="button" title="Close" class="rounded p-1 text-muted-foreground hover:text-highlight"
         @click="store.logWindowOpen = false"><X :size="14" /></button>
     </div>
-    <div ref="list" class="min-h-0 flex-1 overflow-y-auto px-2 py-1 font-mono text-[12px] leading-5" @scroll="onScroll">
+    <div ref="list" class="min-h-0 flex-1 overflow-y-auto px-2 py-1 font-mono text-[12px] leading-5 select-text" @scroll="onScroll">
       <div v-for="(e, i) in visible" :key="i" class="flex gap-2 whitespace-pre-wrap" :data-level="levelOf(e).name">
         <span class="shrink-0 text-muted-foreground tabular-nums">{{ time(e) }}</span>
         <span class="w-16 shrink-0" :class="levelOf(e).color">{{ e.level }}</span>

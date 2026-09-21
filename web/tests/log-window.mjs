@@ -11,7 +11,10 @@ await page.goto(base + "?sample=");
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 300000 });
 await page.waitForTimeout(2000);
 
-await page.getByRole("button", { name: /application log/i }).click();
+// the log window is opened from the application menu at the end of the toolbar
+await page.getByRole("button", { name: /application menu/i }).click();
+await page.waitForTimeout(300);
+await page.locator("[data-name='menu:log']").click();
 await page.waitForTimeout(600);
 const log = page.locator("[data-name='logWindow']");
 console.log("log window open:", await log.count() > 0);
@@ -65,6 +68,21 @@ await page.waitForTimeout(400);
 console.log("searching 'warning message':", await log.locator("[data-level]").count(), "line(s)");
 await log.locator("input").fill("");
 if (shot) await page.screenshot({ path: shot });
+
+// the messages can be selected, copied and saved
+console.log("selectable:", await log.locator("[data-level]").first().evaluate((el) => getComputedStyle(el).userSelect));
+await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+await log.locator("[data-name='copyLog']").click();
+await page.waitForTimeout(500);
+const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+console.log("copied", clipboard.split(String.fromCharCode(10)).length, "lines, first:", clipboard.split(String.fromCharCode(10))[0].slice(0, 90));
+const download = page.waitForEvent("download", { timeout: 20000 });
+await log.locator("[data-name='downloadLog']").click();
+const file = await download;
+const stream = await file.createReadStream();
+let saved = "";
+for await (const chunk of stream) saved += chunk;
+console.log("saved", await file.suggestedFilename(), "-", saved.split(String.fromCharCode(10)).length, "lines");
 
 await log.locator("[data-name='clearLog']").click();
 await page.waitForTimeout(500);

@@ -30,7 +30,15 @@ _JS_DOWNLOAD = """
     return get(url);
   } catch (e) {
     if (!proxyBase) throw e;
-    return get(proxyBase + encodeURIComponent(url));  // other origin: download proxy
+    try {
+      return get(proxyBase + encodeURIComponent(url));  // other origin: download proxy
+    } catch (proxyError) {
+      // A site behind a sign-in answers a request whose sign-in has expired with a redirect to
+      // the sign-in page, which arrives here as no answer at all rather than as a status.
+      const said = String((proxyError && proxyError.message) || proxyError);
+      throw new Error(/[0-9]{3}/.test(said) ? said
+        : said + " (this site did not answer; if the sign-in has expired, reload the page and try again)");
+    }
   }
 })
 """

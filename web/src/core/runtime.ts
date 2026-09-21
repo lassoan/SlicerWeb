@@ -47,6 +47,26 @@ function toBase64(data: Uint8Array): string {
 }
 
 /** A number of bytes, as it is written for a person to read ("1.2 GB"). */
+/**
+ * Why a download did not happen, in words that say what to do about it.
+ *
+ * A file is fetched from where it is, and where that is not allowed - most servers do not let
+ * another site read their files - through this site, which fetches it instead. When that second
+ * request fails without even a status, the usual reason is a redirect somewhere else: a site
+ * behind a sign-in answers that way once the sign-in has expired. A page left open goes on working
+ * (everything it needs is already loaded), so nothing says the session has ended until something
+ * is asked for and does not arrive.
+ */
+async function downloadFailureReason(proxied: string, response: Response | null): Promise<string> {
+  if (response && response.status) return `This site answered ${response.status} ${response.statusText}.`;
+  const check = await fetch(proxied, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(15000) }).catch(() => null);
+  if (check && (check.type === "opaqueredirect" || check.status === 0)) {
+    return "The sign-in for this site has expired. Reload the page to sign in again, then try once more.";
+  }
+  if (check && !check.ok) return `This site answered ${check.status} ${check.statusText}.`;
+  return "This site could not be reached.";
+}
+
 export function formatBytes(bytes: number): string {
   if (!bytes) {
     return "unknown size";
@@ -217,8 +237,15 @@ bridge.call
       pyodide.runPython(`import importlib.util; importlib.util.find_spec(${JSON.stringify(name.replace(/-/g, "_"))}) is not None`);
     this.progress("packages", `Installing Python package ${name}`, 1);
     try {
-      await pyodide.loadPackagesFromImports(`import ${name.replace(/-/g, "_")}`, { messageCallback: () => {} });
-      if (!importable()) await pyodide.loadPackage(name, { messageCallback: () => {} });
+      // One of the packages built with Pyodide (NumPy, SciPy, h5py and the libraries they need),
+      // which is asked for by name or by what it is imported as.
+      try {
+        await pyodide.loadPackagesFromImports(`import ${name.replace(/-/g, "_")}`, { messageCallback: () => {} });
+        if (!importable()) await pyodide.loadPackage(name, { messageCallback: () => {} });
+      } catch {
+        // Not one of them (loadPackage says so by throwing): it may still be on PyPI, which is
+        // where a package of pure Python - pydicom, say - comes from.
+      }
       if (importable()) return true;
       const micropip = pyodide.pyimport("micropip");
       try {
@@ -226,7 +253,7 @@ bridge.call
       } finally {
         micropip.destroy?.();
       }
-      return true;
+      return importable();
     } catch (e) {
       console.warn(`Python package ${name} is not available`, e);
       this.unavailablePackages.add(name);
@@ -376,7 +403,8 @@ bridge.call
       const previous = response;
       response = await fetch(proxied).catch(() => null);
       if (!response || !response.ok) {
-        throw new Error(`Download failed (${response?.status ?? previous?.status ?? "no response"}): ${url}`);
+        throw new Error(`Download failed: ${url}
+${await downloadFailureReason(proxied, response ?? previous)}`);
       }
     }
     const name = fileName ?? decodeURIComponent(new URL(url, document.baseURI).pathname.split("/").pop() || "download");

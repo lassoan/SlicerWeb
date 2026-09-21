@@ -9,3 +9,7 @@ web/**/dist/
 
 # Local credentials (never committed)
 /.secrets/
+
+# Screenshots the browser tests write when they are given a bare file name. They can hold whatever
+# was on the screen - patient data, among other things - so none of them belong in the repository.
+/web/*.png

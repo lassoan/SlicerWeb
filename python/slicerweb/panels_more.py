@@ -308,6 +308,10 @@ def sequenceBrowserInfo(nodeID):
             "items": sequenceNode.GetNumberOfDataNodes(),
             "proxyNodeID": proxyNode.GetID() if proxyNode is not None else None,
             "proxyName": proxyNode.GetName() if proxyNode is not None else None,
+            # Whether this sequence follows the browser, and whether what its proxy node does is
+            # written back into it (the playback and recording columns of the desktop module).
+            "playback": bool(node.GetPlayback(sequenceNode)),
+            "recording": bool(node.GetRecording(sequenceNode)),
         })
     itemCount = masterSequence.GetNumberOfDataNodes() if masterSequence is not None else 0
     index = node.GetSelectedItemNumber()
@@ -321,6 +325,12 @@ def sequenceBrowserInfo(nodeID):
         "playing": bool(node.GetPlaybackActive()),
         "playbackRate": node.GetPlaybackRateFps(),
         "loop": bool(node.GetPlaybackLooped()),
+        # Recording writes what the proxy nodes are doing back into the sequences, which is what
+        # the record button and the snapshot button of the Sequences module do.
+        "recording": bool(node.GetRecordingActive()),
+        "recordMasterOnly": bool(node.GetRecordMasterOnly()),
+        # As in desktop Slicer, recording is offered only where a sequence is set to record into
+        "canRecord": bool(node.IsAnySequenceNodeRecording()),
         "sequences": synchronized,
     }
 
@@ -381,6 +391,23 @@ def setSequenceBrowser(nodeID, properties):
             node.SetPlaybackLooped(bool(value))
         elif name == "step":
             node.SelectNextItem(int(value))
+        elif name == "selectFirst":
+            node.SetSelectedItemNumber(0)
+        elif name == "selectLast":
+            node.SetSelectedItemNumber(max(0, node.GetNumberOfItems() - 1))
+        elif name == "recording":
+            node.SetRecordingActive(bool(value))
+        elif name == "recordMasterOnly":
+            node.SetRecordMasterOnly(bool(value))
+        elif name == "sequenceRecording":
+            sequenceNode = _node(value["id"])
+            node.SetRecording(sequenceNode, bool(value["enabled"]))
+        elif name == "sequencePlayback":
+            sequenceNode = _node(value["id"])
+            node.SetPlayback(sequenceNode, bool(value["enabled"]))
+        elif name == "snapshot":
+            # One item added from where the proxy nodes stand now, as the snapshot button does
+            node.SaveProxyNodesState()
     return True
 
 

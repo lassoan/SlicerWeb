@@ -66,6 +66,11 @@ def available():
     return _document is not None
 
 
+def window():
+    """The browser window, or None where there is no browser (tests, desktop Slicer)."""
+    return js if js is not None and hasattr(js, "screen") else None
+
+
 def create(tag, className=""):
     if _document is not None:
         el = _document.createElement(tag)

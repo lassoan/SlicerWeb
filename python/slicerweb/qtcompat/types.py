@@ -47,8 +47,20 @@ class Qt:
 class QSizePolicy:
     Fixed, Minimum, Maximum, Preferred, Expanding, MinimumExpanding, Ignored = 0, 1, 4, 5, 7, 3, 13
 
-    def __init__(self, *args):
-        pass
+    def __init__(self, horizontal=Preferred, vertical=Preferred, *args):
+        self._horizontal, self._vertical = horizontal, vertical
+
+    def setHorizontalPolicy(self, policy):
+        self._horizontal = policy
+
+    def horizontalPolicy(self):
+        return self._horizontal
+
+    def setVerticalPolicy(self, policy):
+        self._vertical = policy
+
+    def verticalPolicy(self):
+        return self._vertical
 
     def setHorizontalStretch(self, v):
         pass
@@ -76,6 +88,30 @@ class QSize:
     def __call__(self):
         # Qt property in PythonQt (widget.sizeHint), also called as a getter (widget.sizeHint())
         return self
+
+class QRect:
+    def __init__(self, x=0, y=0, w=0, h=0):
+        self._x, self._y, self._w, self._h = x, y, w, h
+
+    def x(self):
+        return self._x
+
+    def y(self):
+        return self._y
+
+    def width(self):
+        return self._w
+
+    def height(self):
+        return self._h
+
+    def size(self):
+        return QSize(self._w, self._h)
+
+    def __call__(self):
+        # a Qt property read as a getter, as PythonQt allows (screen.availableGeometry())
+        return self
+
 
 class QPoint:
     def __init__(self, x=0, y=0):
@@ -547,6 +583,49 @@ class QLocale:
             return int(text), True
         except (TypeError, ValueError):
             return 0, False
+
+
+class QEventLoop:
+    """Flags that modules pass to processEvents; there is no loop of our own to run."""
+
+    AllEvents, ExcludeUserInputEvents, ExcludeSocketNotifiers, WaitForMoreEvents = 0, 1, 2, 4
+
+    def processEvents(self, *args):
+        pass
+
+    def exec_(self, *args):
+        return 0
+
+    def quit(self):
+        pass
+
+
+class QTextDocument:
+    """A piece of rich text. Modules build one to take the plain text out of an HTML message."""
+
+    def __init__(self, text=""):
+        self._html = str(text)
+
+    def setHtml(self, html):
+        self._html = str(html)
+
+    def toHtml(self):
+        return self._html
+
+    def setPlainText(self, text):
+        self._html = str(text)
+
+    def toPlainText(self):
+        """The text without the markup, with the usual entities read back."""
+        import html
+        import re
+
+        text = re.sub(r"<br\s*/?>", "\n", self._html, flags=re.I)
+        text = re.sub(r"</p\s*>", "\n", text, flags=re.I)
+        return html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
+
+    def isEmpty(self):
+        return not self.toPlainText()
 
 
 class QUrl:

@@ -10,6 +10,7 @@ from .widgets import (
     QCheckBox,
     QComboBox,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -343,6 +344,23 @@ class ctkSearchBox(QLineEdit):
 
 class ctkFittedTextBrowser(QTextBrowser):
     pass
+
+
+class ctkFlowLayout(QHBoxLayout):
+    """A layout whose widgets are placed side by side and wrap to the next line when the room
+    runs out (the Sample Data module lays its thumbnails out this way)."""
+
+    _classes = "flex flex-row flex-wrap items-start gap-1.5 min-w-0"
+
+    # Which way it is allowed to grow; nothing to do here, the wrapping does it (ctkFlowLayout
+    # takes this as a Qt property).
+    preferredExpandingDirections = None
+
+    def setPreferredExpandingDirections(self, directions):
+        self.preferredExpandingDirections = directions
+
+    def setAlignItems(self, align):
+        pass
 
 
 class ctkExpandableWidget(QWidget):

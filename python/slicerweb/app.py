@@ -269,6 +269,14 @@ class SlicerWebApplication:
     def mainWindow(self):
         return None
 
+    def screens(self):
+        """qSlicerApplication::screens(): the displays the application is shown on.
+
+        A page has the one it is drawn on; modules ask for it to size what they draw in proportion
+        to the display (the Sample Data module sizes its thumbnails that way).
+        """
+        return [_Screen()]
+
     def commandOptions(self):
         return _CommandOptions()
 
@@ -474,6 +482,38 @@ class SlicerWebApplication:
 
     def _onEndBatchProcess(self, caller, event):
         self._batchProcessing = False
+
+
+class _Screen:
+    """One display, as qSlicerApplication::screens() returns them (a QScreen)."""
+
+    @property
+    def availableGeometry(self):
+        # A property, as PythonQt exposes Qt properties; the rectangle answers a call as well, so
+        # both screen.availableGeometry.size() and screen.availableGeometry().size() work.
+        from .qtcompat import dom
+        from .qtcompat.types import QRect
+
+        window = dom.window()
+        screen = getattr(window, "screen", None) if window is not None else None
+        # A display of a size that is not known is taken for an ordinary desktop monitor
+        return QRect(0, 0, int(getattr(screen, "availWidth", 0) or 1920),
+                     int(getattr(screen, "availHeight", 0) or 1080))
+
+    @property
+    def geometry(self):
+        return self.availableGeometry
+
+    def devicePixelRatio(self):
+        from .qtcompat import dom
+
+        window = dom.window()
+        return float((getattr(window, "devicePixelRatio", 1.0) if window is not None else 1.0) or 1.0)
+
+    def logicalDotsPerInch(self):
+        return 96.0 * self.devicePixelRatio()
+
+    physicalDotsPerInch = logicalDotsPerInch
 
 
 class _CommandOptions:

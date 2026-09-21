@@ -71,6 +71,9 @@ class IOManager:
     def _logic(self, moduleName):
         return self._app.applicationLogic().GetModuleLogic(moduleName)
 
+    def _appLogic(self):
+        return self._app.applicationLogic()
+
     # ------------------------------------------------------------------ file types
     def fileType(self, fileName):
         ext = _lower_ext(str(fileName))
@@ -306,9 +309,41 @@ class IOManager:
         return [node]
 
     def _readSequenceFile(self, fileName, properties, userMessages):
+        """A sequence, and the browser that plays it (as qSlicerSequencesReader does).
+
+        A sequence on its own shows nothing: what is seen in the views is the proxy node that the
+        browser keeps at the current item. So one is made for it, unless the caller asked for the
+        sequence alone (show=False), and the proxy volume becomes the volume the slices show.
+        """
         logic = self._logic("Sequences")
         node = logic.AddSequence(fileName, userMessages)
-        return [node] if node else []
+        if not node:
+            return []
+        if properties.get("name"):
+            node.SetName(self._scene().GetUniqueNameByString(str(properties["name"])))
+        if not properties.get("show", True):
+            return [node]
+
+        scene = self._scene()
+        browser = scene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", node.GetName() + " browser")
+        if browser is None:
+            return [node]
+        browser.SetAndObserveMasterSequenceNodeID(node.GetID())
+        if logic is not None:
+            logic.UpdateProxyNodesFromSequences(browser)
+        proxy = browser.GetProxyNode(node)
+
+        # What the proxy is decides what is shown: a volume becomes the one the slice views show.
+        if proxy is not None and proxy.IsA("vtkMRMLVolumeNode"):
+            appLogic = self._appLogic()
+            selection = appLogic.GetSelectionNode() if appLogic else None
+            if selection is not None:
+                if proxy.IsA("vtkMRMLLabelMapVolumeNode"):
+                    selection.SetActiveLabelVolumeID(proxy.GetID())
+                else:
+                    selection.SetActiveVolumeID(proxy.GetID())
+                appLogic.PropagateVolumeSelection(1)
+        return [node, browser] + ([proxy] if proxy is not None else [])
 
     def _readSceneFile(self, fileName, properties, userMessages):
         scene = self._scene()

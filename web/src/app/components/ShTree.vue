@@ -36,11 +36,26 @@ async function setVisible(item: SubjectHierarchyItem) {
   await bridge.call("setSubjectHierarchyItemVisibility", [item.id, item.visible]);
 }
 
+// Which module shows a node of this kind, as the subject hierarchy plugins of desktop Slicer
+// decide it: clicking a node opens the module that node belongs to. A sequence and the browser
+// that plays it both belong to Sequences, which is where the playback controls are.
+const MODULE_FOR_CLASS: [string, string][] = [
+  ["Sequence", "Sequences"],
+  ["Segmentation", "Segmentations"],
+  ["Volume", "Volumes"],
+  ["Model", "Models"],
+  ["Markups", "Markups"],
+  ["Transform", "Transforms"],
+  ["Table", "Tables"],
+  ["PlotChart", "Plots"],
+  ["PlotSeries", "Plots"],
+  ["Text", "Texts"],
+];
+
 function select(item: SubjectHierarchyItem) {
   if (!item.nodeID) return;
   const c = item.className;
-  const module = c.includes("Segmentation") ? "Segmentations" : c.includes("Volume") ? "Volumes" : c.includes("Model") ? "Models"
-    : c.includes("Markups") ? "Markups" : c.includes("Transform") ? "Transforms" : store.activeModule;
+  const module = MODULE_FOR_CLASS.find(([name]) => c.includes(name))?.[1] ?? store.activeModule;
   openModule(module);
   store.selectedNodeClass = item.className;
   store.selectedNodeID = item.nodeID;

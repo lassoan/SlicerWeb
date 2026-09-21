@@ -175,6 +175,12 @@ class QWidget(QObject):
     def adjustSize(self):
         pass
 
+    def repaint(self):
+        """Nothing to do: the browser paints when Python returns control."""
+
+    def update(self):
+        """Nothing to do: the browser paints when Python returns control."""
+
     def updateGeometry(self):
         pass
 
@@ -939,6 +945,12 @@ class QTextEdit(_ElementWidget):
 
     def insertPlainText(self, text):
         self.setPlainText(self.plainText + str(text))
+
+    def insertHtml(self, html):
+        """Rich text goes in as its text: the view shows plain text."""
+        from .types import QTextDocument
+
+        self.insertPlainText(QTextDocument(html).toPlainText())
 
     def clear(self):
         self.setPlainText("")

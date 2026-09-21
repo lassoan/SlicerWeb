@@ -153,6 +153,12 @@ export class SlicerRuntime {
     pyodide.registerJsModule("slicerweb_host", {
       emit: (event: string, payloadJson: string) => this.bridge.dispatch(event, payloadJson),
       persistFileSystem: () => this.persistFileSystem(),
+      // A package that Python will want shortly, fetched while the page goes on: a transform in the
+      // scene means one may be saved as .h5, which needs h5py (see slicerweb/transforms_hdf5.py).
+      // Python cannot wait for it - it holds the thread the page draws with - so it only asks.
+      installPackage: (name: string) => {
+        void this.ensurePythonPackage(name);
+      },
     });
 
     await this.mountPersistentStorage();

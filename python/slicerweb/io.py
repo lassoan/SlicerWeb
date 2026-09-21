@@ -218,6 +218,8 @@ class IOManager:
         fileName = str(properties.get("fileName", ""))
         try:
             nodeIDs = io_scripted.load(reader, properties)
+        except ModuleNotFoundError:
+            raise   # the page installs the package and tries again (see slicerweb.packages)
         except Exception as e:
             logger.exception("The reader of %s failed on %s", reader.GetOwner(), fileName)
             self._addMessage(userMessages, f"Failed to load {fileName}: {e}")
@@ -422,7 +424,11 @@ class IOManager:
         if not ok:
             return []
         nodes = [scene.GetNodes().GetItemAsObject(i) for i in range(scene.GetNumberOfNodes())]
-        return [n for n in nodes if n and n.GetID() and n.GetID() not in before]
+        loaded = [n for n in nodes if n and n.GetID() and n.GetID() not in before]
+        from . import transforms_hdf5
+
+        transforms_hdf5.read_scene_transforms(loaded)
+        return loaded
 
     # ------------------------------------------------------------------ saving
     def writerForNode(self, node, fileName=None):
@@ -514,6 +520,8 @@ class IOManager:
         properties.setdefault("nodeID", node.GetID())
         try:
             io_scripted.write(writer, properties)
+        except ModuleNotFoundError:
+            raise
         except Exception as e:
             logger.exception("The writer of %s failed", writer.GetOwner())
             self._addMessage(userMessages, f"Failed to write {properties.get('fileName')}: {e}")

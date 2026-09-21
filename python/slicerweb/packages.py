@@ -35,6 +35,32 @@ def pip_install(requirements, *args, **kwargs):
     return None
 
 
+#: Packages the page has already been asked for, so that it is asked once.
+_requested = set()
+
+
+def ensure_in_background(name):
+    """Ask the page to install a package that will be wanted shortly.
+
+    Installing is the page's to do and takes as long as a download; this does not wait for it. It
+    is for a package that is not needed yet but is about to be - h5py when a transform turns up in
+    the scene, which may be saved as .h5 - so that the call that needs it finds it there. A call
+    that finds it missing anyway raises ModuleNotFoundError, which the page answers by installing
+    the package and running the call again.
+    """
+    module = name.replace("-", "_").lower()
+    if name in _requested or importlib.util.find_spec(module) is not None:
+        return False
+    _requested.add(name)
+    try:
+        import slicerweb_host
+
+        slicerweb_host.installPackage(name)
+    except Exception:
+        return False
+    return True
+
+
 def install():
     import slicer
     import slicer.util

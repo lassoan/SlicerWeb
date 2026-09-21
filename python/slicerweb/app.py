@@ -270,12 +270,16 @@ class SlicerWebApplication:
         a module that brings a file format - ImportMimics and its .mcs projects, say - is asked to
         open such a file wherever files are opened.
         """
-        from . import io, io_registry
+        from . import io, io_registry, transforms_hdf5
 
         try:
             io_registry.register_application_handlers(io.FILE_TYPES, io.WRITER_DESCRIPTIONS)
         except Exception:
             logger.exception("The readers and writers of the application could not be registered")
+        try:
+            transforms_hdf5.install()
+        except Exception:
+            logger.exception("Transforms in HDF5 files will not be read or written")
 
     def coreIOManager(self):
         return self._ioManager

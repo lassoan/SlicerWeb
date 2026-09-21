@@ -105,9 +105,27 @@ def register_module_handlers(moduleName, moduleNamespace):
         if cls is None:
             continue
         try:
-            registered.append(register(moduleName, cls))
+            registered.append(register(owner_of(moduleName), cls))
         except Exception:
             logger.exception("The %s of module %s could not be registered", suffix, moduleName)
+    return registered
+
+
+def register_handlers(owner, readerClass=None, writerClass=None):
+    """Register a reader and a writer written in Python that are not a module's.
+
+    The application has a few of its own - the transforms kept in HDF5 files, for one - and they
+    are written the same way a module's are, with the same methods; *owner* says whose they are,
+    so that they can be found again and taken away together.
+    """
+    io_registry.unregister_owner(owner)
+    for key in [k for k, v in _handlers.items() if v[0] == owner]:
+        del _handlers[key]
+    registered = []
+    if readerClass is not None:
+        registered.append(_register_reader(owner, readerClass))
+    if writerClass is not None:
+        registered.append(_register_writer(owner, writerClass))
     return registered
 
 
@@ -126,26 +144,26 @@ def _handler_key(handler):
                          "writer" if handler.IsWriter() else "reader")
 
 
-def _register_reader(moduleName, cls):
+def _register_reader(owner, cls):
     handler = slicer.vtkSlicerFileReader()
     parent = ScriptedIOParent(handler)
     instance = cls(parent)
-    handler.SetOwner(owner_of(moduleName))
+    handler.SetOwner(owner)
     handler.SetFileType(str(instance.fileType()))
     handler.SetDescription(str(instance.description()))
     handler.SetNameFilters(_filters_of(instance.extensions()))
     io_registry.manager().RegisterReader(handler)
     _handlers[_handler_key(handler)] = (handler.GetOwner(), instance, parent)
-    logger.info("Module %s reads %s (%s)", moduleName, handler.GetFileType(),
+    logger.info("%s reads %s (%s)", owner, handler.GetFileType(),
                 ", ".join(io_registry.strings_of_extensions(handler)))
     return handler.GetFileType()
 
 
-def _register_writer(moduleName, cls):
+def _register_writer(owner, cls):
     handler = slicer.vtkSlicerFileWriter()
     parent = ScriptedIOParent(handler)
     instance = cls(parent)
-    handler.SetOwner(owner_of(moduleName))
+    handler.SetOwner(owner)
     handler.SetFileType(str(instance.fileType()))
     handler.SetDescription(str(instance.description()))
     # A writer's extensions depend on what is being written; with nothing in hand it is asked
@@ -153,10 +171,10 @@ def _register_writer(moduleName, cls):
     try:
         handler.SetNameFilters(_filters_of(instance.extensions(None)))
     except Exception:
-        logger.debug("Writer of %s named no extensions without a node", moduleName, exc_info=True)
+        logger.debug("The writer of %s named no extensions without a node", owner, exc_info=True)
     io_registry.manager().RegisterWriter(handler)
     _handlers[_handler_key(handler)] = (handler.GetOwner(), instance, parent)
-    logger.info("Module %s writes %s", moduleName, handler.GetFileType())
+    logger.info("%s writes %s", owner, handler.GetFileType())
     return handler.GetFileType()
 
 

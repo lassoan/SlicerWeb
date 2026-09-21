@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, Waves, Eraser as ClearIcon, MousePointer2 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider, SwButton, SwComboBox } from "@/widgets";
@@ -43,9 +43,37 @@ async function run<T>(method: string, args: unknown[] = []) {
 
 async function setup(segmentationID: string | null, volumeID: string | null) {
   state.value = await bridge.call<EditorState>("segmentEditorSetup", [segmentationID, volumeID]);
-  const r = state.value.scalarRange;
-  if (threshold.value[0] === threshold.value[1]) threshold.value = [r[0] + (r[1] - r[0]) * 0.3, r[1]];
 }
+
+// What the threshold effect offers is the values of the volume being segmented, so the slider
+// takes its range from that volume as soon as it is chosen, and again whenever the volume is
+// written to. A volume the editor has not seen before starts where Slicer starts it, a quarter of
+// the way up the range; values the person set on this volume are kept, and only pulled back into
+// the range if what is in the volume has changed under them.
+const thresholdVolumeID = ref<string | null>(null);
+watch(
+  () => [state.value?.sourceVolumeNodeID, state.value?.scalarRange?.[0], state.value?.scalarRange?.[1]].join(),
+  () => {
+    const range = state.value?.scalarRange;
+    const volumeID = state.value?.sourceVolumeNodeID ?? null;
+    if (!range || !volumeID) return;
+    const [low, high] = [range[0], range[1]];
+    if (volumeID !== thresholdVolumeID.value) {
+      thresholdVolumeID.value = volumeID;
+      threshold.value = [low + (high - low) * 0.25, high];
+      return;
+    }
+    const [minimum, maximum] = threshold.value;
+    const clamped: [number, number] = [Math.min(Math.max(minimum, low), high), Math.min(Math.max(maximum, low), high)];
+    threshold.value = clamped[0] < clamped[1] ? clamped : [low + (high - low) * 0.25, high];
+  },
+  { immediate: true },
+);
+// A thousand steps across the range, as the threshold effect of Slicer has
+const thresholdStep = computed(() => {
+  const range = state.value?.scalarRange ?? [0, 1];
+  return Math.max((range[1] - range[0]) / 1000, 1e-6);
+});
 
 const effects = [
   { name: null, label: "None", icon: MousePointer2 },
@@ -118,6 +146,7 @@ onBeforeUnmount(() => {
         </template>
         <template v-else-if="state.effect === 'Threshold'">
           <SwRangeSlider :minimum="state.scalarRange[0]" :maximum="state.scalarRange[1]" :minimum-value="threshold[0]" :maximum-value="threshold[1]"
+            :single-step="thresholdStep" :decimals="thresholdStep < 0.1 ? 3 : 1"
             @values-changed="(lo: number, hi: number) => (threshold = [lo, hi])" />
           <SwButton text="Apply" primary class="mt-1" @clicked="run('segmentEditorApply', ['Threshold', { lower: threshold[0], upper: threshold[1] }])" />
         </template>

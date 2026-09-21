@@ -25,6 +25,13 @@ logger = logging.getLogger("slicerweb.segmenteditor")
 _editor = None
 
 
+def slicer_volume_image_data_modified():
+    """vtkMRMLVolumeNode::ImageDataModifiedEvent - the voxels changed, not just the node."""
+    import slicer
+
+    return slicer.vtkMRMLVolumeNode.ImageDataModifiedEvent
+
+
 def editor():
     global _editor
     if _editor is None:
@@ -53,6 +60,8 @@ class SegmentEditor:
         self._observers = []  # (interactor, tag)
         self._painting = None  # (view, mode)
         self._strokeExtent = None
+        self._sourceVolume = None
+        self._sourceVolumeObservers = []
 
     # ------------------------------------------------------------------ setup
     def setup(self, segmentationNodeID, sourceVolumeNodeID):
@@ -60,6 +69,14 @@ class SegmentEditor:
             self.logic.SetSegmentationNodeID(segmentationNodeID)
         if sourceVolumeNodeID:
             self.logic.SetSourceVolumeNodeID(sourceVolumeNodeID)
+        elif self.logic.GetSourceVolumeNode() is None:
+            # Nothing can be painted without a volume to paint on - it says where the voxels are
+            # and how big they are - so the editor starts on the volume the slice views show, which
+            # is what the Segment Editor module does on the desktop.
+            volume = self._volumeOfTheSliceViews()
+            if volume is not None:
+                self.logic.SetSourceVolumeNodeID(volume.GetID())
+        self._observeSourceVolume()
         segmentationNode = self.logic.GetSegmentationNode()
         if segmentationNode is not None and self.logic.GetSourceVolumeNode() is not None:
             segmentationNode.SetReferenceImageGeometryParameterFromVolumeNode(self.logic.GetSourceVolumeNode())
@@ -67,9 +84,54 @@ class SegmentEditor:
             segmentationNode.CreateDefaultDisplayNodes()
         return self.state()
 
+    def _volumeOfTheSliceViews(self):
+        """The volume the slice views have in the background, or any volume in the scene."""
+        import slicer
+
+        appLogic = slicer.app.applicationLogic()
+        selection = appLogic.GetSelectionNode() if appLogic else None
+        volumeID = selection.GetActiveVolumeID() if selection is not None else None
+        volume = self.scene.GetNodeByID(volumeID) if volumeID else None
+        if volume is not None:
+            return volume
+        volumes = self.scene.GetNodesByClass("vtkMRMLScalarVolumeNode")
+        try:
+            for i in range(volumes.GetNumberOfItems()):
+                candidate = volumes.GetItemAsObject(i)
+                if not candidate.IsA("vtkMRMLLabelMapVolumeNode"):
+                    return candidate
+        finally:
+            volumes.UnRegister(None)
+        return None
+
+    def _observeSourceVolume(self):
+        """Watch the volume being segmented, so that what is shown of it stays true.
+
+        The threshold effect offers the values of this volume and nothing else, so when the volume
+        changes - another one is chosen, or the one in hand is written to by a module - the page is
+        told, and asks for the state again with the new range in it.
+        """
+        import vtk
+
+        volume = self.logic.GetSourceVolumeNode()
+        if volume is self._sourceVolume:
+            return
+        for node, tag in self._sourceVolumeObservers:
+            node.RemoveObserver(tag)
+        self._sourceVolumeObservers = []
+        self._sourceVolume = volume
+        if volume is None:
+            return
+        for event in (vtk.vtkCommand.ModifiedEvent, slicer_volume_image_data_modified()):
+            self._sourceVolumeObservers.append((volume, volume.AddObserver(event, self._onSourceVolumeModified)))
+
+    def _onSourceVolumeModified(self, caller, event):
+        host.emit("segment-editor-changed", self.state())
+
     def state(self):
         import slicer
 
+        self._observeSourceVolume()   # in case the volume was changed by something other than setup
         seg = self.logic.GetSegmentationNode()
         segments = []
         if seg is not None:

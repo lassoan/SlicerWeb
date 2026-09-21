@@ -20,6 +20,8 @@
 #include <vtkObjectFactory.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
+#include <vtkCamera.h>
+#include <vtkRendererCollection.h>
 #include <vtkRenderer.h>
 #include <vtkWeakPointer.h>
 
@@ -368,6 +370,9 @@ void vtkSlicerWebView::OnSceneEvent(vtkObject* vtkNotUsed(caller), unsigned long
   }
   else if (eid == vtkMRMLScene::EndBatchProcessEvent)
   {
+    // A scene that was closed and read again brings a new camera node, and with it a new camera
+    // for the main renderer; the layers are pointed at it too.
+    self->SyncLayerCameras();
     self->RenderPendingWhileDisabled = true;
     self->SetRenderEnabled(self->Internal->PauseRenderCount == 0);
   }
@@ -395,6 +400,31 @@ void vtkSlicerWebView::OnSceneEvent(vtkObject* vtkNotUsed(caller), unsigned long
 void vtkSlicerWebView::OnRenderRequest(vtkObject* vtkNotUsed(caller), unsigned long vtkNotUsed(eid), void* clientData, void* vtkNotUsed(callData))
 {
   static_cast<vtkSlicerWebView*>(clientData)->ScheduleRender();
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::SyncLayerCameras()
+{
+  vtkInternal* d = this->Internal;
+  if (!d->RenderWindow || !d->Renderer)
+  {
+    return;
+  }
+  vtkCamera* camera = d->Renderer->GetActiveCamera();
+  if (!camera)
+  {
+    return;
+  }
+  vtkRendererCollection* renderers = d->RenderWindow->GetRenderers();
+  vtkCollectionSimpleIterator it;
+  renderers->InitTraversal(it);
+  while (vtkRenderer* renderer = renderers->GetNextRenderer(it))
+  {
+    if (renderer != d->Renderer && renderer->IsActiveCameraCreated() && renderer->GetActiveCamera() != camera)
+    {
+      renderer->SetActiveCamera(camera);
+    }
+  }
 }
 
 //----------------------------------------------------------------------------

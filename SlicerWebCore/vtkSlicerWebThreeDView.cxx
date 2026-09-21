@@ -143,6 +143,9 @@ bool vtkSlicerWebThreeDView::InitializeView(vtkMRMLApplicationLogic* appLogic, v
   group.TakeReference(factory->InstantiateDisplayableManagers(renderer));
   this->SetDisplayableManagerGroupInternal(group);
   this->SetViewNode(viewNode);
+  // The displayable managers were created with the camera the renderer had before the camera
+  // displayable manager put the one of the camera node in its place.
+  this->SyncLayerCameras();
   return true;
 }
 

@@ -103,6 +103,15 @@ protected:
   /// Called after the render window size changed (device pixels).
   virtual void OnSizeChanged(int vtkNotUsed(width), int vtkNotUsed(height)) {}
 
+  /// Point every renderer of this view's window at the camera the main renderer ended up with.
+  ///
+  /// Displayable managers that draw in a layer of their own (the interaction handles of markups,
+  /// for one) take the camera of the main renderer when they are created, and the camera
+  /// displayable manager then replaces that camera with the one of the camera node. The layers are
+  /// left looking through a camera that never moves again, so what they draw is sized and placed
+  /// for a view that is not the one on the screen.
+  void SyncLayerCameras();
+
   void SetViewNode(vtkMRMLAbstractViewNode* viewNode);
   void SetInteractorObserverInternal(vtkMRMLViewInteractorStyle* style);
   void SetDisplayableManagerGroupInternal(vtkMRMLDisplayableManagerGroup* group);

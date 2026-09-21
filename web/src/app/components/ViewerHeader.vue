@@ -23,7 +23,6 @@ import {
 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { openModule as openModuleInPanel, store } from "../store";
-import { captureView } from "../captureView";
 import ToolButton from "./ToolButton.vue";
 import ToolMenu from "./ToolMenu.vue";
 import ClosedCurveIcon from "./icons/ClosedCurveIcon.vue";
@@ -60,17 +59,6 @@ async function resetViews() {
 }
 
 const iconUrl = import.meta.env.BASE_URL + "slicer-icon.png";
-
-async function screenshot() {
-  const layoutName = store.activeView || store.layout.maximized || "Red";
-  const image = await captureView(bridge, layoutName);
-  if (!image) return;
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(image);
-  link.download = `Slicer-${layoutName}.png`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
-}
 
 function fullScreen() {
   document.documentElement.requestFullscreen?.();
@@ -141,7 +129,7 @@ const currentMarkupTool = computed(() =>
       <ToolButton label="Segment Editor" @click="openModule('SegmentEditor')"><Brush :size="20" /></ToolButton>
       <ToolButton label="Volume Rendering" class="max-sm:hidden" @click="openModule('VolumeRendering')"><Box :size="20" /></ToolButton>
       <ToolButton label="Transforms" class="max-sm:hidden" @click="openModule('Transforms')"><Move3d :size="20" /></ToolButton>
-      <ToolButton label="Screenshot" class="max-sm:hidden" @click="screenshot"><Camera :size="20" /></ToolButton>
+      <ToolButton label="Scene Views" class="max-sm:hidden" @click="openModule('SceneViews')"><Camera :size="20" /></ToolButton>
       <!-- What does not fit on a narrow screen is in a menu instead -->
       <ToolMenu label="More" class="sm:hidden">
         <template #button><MoreHorizontal :size="20" /></template>
@@ -150,7 +138,7 @@ const currentMarkupTool = computed(() =>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           @click="openModule('Transforms')"><Move3d :size="16" />Transforms</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          @click="screenshot"><Camera :size="16" />Screenshot</button>
+          @click="openModule('SceneViews')"><Camera :size="16" />Scene Views</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.interactionMode === 'AdjustWindowLevel' ? 'text-highlight' : ''"
           @click="setMode('AdjustWindowLevel')"><Contrast :size="16" />Window / Level</button>

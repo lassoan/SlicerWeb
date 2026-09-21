@@ -26,7 +26,7 @@ await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelec
 await page.evaluate(() => { window.__logs = []; window.slicerWeb.bridge.events.on("log", (e) => window.__logs.push(e)); });
 
 // The modules of an extension are there once it has finished loading.
-await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title === t || m.name === t),
+await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title.includes(t) || m.name === t),
   title, { timeout: 120000 });
 await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill(title);

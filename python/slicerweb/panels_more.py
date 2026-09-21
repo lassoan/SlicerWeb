@@ -7,6 +7,7 @@ Covers Texts, Colors, Terminologies, Scene Views, Tables, Plots, Sequences and C
 """
 
 import logging
+import os
 
 import slicer
 import vtk
@@ -145,17 +146,65 @@ def sceneViews():
         node = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLSceneViewNode")
         result.append({"id": node.GetID(), "name": node.GetName(),
                        "description": node.GetSceneViewDescription() or "",
-                       "screenshotType": node.GetScreenShotType()})
+                       "screenshotType": node.GetScreenShotType(),
+                       "thumbnail": _screenshot_data_url(node)})
     return result
 
 
+def _screenshot_data_url(node):
+    """The picture a scene view was stored with, as a data URL the page can show."""
+    image = node.GetScreenShot()
+    if image is None or image.GetNumberOfPoints() == 0:
+        return None
+    import base64
+    import tempfile
+
+    path = os.path.join(tempfile.gettempdir(), "sceneview-thumbnail.png")
+    writer = vtk.vtkPNGWriter()
+    writer.SetFileName(path)
+    writer.SetInputData(image)
+    writer.Write()
+    with open(path, "rb") as handle:
+        return "data:image/png;base64," + base64.b64encode(handle.read()).decode("ascii")
+
+
 @method()
-def createSceneView(name=None, description=""):
-    """Store the scene as it is now, as the "Create scene view" button does."""
+def createSceneView(name=None, description="", screenshot=None):
+    """Store the scene as it is now, as the "Create scene view" button does.
+
+    :param screenshot: a PNG of the views at that moment, base64 encoded, kept with the scene view
+        and shown as its thumbnail. The page takes it: only the page can read a canvas.
+    """
     node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSceneViewNode", name or "Scene view")
     node.SetSceneViewDescription(description or "")
+    if screenshot:
+        image = _image_from_png(screenshot)
+        if image is not None:
+            node.SetScreenShot(image)
+            node.SetScreenShotType(0)   # what the layout looked like
     node.StoreScene()
     return node.GetID()
+
+
+def _image_from_png(encoded):
+    """A vtkImageData from base64-encoded PNG bytes (what the page captured)."""
+    import base64
+    import tempfile
+
+    data = encoded.split(",", 1)[-1]
+    path = os.path.join(tempfile.gettempdir(), "sceneview-input.png")
+    try:
+        with open(path, "wb") as handle:
+            handle.write(base64.b64decode(data))
+        reader = vtk.vtkPNGReader()
+        reader.SetFileName(path)
+        reader.Update()
+        image = vtk.vtkImageData()
+        image.DeepCopy(reader.GetOutput())
+        return image
+    except Exception:
+        logger.warning("The screenshot of the scene view could not be read", exc_info=True)
+        return None
 
 
 @method()

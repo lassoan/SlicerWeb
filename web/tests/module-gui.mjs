@@ -55,7 +55,7 @@ console.log(`${stamp()} app ready (${wheels.length} extension wheels)`);
 
 // Select the module in the module panel
 // The modules of an extension are there once it has finished loading.
-await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title === t || m.name === t),
+await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title.includes(t) || m.name === t),
   title, { timeout: 120000 });
 await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill(title);

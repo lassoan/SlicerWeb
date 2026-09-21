@@ -262,6 +262,28 @@ def forget_extension_paths():
     _extension_paths = None
 
 
+def extension_python_packages(app):
+    """Packages the installed extensions ask the browser for (Pyodide packages such as SciPy).
+
+    An extension says what it needs in its slicerweb-extension.json, which is packaged into its
+    wheel; on the desktop it would pip-install them, here they come from the Pyodide distribution
+    and are loaded when the extension is installed and when the page starts (see runtime.ts).
+    """
+    import json
+
+    packages = []
+    pattern = os.path.join(app.slicerSharePath, "extensions", "*.json")
+    for path in sorted(glob.glob(pattern)):
+        try:
+            with open(path, encoding="utf8") as handle:
+                for name in json.load(handle).get("pythonPackages") or []:
+                    if name not in packages:
+                        packages.append(name)
+        except Exception:
+            logger.debug("Extension metadata %s could not be read", path, exc_info=True)
+    return packages
+
+
 def module_share_directory(app, name):
     """vtkSlicerApplicationLogic::GetModuleShareDirectory equivalent for built-in modules."""
     return os.path.join(app.slicerSharePath, "qt-loadable-modules", name)

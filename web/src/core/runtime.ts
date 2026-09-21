@@ -177,6 +177,7 @@ bridge.call
 `);
     this.bridge.attach((method: string, args: string) => init(method, args));
     this.bridge.missingModuleHandler = (name) => this.ensurePythonPackage(name);
+    await this.loadExtensionPackages();
     await this.loadModulesWithPackages();
     this.progress("ready", "Ready", 1);
   }
@@ -234,6 +235,22 @@ bridge.call
   }
 
   /** Install a wheel from a URL (SlicerWeb wheels, extension wheels). */
+  /**
+   * Load the Pyodide packages the installed extensions ask for (slicerweb-extension.json).
+   *
+   * On the desktop an extension pip-installs what it needs; here the packages come from the
+   * Pyodide distribution, and they have to be there before the module that needs them runs -
+   * a module cannot install one itself, since installing is asynchronous and its code is not.
+   */
+  async loadExtensionPackages(): Promise<string[]> {
+    const packages = await this.bridge.call<string[]>("getExtensionPythonPackages").catch(() => []);
+    const missing = packages.filter((name) => !this.unavailablePackages.has(name));
+    for (const name of missing) {
+      await this.ensurePythonPackage(name);
+    }
+    return missing;
+  }
+
   async installWheel(url: string): Promise<void> {
     const pyodide = this.pyodide!;
     const micropip = pyodide.pyimport("micropip");

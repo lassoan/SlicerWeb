@@ -762,6 +762,16 @@ def getModules():
 
 
 @method()
+def getExtensionPythonPackages():
+    """Pyodide packages the installed extensions ask for (SciPy, for one); the page loads them."""
+    import slicer
+
+    from .modules import extension_python_packages
+
+    return extension_python_packages(slicer.app)
+
+
+@method()
 def getVolumeDisplayPresets():
     import slicer
 

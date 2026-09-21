@@ -527,6 +527,10 @@ class QDateTime:
     def currentDateTime():
         return QDateTime()
 
+    @staticmethod
+    def currentDateTimeUtc():
+        return QDateTime(datetime.datetime.now(datetime.timezone.utc))
+
     def toPython(self):
         return self._value
 
@@ -535,6 +539,19 @@ class QDateTime:
 
     def toSecsSinceEpoch(self):
         return int(self._value.timestamp())
+
+    def toMSecsSinceEpoch(self):
+        return int(self._value.timestamp() * 1000)
+
+    def secsTo(self, other):
+        """Seconds from this moment to *other*, as QDateTime::secsTo counts them."""
+        return int(other.toSecsSinceEpoch() - self.toSecsSinceEpoch())
+
+    def msecsTo(self, other):
+        return int(other.toMSecsSinceEpoch() - self.toMSecsSinceEpoch())
+
+    def addSecs(self, seconds):
+        return QDateTime(self._value + datetime.timedelta(seconds=seconds))
 
     def isValid(self):
         return True

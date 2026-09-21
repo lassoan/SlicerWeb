@@ -16,7 +16,31 @@ from .bridge import method
 logger = logging.getLogger("slicerweb.sample_data")
 
 
+_registered = False
+
+
+def _register_built_in():
+    """Register the data sets that Slicer itself offers.
+
+    A module registers its own data sets when it is loaded, but Slicer's built-in ones are
+    registered by SampleDataLogic when one is first made (SampleDataLogic.__init__ calls
+    registerBuiltInSampleDataSources). Without that, the list holds only what the extensions put
+    in it, and the rest appear the moment somebody opens the Sample Data module.
+    """
+    global _registered
+    if _registered:
+        return
+    try:
+        import SampleData
+
+        SampleData.SampleDataLogic()
+        _registered = True
+    except Exception:
+        logger.debug("Built-in sample data sets could not be registered", exc_info=True)
+
+
 def _sources():
+    _register_built_in()
     return getattr(slicer.modules, "sampleDataSources", {}) or {}
 
 
@@ -54,7 +78,10 @@ def getSampleDataSources():
                 "uris": uris,
                 "fileNames": _as_list(source.fileNames, count),
                 "nodeNames": _as_list(source.nodeNames, count),
-                "loadFiles": [bool(load) for load in _as_list(source.loadFiles, count, True)],
+                # A data set says nothing about loading (None) when it wants to be loaded; only an
+                # explicit False means "download it and leave it at that" (SampleDataLogic
+                # .downloadFromSource reads it the same way).
+                "loadFiles": [load is not False for load in _as_list(source.loadFiles, count, None)],
                 "loadFileTypes": _as_list(source.loadFileTypes, count),
                 "loadFileProperties": dict(source.loadFileProperties or {}),
                 # data sets with their own downloader (e.g. from a server that needs a login) can only

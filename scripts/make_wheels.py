@@ -299,6 +299,15 @@ def extension_metadata(source_dir):
     meta["contributors"] = [c if c.endswith(")") or "(" not in c else c + ")" for c in meta["contributors"]]
     meta["screenshots"] = meta.pop("screenshoturls", "").split()
     meta["icon"] = meta.pop("iconurl", "")
+
+    # What the extension needs that only makes sense in the browser, if it says: so far the
+    # Pyodide packages it wants ("pythonPackages"), which are loaded when it is installed.
+    web = os.path.join(source_dir, "slicerweb-extension.json")
+    if os.path.isfile(web):
+        import json
+
+        with open(web, encoding="utf8") as handle:
+            meta.update(json.load(handle))
     return meta
 
 

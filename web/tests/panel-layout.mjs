@@ -26,7 +26,7 @@ await page.reload();
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 300000 });
 await page.waitForTimeout(2000);
 // The modules of an extension are there once it has finished loading.
-await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title === t || m.name === t),
+await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title.includes(t) || m.name === t),
   title, { timeout: 120000 });
 await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill(title);

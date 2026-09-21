@@ -81,6 +81,10 @@ async function install(e: ExtensionEntry) {
     status.value = `Installing ${e.name}…`;
     const url = wheelUrl(e);
     await runtime.installWheel(url);
+    // What the extension asks the browser for (Pyodide packages such as SciPy); a module cannot
+    // install one itself, so they are loaded here, before anything of the extension runs.
+    const packages = await runtime.loadExtensionPackages();
+    if (packages.length) status.value = `Loading ${packages.join(", ")}…`;
     status.value = `Loading ${e.name} modules…`;
     await runtime.loadModulesWithPackages(true);
     installed.value = [...installed.value, url];

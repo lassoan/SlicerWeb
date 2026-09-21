@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, Waves, Eraser as ClearIcon, MousePointer2 } from "@lucide/vue";
+import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, Waves, Eraser as ClearIcon,
+  MousePointer2, Sprout, Layers, Expand, CircleDashed, Combine } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider, SwButton, SwComboBox } from "@/widgets";
 
@@ -80,10 +81,43 @@ const effects = [
   { name: "Paint", label: "Paint", icon: Brush },
   { name: "Erase", label: "Erase", icon: Eraser },
   { name: "Threshold", label: "Threshold", icon: SlidersHorizontal },
+  { name: "GrowFromSeeds", label: "Grow from seeds", icon: Sprout },
+  { name: "FillBetweenSlices", label: "Fill between slices", icon: Layers },
+  { name: "Margin", label: "Margin", icon: Expand },
+  { name: "Hollow", label: "Hollow", icon: CircleDashed },
+  { name: "Logic", label: "Logical operators", icon: Combine },
   { name: "Islands", label: "Islands", icon: Sparkles },
   { name: "Smoothing", label: "Smoothing", icon: Waves },
   { name: "Clear", label: "Clear", icon: ClearIcon },
 ];
+const shellModes = [
+  { value: "inside", label: "Inside the surface" },
+  { value: "medial", label: "Across the surface" },
+  { value: "outside", label: "Outside the surface" },
+];
+const logicalOperations = [
+  { value: "copy", label: "Copy", needsOther: true },
+  { value: "add", label: "Add", needsOther: true },
+  { value: "subtract", label: "Subtract", needsOther: true },
+  { value: "intersect", label: "Intersect", needsOther: true },
+  { value: "invert", label: "Invert", needsOther: false },
+  { value: "fill", label: "Fill", needsOther: false },
+  { value: "clear", label: "Clear", needsOther: false },
+];
+
+// what the effects that have something to set are set to
+const marginMm = ref(3);
+const hollowThicknessMm = ref(3);
+const shellMode = ref("inside");
+const logicalOperation = ref("copy");
+const otherSegmentID = ref<string | null>(null);
+const seedLocality = ref(0);
+
+const otherSegments = computed(() => (state.value?.segments ?? []).filter((s) => s.id !== state.value?.currentSegmentID));
+const operationNeedsOther = computed(() => logicalOperations.find((o) => o.value === logicalOperation.value)?.needsOther ?? false);
+watch(otherSegments, (segments) => {
+  if (!segments.some((s) => s.id === otherSegmentID.value)) otherSegmentID.value = segments[0]?.id ?? null;
+}, { immediate: true });
 const maskModes = ["Everywhere", "Inside all segments", "Inside all visible segments", "Outside all segments", "Outside all visible segments"];
 const overwriteModes = ["All segments", "Visible segments", "None"];
 const current = computed(() => state.value?.segments.find((s) => s.id === state.value?.currentSegmentID));
@@ -149,6 +183,65 @@ onBeforeUnmount(() => {
             :single-step="thresholdStep" :decimals="thresholdStep < 0.1 ? 3 : 1"
             @values-changed="(lo: number, hi: number) => (threshold = [lo, hi])" />
           <SwButton text="Apply" primary class="mt-1" @clicked="run('segmentEditorApply', ['Threshold', { lower: threshold[0], upper: threshold[1] }])" />
+        </template>
+        <template v-else-if="state.effect === 'GrowFromSeeds'">
+          <div class="mb-1 text-[12px] text-muted-foreground">
+            Paint a little of each structure, and a little of what is around them, then grow: every
+            other voxel goes to the segment it resembles most, following the edges in the volume.
+          </div>
+          <SwFormRow label="Keep seeds local">
+            <SwSlider :value="seedLocality" :minimum="0" :maximum="0.5" :single-step="0.01" :decimals="2"
+              @value-changed="seedLocality = $event" />
+          </SwFormRow>
+          <SwButton text="Grow from seeds" primary class="mt-1"
+            @clicked="run('segmentEditorApply', ['GrowFromSeeds', { seedLocality }])" />
+        </template>
+        <template v-else-if="state.effect === 'FillBetweenSlices'">
+          <div class="mb-1 text-[12px] text-muted-foreground">
+            Segment the structure on every few slices; the slices between them are filled in, the
+            outline growing from one segmented slice to the next.
+          </div>
+          <SwButton text="Fill between slices" primary @clicked="run('segmentEditorApply', ['FillBetweenSlices'])" />
+        </template>
+        <template v-else-if="state.effect === 'Margin'">
+          <div class="mb-1 text-[12px] text-muted-foreground">Grow the segment, or shrink it where the margin is below zero.</div>
+          <SwFormRow label="Margin">
+            <SwSlider :value="marginMm" :minimum="-20" :maximum="20" :single-step="0.5" :decimals="1" suffix="mm"
+              @value-changed="marginMm = $event" />
+          </SwFormRow>
+          <SwButton :text="marginMm < 0 ? 'Shrink' : 'Grow'" primary class="mt-1"
+            @clicked="run('segmentEditorApply', ['Margin', { marginMm }])" />
+        </template>
+        <template v-else-if="state.effect === 'Hollow'">
+          <div class="mb-1 text-[12px] text-muted-foreground">Keep a shell where the segment is now, and empty out the rest of it.</div>
+          <SwFormRow label="Shell thickness">
+            <SwSlider :value="hollowThicknessMm" :minimum="0.5" :maximum="20" :single-step="0.5" :decimals="1" suffix="mm"
+              @value-changed="hollowThicknessMm = $event" />
+          </SwFormRow>
+          <SwFormRow label="Shell goes">
+            <SwComboBox :current-index="shellModes.findIndex((m) => m.value === shellMode)"
+              :items="shellModes.map((m) => m.label)"
+              @current-index-changed="shellMode = shellModes[$event].value" />
+          </SwFormRow>
+          <SwButton text="Hollow" primary class="mt-1"
+            @clicked="run('segmentEditorApply', ['Hollow', { thicknessMm: hollowThicknessMm, shellMode }])" />
+        </template>
+        <template v-else-if="state.effect === 'Logic'">
+          <SwFormRow label="Operation">
+            <SwComboBox :current-index="logicalOperations.findIndex((o) => o.value === logicalOperation)"
+              :items="logicalOperations.map((o) => o.label)"
+              @current-index-changed="logicalOperation = logicalOperations[$event].value" />
+          </SwFormRow>
+          <SwFormRow v-if="operationNeedsOther" label="Other segment">
+            <SwComboBox :current-index="Math.max(0, otherSegments.findIndex((s) => s.id === otherSegmentID))"
+              :items="otherSegments.map((s) => s.name)"
+              @current-index-changed="otherSegmentID = otherSegments[$event]?.id ?? null" />
+          </SwFormRow>
+          <div v-if="operationNeedsOther && !otherSegments.length" class="text-[12px] text-muted-foreground">
+            Add another segment to {{ logicalOperation }} with.
+          </div>
+          <SwButton text="Apply" primary class="mt-1" :enabled="!operationNeedsOther || !!otherSegmentID"
+            @clicked="run('segmentEditorApply', ['Logic', { operation: logicalOperation, modifierSegmentID: otherSegmentID }])" />
         </template>
         <template v-else-if="state.effect === 'Islands'">
           <div class="mb-1 text-[12px] text-muted-foreground">Keep the largest connected region of the selected segment.</div>

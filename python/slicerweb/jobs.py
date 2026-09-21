@@ -41,7 +41,7 @@ def busy():
 
 
 def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None, onProgress=None,
-        onLog=None):
+        onLog=None, packages=None):
     """Run Python in the worker and answer later.
 
     :param code: Python to run there; what it leaves in ``result`` is given to onDone.
@@ -52,6 +52,8 @@ def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None
     :param onFailed: ``onFailed(message)`` if it raises or is cancelled.
     :param onProgress: ``onProgress(message, fraction)`` while it runs.
     :param onLog: ``onLog(level, message)`` for each line the job prints.
+    :param packages: Pyodide packages to load in the worker first (e.g. ``["scipy"]``); the ones
+        the application itself starts with are already there.
     :return: the job id.
     """
     import slicerweb_jobs
@@ -63,6 +65,7 @@ def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None
         "code": code,
         "globals": globals or {},
         "outputs": list(outputs or []),
+        "packages": list(packages or []),
         "files": {path: base64.b64encode(data).decode("ascii") for path, data in (files or {}).items()},
     }
 

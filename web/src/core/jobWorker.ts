@@ -31,6 +31,8 @@ interface RunMessage {
   files?: Record<string, Uint8Array>;
   /** Files read back and returned after it. */
   outputs?: string[];
+  /** Pyodide packages to load before the code runs; those of the startup set are already there. */
+  packages?: string[];
 }
 
 type Message = StartMessage | RunMessage | { type: "cancel" };
@@ -90,6 +92,10 @@ for _dir in (f"{_sp}/slicer_home/lib/Slicer-${message.slicerVersion}",
 async function run(message: RunMessage) {
   if (starting) await starting;
   try {
+    if (message.packages?.length) {
+      post({ type: "progress", id: message.id, message: `Loading ${message.packages.join(", ")}`, fraction: 0 });
+      await pyodide.loadPackage(message.packages, { messageCallback: () => {} });
+    }
     for (const [path, data] of Object.entries(message.files ?? {})) {
       const directory = path.slice(0, path.lastIndexOf("/"));
       if (directory) pyodide.FS.mkdirTree(directory);

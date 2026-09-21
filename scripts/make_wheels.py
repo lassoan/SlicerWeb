@@ -332,6 +332,11 @@ def write_extension_wheels(args, slicer_ver):
         w = Wheel(dist, "0.1.0", summary=meta.get("description", name))
         # Same layout as the Slicer home (desktop extensions have their own tree, but in the browser all
         # modules share one virtual file system; file names do not collide)
+        # Pure-Python packages the extension needs and that cannot be installed from the page
+        # (see scripts/stages/80-extensions.sh); they go where any other installed package goes.
+        packages_dir = os.path.join(install_dir, "python-packages")
+        if os.path.isdir(packages_dir):
+            w.add_tree(packages_dir, "", exclude=lambda rel: rel.endswith(".pyc") or "__pycache__" in rel)
         for sub in ("lib", "share"):
             d = os.path.join(install_dir, sub)
             if os.path.isdir(d):

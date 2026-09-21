@@ -47,6 +47,14 @@ fi
 
 if want SlicerSimVascular; then
   build_extension SlicerSimVascular
+  # svMorph, the deformation engine of the SDFStent module, comes along in the wheel. On the desktop
+  # the module pip-installs it, which a browser cannot do: it is a source archive, and it asks for
+  # JAX, whose jaxlib is XLA and has no WebAssembly build. This branch of it computes with NumPy
+  # (see sources.env), and being pure Python it only has to be copied.
+  rm -rf "$EXT_INSTALL/SlicerSimVascular/python-packages"
+  mkdir -p "$EXT_INSTALL/SlicerSimVascular/python-packages"
+  cp -r "$SW_SRC/svMorph/svmorph" "$EXT_INSTALL/SlicerSimVascular/python-packages/svmorph"
+  find "$EXT_INSTALL/SlicerSimVascular/python-packages" -name '__pycache__' -type d -exec rm -rf {} +
 fi
 
 if want SlicerHeart; then

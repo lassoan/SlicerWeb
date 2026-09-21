@@ -93,13 +93,13 @@ export class SlicerRuntime {
       run: (specJson: string, onDone: (resultJson: string) => void, onFailed: (error: string) => void,
             onProgress?: (message: string, fraction: number) => void,
             onLog?: (level: string, message: string) => void) => {
-        const spec = JSON.parse(specJson) as { code: string; globals?: Record<string, unknown>; outputs?: string[]; files?: Record<string, string> };
+        const spec = JSON.parse(specJson) as { code: string; globals?: Record<string, unknown>; outputs?: string[]; files?: Record<string, string>; packages?: string[] };
         const files: Record<string, Uint8Array> = {};
         for (const [path, base64] of Object.entries(spec.files ?? {})) {
           files[path] = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
         }
         jobRunner(this.config.extensionWheels)
-          .run({ code: spec.code, globals: spec.globals, outputs: spec.outputs, files }, {
+          .run({ code: spec.code, globals: spec.globals, outputs: spec.outputs, files, packages: spec.packages }, {
             onProgress: (message, fraction) => onProgress?.(message, fraction),
             onLog: (level, message) => {
               this.bridge.events.emit("job-log", { level, message });

@@ -21,7 +21,7 @@ $mirrors = @{
   'C:\D\teem' = '/mirror/teem'; 'C:\D\vtkAddon' = '/mirror/vtkAddon';
   'C:\D\S4R\SlicerExecutionModel' = '/mirror/SlicerExecutionModel';
   'C:\D\vmtk' = '/mirror/vmtk'; 'C:\D\vmtkExtension' = '/mirror/SlicerVMTK'; 'C:\D\SlicerHeartExtension' = '/mirror/SlicerHeart';
-  'C:\D\SlicerSimVascular' = '/mirror/SlicerSimVascular'
+  'C:\D\SlicerSimVascular' = '/mirror/SlicerSimVascular'; 'C:\D\svMorph' = '/mirror/svMorph'
 }
 $dockerArgs = @('run', '--rm', '-i', '-v', "${Volume}:/build", '-v', "${PSScriptRoot}:/work", '-v', "${Dist}:/dist", '-e', "SW_PROFILE=$env:SW_PROFILE", '-e', "SW_CONFIGURE_ONLY=$env:SW_CONFIGURE_ONLY", '-e', "SW_EXTENSIONS=$env:SW_EXTENSIONS")
 foreach ($k in $mirrors.Keys) { if (Test-Path $k) { $dockerArgs += @('-v', "${k}:$($mirrors[$k]):ro") } }

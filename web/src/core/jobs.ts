@@ -16,6 +16,8 @@ export interface JobSpec {
   files?: Record<string, Uint8Array>;
   /** Files to read back afterwards. */
   outputs?: string[];
+  /** Pyodide packages to load in the worker before the code runs (e.g. ["scipy"]). */
+  packages?: string[];
 }
 
 export interface JobEvents {

@@ -16,6 +16,8 @@ await page.waitForTimeout(600);
 const log = page.locator("[data-name='logWindow']");
 console.log("log window open:", await log.count() > 0);
 console.log("messages from startup:", await log.locator("[data-level]").count());
+// what this device renders with is logged, so that a report from a phone says so
+console.log("WebGL line:", (await log.locator("[data-level]").allInnerTexts()).find((t) => /WebGL/.test(t))?.replace(/\s+/g, " ").slice(0, 120) ?? "(missing)");
 
 // messages of every level, from Python and from VTK
 await page.evaluate(() => window.slicerWeb.bridge.evalPython(`
@@ -35,6 +37,17 @@ const counts = async () => page.evaluate(() => {
   return out;
 });
 console.log("shown by level:", JSON.stringify(await counts()));
+
+// a shader that will not compile is reported with what the driver said
+await page.evaluate(() => {
+  const gl = document.createElement("canvas").getContext("webgl2");
+  const shader = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(shader, ["#version 300 es", "void main() { gl_Position = nonsense; }"].join(String.fromCharCode(10)));
+  gl.compileShader(shader);
+});
+await page.waitForTimeout(600);
+console.log("shader failure logged:", (await log.locator("[data-level='ERROR']").allInnerTexts())
+  .find((t) => /Shader compilation/.test(t))?.replace(/\s+/g, " ").slice(0, 160) ?? "(missing)");
 
 // debug messages are off by default; switching them on starts logging them
 await log.locator("[data-name='level:DEBUG']").click();

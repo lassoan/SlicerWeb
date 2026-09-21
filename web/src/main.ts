@@ -4,6 +4,11 @@ import App from "./app/App.vue";
 import { store } from "./app/store";
 import { SlicerRuntime } from "./core/runtime";
 import { registerSlicerWidgets } from "./widgets/custom-elements";
+import { installGLDiagnostics } from "./core/glDiagnostics";
+
+// Watch for shaders that will not build, from the first frame on (drivers differ, and VTK does not
+// always pass on what the driver said)
+installGLDiagnostics();
 
 // Slicer web widgets as custom elements, used by Python scripted module GUIs (slicerweb.qtcompat)
 registerSlicerWidgets();

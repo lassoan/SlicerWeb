@@ -286,6 +286,15 @@ def errorLogEntries(limit=500, levels=None):
 
 
 @method()
+def logMessage(level, message, origin="Web"):
+    """Put a message from the web page into the application log (the log window shows it)."""
+    from .logging_handler import error_log
+
+    error_log().add(str(level).upper(), str(message), str(origin))
+    return True
+
+
+@method()
 def setLogLevel(level):
     """How much is logged ("DEBUG", "INFO", "WARNING", "ERROR").
 

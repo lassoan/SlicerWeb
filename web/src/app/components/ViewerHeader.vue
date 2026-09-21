@@ -159,15 +159,21 @@ const currentMarkupTool = computed(() =>
       </ToolMenu>
     </nav>
 
-    <div class="flex shrink-0 items-center justify-end gap-1 md:min-w-[240px]">
-      <ToolButton label="Application log" :active="store.logWindowOpen" @click="store.logWindowOpen = !store.logWindowOpen">
-        <ScrollText :size="20" />
-      </ToolButton>
-      <ToolButton label="Python console" :active="store.pythonConsoleOpen" @click="store.pythonConsoleOpen = !store.pythonConsoleOpen">
-        <Terminal :size="20" />
-      </ToolButton>
-      <ToolButton label="Extensions" @click="store.extensionsManagerOpen = true"><Puzzle :size="20" /></ToolButton>
-      <ToolButton label="Full screen" @click="fullScreen"><Maximize :size="20" /></ToolButton>
+    <!-- The tools that are not about the views: in a menu of their own, at the end of the bar -->
+    <div class="flex shrink-0 items-center justify-end gap-1">
+      <ToolMenu label="Application menu" align="right" :active="store.logWindowOpen || store.pythonConsoleOpen">
+        <template #button><MoreHorizontal :size="20" /></template>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          :class="store.logWindowOpen ? 'text-highlight' : ''" data-name="menu:log"
+          @click="store.logWindowOpen = !store.logWindowOpen"><ScrollText :size="16" />Application log</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          :class="store.pythonConsoleOpen ? 'text-highlight' : ''" data-name="menu:python"
+          @click="store.pythonConsoleOpen = !store.pythonConsoleOpen"><Terminal :size="16" />Python console</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="menu:extensions" @click="store.extensionsManagerOpen = true"><Puzzle :size="16" />Extensions manager</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="menu:fullscreen" @click="fullScreen"><Maximize :size="16" />Full screen</button>
+      </ToolMenu>
     </div>
   </header>
 </template>

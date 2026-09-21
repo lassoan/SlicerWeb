@@ -2,6 +2,7 @@
 import { inject, onMounted, provide } from "vue";
 import type { SlicerRuntime } from "@/core/runtime";
 import { store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
+import { reportGLToApplication } from "../core/glDiagnostics";
 import ViewerHeader from "./components/ViewerHeader.vue";
 import SidePanel from "./components/SidePanel.vue";
 import ViewportGrid from "./components/ViewportGrid.vue";
@@ -76,6 +77,7 @@ onMounted(async () => {
     store.availableLayouts = layout.available;
     store.modules = await runtime.bridge.call("getModules");
     store.status = "ready";
+    reportGLToApplication(runtime.bridge);
     await refreshSubjectHierarchy();
     await loadStartupSample();
   } catch (e: any) {

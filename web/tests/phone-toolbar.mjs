@@ -18,19 +18,28 @@ const fits = await nav.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWi
 console.log(`toolbar: ${fits.scrollWidth} px of buttons in ${fits.clientWidth} px ${fits.scrollWidth <= fits.clientWidth + 1 ? "(fits)" : "(does not fit)"}`);
 console.log("buttons shown:", await nav.locator("button").count());
 
-// the markup menu places a markup
-await page.getByRole("button", { name: /place markup/i }).click();
+// the menus must work with a tap (they used to be cut off by the scrolling toolbar)
+await page.getByRole("button", { name: /place markup/i }).tap();
 await page.waitForTimeout(300);
 const items = await page.locator("[role='menuitem']").allInnerTexts();
 console.log("markup menu:", items.join(", "));
 if (shot) await page.screenshot({ path: shot, clip: { x: 0, y: 0, width: 390, height: 260 } });
-await page.getByRole("menuitem", { name: "Line" }).click();
+await page.getByRole("menuitem", { name: "Line" }).tap();
 await page.waitForTimeout(600);
 console.log("interaction mode after choosing Line:", await page.evaluate(() => window.slicerWeb.store.interactionMode));
 console.log("menu closed:", await page.locator("[role='menuitem']").count() === 0);
 
 // the overflow menu holds what was dropped from the bar
-await page.getByRole("button", { name: /^more$/i }).click();
+await page.getByRole("button", { name: /^more$/i }).tap();
 await page.waitForTimeout(300);
 console.log("more menu:", (await page.locator("[role='menuitem']").allInnerTexts()).join(", "));
+await page.keyboard.press("Escape");
+
+// the application menu at the end of the bar
+await page.getByRole("button", { name: /application menu/i }).tap();
+await page.waitForTimeout(300);
+console.log("application menu:", (await page.locator("[role='menuitem']").allInnerTexts()).join(", "));
+await page.locator("[data-name='menu:log']").tap();
+await page.waitForTimeout(600);
+console.log("log window opened from the menu:", await page.locator("[data-name='logWindow']").count() > 0);
 await browser.close();

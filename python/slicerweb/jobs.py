@@ -40,7 +40,8 @@ def busy():
     return bool(slicerweb_jobs.busy())
 
 
-def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None, onProgress=None):
+def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None, onProgress=None,
+        onLog=None):
     """Run Python in the worker and answer later.
 
     :param code: Python to run there; what it leaves in ``result`` is given to onDone.
@@ -50,6 +51,7 @@ def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None
     :param onDone: ``onDone(result, files)`` when it finishes.
     :param onFailed: ``onFailed(message)`` if it raises or is cancelled.
     :param onProgress: ``onProgress(message, fraction)`` while it runs.
+    :param onLog: ``onLog(level, message)`` for each line the job prints.
     :return: the job id.
     """
     import slicerweb_jobs
@@ -84,7 +86,11 @@ def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None
         if onProgress is not None:
             onProgress(str(message), float(fraction))
 
-    proxies = [dom.proxy(done), dom.proxy(failed), dom.proxy(progress)]
+    def log(level, message):
+        if onLog is not None:
+            onLog(str(level), str(message))
+
+    proxies = [dom.proxy(done), dom.proxy(failed), dom.proxy(progress), dom.proxy(log)]
     _jobs[jobID] = proxies
     slicerweb_jobs.run(json.dumps(spec), *proxies)
     return jobID

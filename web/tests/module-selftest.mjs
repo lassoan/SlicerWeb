@@ -27,7 +27,8 @@ await page.evaluate(() => { window.__logs = []; window.slicerWeb.bridge.events.o
 
 await page.locator("button.h-8.w-full").first().click();
 await page.getByPlaceholder("Search modules").fill(title);
-await page.locator("div.absolute.right-2 button").first().click();
+await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
 await page.waitForTimeout(4000);
 const panel = page.locator(".sw-panel-scroll").last();
 await panel.getByText("Reload and Test", { exact: true }).first().click();   // open the section

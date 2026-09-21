@@ -71,6 +71,17 @@ os.environ["LD_LIBRARY_PATH"] = ":".join(_dirs + [os.environ.get("LD_LIBRARY_PAT
     progress: (message: string, fraction: number) => post({ type: "progress", message, fraction }),
     log: (level: string, message: string) => post({ type: "log", level, message }),
   });
+  // The modules of Slicer and of the extensions are importable here as they are in the page: the
+  // scripted modules by name, and the wrapped C++ classes of loadable modules beside them.
+  pyodide.runPython(`
+import sys, sysconfig
+_sp = sysconfig.get_paths()["purelib"]
+for _dir in (f"{_sp}/slicer_home/lib/Slicer-${message.slicerVersion}",
+             f"{_sp}/slicer_home/lib/Slicer-${message.slicerVersion}/qt-loadable-modules",
+             f"{_sp}/slicer_home/lib/Slicer-${message.slicerVersion}/qt-scripted-modules"):
+    if _dir not in sys.path:
+        sys.path.append(_dir)
+`);
   // Where a job writes what it makes; the page asks for those files back by path.
   pyodide.FS.mkdirTree("/work");
   post({ type: "ready" });

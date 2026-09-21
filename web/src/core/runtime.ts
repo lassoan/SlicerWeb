@@ -36,6 +36,16 @@ interface WheelIndex {
   packages: { name: string; version: string; file: string }[];
 }
 
+/** Base64 of bytes, in pieces: a megabyte of arguments at once overflows the call stack. */
+function toBase64(data: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let text = "";
+  for (let i = 0; i < data.length; i += CHUNK) {
+    text += String.fromCharCode(...data.subarray(i, i + CHUNK));
+  }
+  return btoa(text);
+}
+
 export class SlicerRuntime {
   readonly bridge = new PyodideBridge();
   pyodide: PyodideAPI | null = null;
@@ -81,7 +91,8 @@ export class SlicerRuntime {
     // Work that takes long enough to be felt runs in a worker with a Python of its own
     pyodide.registerJsModule("slicerweb_jobs", {
       run: (specJson: string, onDone: (resultJson: string) => void, onFailed: (error: string) => void,
-            onProgress?: (message: string, fraction: number) => void) => {
+            onProgress?: (message: string, fraction: number) => void,
+            onLog?: (level: string, message: string) => void) => {
         const spec = JSON.parse(specJson) as { code: string; globals?: Record<string, unknown>; outputs?: string[]; files?: Record<string, string> };
         const files: Record<string, Uint8Array> = {};
         for (const [path, base64] of Object.entries(spec.files ?? {})) {
@@ -90,12 +101,15 @@ export class SlicerRuntime {
         jobRunner(this.config.extensionWheels)
           .run({ code: spec.code, globals: spec.globals, outputs: spec.outputs, files }, {
             onProgress: (message, fraction) => onProgress?.(message, fraction),
-            onLog: (level, message) => this.bridge.events.emit("job-log", { level, message }),
+            onLog: (level, message) => {
+              this.bridge.events.emit("job-log", { level, message });
+              onLog?.(level, message);
+            },
           })
           .then((result) => {
             const returned: Record<string, unknown> = { result: result.result, files: {} };
             for (const [path, data] of Object.entries(result.files)) {
-              (returned.files as Record<string, string>)[path] = btoa(String.fromCharCode(...data));
+              (returned.files as Record<string, string>)[path] = toBase64(data);
             }
             onDone(JSON.stringify(returned));
           })

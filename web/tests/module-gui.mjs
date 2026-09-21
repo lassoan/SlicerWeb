@@ -56,7 +56,8 @@ console.log(`${stamp()} app ready (${wheels.length} extension wheels)`);
 // Select the module in the module panel
 await page.locator("button.h-8.w-full").first().click();
 await page.getByPlaceholder("Search modules").fill(title);
-await page.locator("div.absolute.right-2 button").first().click();
+await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
 await page.waitForTimeout(6000);
 if (pyFile) {
   await page.evaluate((c) => window.slicerWeb.bridge.evalPython(c), fs.readFileSync(pyFile, "utf8"));

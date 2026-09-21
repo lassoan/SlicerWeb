@@ -48,7 +48,8 @@ centerlines.SetAndObserveMesh(poly); centerlines.CreateDefaultDisplayNodes()
 // open the module
 await page.locator("button.h-8.w-full").first().click();
 await page.getByPlaceholder("Search modules").fill("Clip Vessel");
-await page.locator("div.absolute.right-2 button").first().click();
+await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
 await page.waitForTimeout(5000);
 const named = (name) => page.locator(`[data-name="${name}"]`).first();
 const applyState = () => page.evaluate(() => {

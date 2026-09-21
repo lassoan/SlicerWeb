@@ -43,7 +43,8 @@ centerlines.SetAndObserveMesh(poly); centerlines.CreateDefaultDisplayNodes()
 
 await page.locator("button.h-8.w-full").first().click();
 await page.getByPlaceholder("Search modules").fill("Clip Vessel");
-await page.locator("div.absolute.right-2 button").first().click();
+await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
 await page.waitForTimeout(5000);
 const named = (name) => page.locator(`[data-name="${name}"]`).first();
 const bare = process.argv.includes("--bare");   // run the test on a panel nothing has been set on
@@ -115,11 +116,13 @@ _clipName = _clipPoints.GetName() if _clipPoints else None
     // leave the module and come back, as a user does after looking at the result
     await page.locator("button.h-8.w-full").first().click();
     await page.getByPlaceholder("Search modules").fill("Models");
-    await page.locator("div.absolute.right-2 button").first().click();
+    await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
     await page.waitForTimeout(2500);
     await page.locator("button.h-8.w-full").first().click();
     await page.getByPlaceholder("Search modules").fill("Clip Vessel");
-    await page.locator("div.absolute.right-2 button").first().click();
+    await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
     await page.waitForTimeout(4000);
     console.log(`${stamp()} buttons after leaving and reopening the module:`, JSON.stringify(await buttons()));
     console.log(`${stamp()} references then:`, await py('json.dumps([(k, (slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k).GetName() if slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k) else None)) for k in ("InputSurface", "InputCenterlines", "ClipPoints", "OutputSurfaceModel")])'));

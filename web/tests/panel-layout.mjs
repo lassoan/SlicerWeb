@@ -27,7 +27,8 @@ await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelec
 await page.waitForTimeout(2000);
 await page.locator("button.h-8.w-full").first().click();
 await page.getByPlaceholder("Search modules").fill(title);
-await page.locator("div.absolute.right-2 button").first().click();
+await page.waitForTimeout(300);
+await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
 await page.waitForTimeout(6000);
 
 const report = await page.evaluate(() => {

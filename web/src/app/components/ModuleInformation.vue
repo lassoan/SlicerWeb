@@ -23,7 +23,10 @@ function categories(m: ModuleSummary) {
 
 <template>
   <div class="text-[12px]" data-name="moduleInformation">
-    <div v-if="showTitle" class="truncate text-[14px] font-semibold text-foreground">{{ module.title }}</div>
+    <div v-if="showTitle" class="flex items-center gap-1.5 text-[14px] font-semibold text-foreground">
+      <img v-if="module.icon" :src="module.icon" alt="" class="h-4 w-4 shrink-0" />
+      <span class="truncate">{{ module.title }}</span>
+    </div>
     <div v-if="module.helpText" class="mt-1 text-muted-foreground" v-html="module.helpText" />
     <div v-else class="mt-1 text-muted-foreground">This module says nothing about itself.</div>
     <dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-2">

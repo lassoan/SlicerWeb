@@ -97,9 +97,13 @@ defineExpose({ focus });
     <div ref="list" class="min-h-16 flex-1 overflow-y-auto p-1">
       <button v-for="(m, index) in results" :key="m.name" type="button" :data-highlighted="index === highlighted"
         :data-name="m.name"
-        class="block w-full truncate rounded px-2 py-1 text-left text-[13px]"
+        class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px]"
         :class="index === highlighted ? 'bg-accent text-accent-foreground' : m.name === current ? 'text-highlight' : 'hover:bg-accent/50'"
-        @click="pick(index)" @dblclick="open(m)">{{ m.title }}</button>
+        @click="pick(index)" @dblclick="open(m)">
+        <img v-if="m.icon" :src="m.icon" alt="" class="h-4 w-4 shrink-0" />
+        <span v-else class="h-4 w-4 shrink-0" />
+        <span class="truncate">{{ m.title }}</span>
+      </button>
       <div v-if="!results.length" class="px-2 py-3 text-[13px] text-muted-foreground">No module matches “{{ filter }}”.</div>
     </div>
 

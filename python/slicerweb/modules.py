@@ -80,7 +80,7 @@ class ModuleBase:
             "contributors": self.contributors,
             "webWidget": self.webWidget,
             "hasTest": self.hasTest(),
-            "icon": self.icon,
+            "icon": self.icon or module_icon(self.name, self.path),
             "path": self.path,
             "extension": self.extension or extension_of_path(self.path),
         }
@@ -282,6 +282,45 @@ def extension_python_packages(app):
         except Exception:
             logger.debug("Extension metadata %s could not be read", path, exc_info=True)
     return packages
+
+
+_module_icons = {}
+
+
+def module_icon(name, path=""):
+    """The icon a module is known by, as a data URL, or None if it has none.
+
+    Desktop Slicer compiles these into the Qt resources of each module (":/Icons/<Name>.png"). Here
+    they are files: the ones of the application and of the extensions are packaged in
+    share/Slicer-X.Y/module-icons, and a scripted module may also carry one beside its own file.
+    """
+    if name in _module_icons:
+        return _module_icons[name]
+
+    candidates = []
+    try:
+        import slicer
+
+        candidates.append(os.path.join(slicer.app.slicerSharePath, "module-icons", name + ".png"))
+    except Exception:
+        logger.debug("The share directory is not known yet", exc_info=True)
+    if path:
+        candidates.append(os.path.join(os.path.dirname(path), "Resources", "Icons", name + ".png"))
+
+    icon = None
+    for candidate in candidates:
+        if not os.path.isfile(candidate):
+            continue
+        try:
+            import base64
+
+            with open(candidate, "rb") as handle:
+                icon = "data:image/png;base64," + base64.b64encode(handle.read()).decode("ascii")
+            break
+        except Exception:
+            logger.debug("Icon %s could not be read", candidate, exc_info=True)
+    _module_icons[name] = icon
+    return icon
 
 
 def module_share_directory(app, name):

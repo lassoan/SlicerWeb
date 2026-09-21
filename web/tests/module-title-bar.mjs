@@ -70,5 +70,17 @@ for (const name of ["Volumes", "Data"]) {
   await bar.locator("[data-name='moduleHelp']").click();
   await page.waitForTimeout(300);
 }
+// the icon a module is known by, beside its title and in the finder
+await open("Volumes");
+console.log("icon beside the title:", await bar.locator("[data-name='moduleTitle'] img").count() > 0);
+await bar.locator("[data-name='moduleTitle']").click();
+await page.waitForTimeout(400);
+const rows = page.locator("[data-name='moduleFinderList'] button, [data-name='Volumes']");
+console.log("icons in the finder:", await page.locator("button[data-name] img").count(), "of",
+  await page.locator("button[data-name]").count(), "listed modules");
+void rows;
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+
 if (shot) await page.screenshot({ path: shot });
 await browser.close();

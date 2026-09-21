@@ -256,6 +256,16 @@ def main():
         w.add_file(os.path.join(module_dir, module + ".py"), f"{scripted}/{module}.py")
         if os.path.isdir(os.path.join(module_dir, "Resources")):
             w.add_tree(os.path.join(module_dir, "Resources"), f"{scripted}/Resources", exclude=not_installed)
+    # The icons the modules are known by. In desktop Slicer they are compiled into the Qt resources
+    # of each module (":/Icons/<Name>.png"); here they are files, looked up by module name.
+    icons = f"slicer_home/share/Slicer-{slicer_ver}/module-icons"
+    for kind in ("Loadable", "Scripted", "CLI"):
+        for module_dir in sorted(glob.glob(os.path.join(modules_src, kind, "*"))):
+            name = os.path.basename(module_dir)
+            icon = module_icon_file(module_dir, name)
+            if icon:
+                w.add_file(icon, f"{icons}/{name}.png")
+
     for package_dir, package in (
             ("Scripted/SegmentStatistics/SegmentStatisticsPlugins", "SegmentStatisticsPlugins"),
             ("Loadable/SubjectHierarchy/Widgets/Python/SubjectHierarchyPlugins", "SubjectHierarchyPlugins"),
@@ -275,6 +285,31 @@ def main():
 
 # ---------------------------------------------------------------------------- extensions
 EXTENSION_FIELDS = ("HOMEPAGE", "CATEGORY", "CONTRIBUTORS", "DESCRIPTION", "ICONURL", "SCREENSHOTURLS", "STATUS", "DEPENDS")
+
+
+def module_icon_file(module_dir, name):
+    """The icon file a module is known by, or None.
+
+    A module names its icon in its Qt module class (`QIcon(":/Icons/Large/SlicerModels.png")`),
+    which is where the name is read from; a module that names none is looked up by its own name.
+    """
+    import re
+
+    icons_dir = os.path.join(module_dir, "Resources", "Icons")
+    if not os.path.isdir(icons_dir):
+        return None
+    for source in glob.glob(os.path.join(module_dir, "qSlicer*Module.cxx")):
+        try:
+            text = open(source, encoding="utf8", errors="replace").read()
+        except OSError:
+            continue
+        match = re.search(r'QIcon\(\s*":/Icons/([^"]+\.png)"', text)
+        if match:
+            candidate = os.path.join(icons_dir, *match.group(1).split("/"))
+            if os.path.isfile(candidate):
+                return candidate
+    fallback = os.path.join(icons_dir, name + ".png")
+    return fallback if os.path.isfile(fallback) else None
 
 
 def extension_metadata(source_dir):
@@ -352,6 +387,10 @@ def write_extension_wheels(args, slicer_ver):
                 w.add_tree(d, "slicer_home/" + sub,
                            exclude=lambda rel: rel.endswith((".a", ".pyc", ".cmake")) or "/cmake/" in rel.replace("\\", "/")
                            or rel.startswith("cmake"))
+        for icon in glob.glob(os.path.join(source_dir, "*", "Resources", "Icons", "*.png")):
+            module = os.path.splitext(os.path.basename(icon))[0]
+            if module == os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(icon)))):
+                w.add_file(icon, f"slicer_home/share/Slicer-{slicer_ver}/module-icons/{module}.png")
         meta["modules"] = sorted(
             {os.path.splitext(os.path.basename(f))[0] for f in w.files
              if "/qt-scripted-modules/" in f and f.count("/") == 4 and f.endswith(".py")}

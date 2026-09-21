@@ -173,6 +173,35 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+/**
+ * Typing anywhere in the console types at the prompt.
+ *
+ * The output above the prompt can be selected and copied, so it takes the focus when it is
+ * clicked; a key pressed there would otherwise go nowhere. A printable character is put at the
+ * prompt and the prompt takes the focus; Enter (and any other key that is not a shortcut) just
+ * moves the focus there.
+ */
+function onConsoleKeydown(event: KeyboardEvent) {
+  const el = inputEl.value;
+  if (!el || event.target === el || event.ctrlKey || event.metaKey || event.altKey) {
+    return;
+  }
+  // a key that belongs to the browser or to reading the output, not to typing
+  if (["Tab", "Escape", "PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    return;
+  }
+  el.focus();
+  if (event.key.length === 1) {
+    event.preventDefault();
+    const at = el.selectionStart ?? input.value.length;
+    input.value = input.value.slice(0, at) + event.key + input.value.slice(el.selectionEnd ?? at);
+    nextTick(() => el.setSelectionRange(at + 1, at + 1));
+  } else if (event.key === "Enter") {
+    // nothing to run from here: the prompt simply takes over
+    event.preventDefault();
+  }
+}
+
 function startResize(e: PointerEvent) {
   const startY = e.clientY;
   const startH = height.value;
@@ -187,13 +216,15 @@ function startResize(e: PointerEvent) {
 </script>
 
 <template>
-  <div class="flex shrink-0 flex-col border-t border-input bg-bkg-low/95 backdrop-blur" :style="{ height: height + 'px' }">
+  <div class="flex shrink-0 flex-col border-t border-input bg-bkg-low/95 backdrop-blur" :style="{ height: height + 'px' }"
+    data-name="pythonConsole" @keydown="onConsoleKeydown">
     <div class="h-1 cursor-row-resize hover:bg-primary/50" @pointerdown.prevent="startResize" />
     <div class="flex h-6 items-center justify-between px-2 text-[12px] text-muted-foreground">
       <span>Python console</span>
       <button type="button" class="hover:text-highlight" @click="store.pythonConsoleOpen = false"><X :size="14" /></button>
     </div>
-    <div ref="output" class="min-h-0 flex-1 overflow-y-auto px-3 font-mono text-[12px] leading-5 whitespace-pre-wrap select-text">
+    <div ref="output" tabindex="0" data-name="consoleOutput"
+      class="min-h-0 flex-1 overflow-y-auto px-3 font-mono text-[12px] leading-5 whitespace-pre-wrap outline-none select-text">
       <div v-for="(l, i) in lines" :key="i"
         :class="{ 'text-highlight': l.kind === 'in', 'text-red-400': l.kind === 'err', 'text-muted-foreground': l.kind === 'log' }">{{ l.text }}</div>
     </div>

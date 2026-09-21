@@ -8,12 +8,13 @@
  */
 import { computed, ref } from "vue";
 import { ChevronLeft, ChevronRight, Info, List, Search } from "@lucide/vue";
-import { moduleTitle } from "../modules/list";
+import { moduleList, moduleTitle } from "../modules/list";
 import { recentModules, stepModuleHistory, store } from "../store";
 
 const recentOpen = ref(false);
 
 const title = computed(() => moduleTitle(store.activeModule));
+const icon = computed(() => moduleList.value.find((m) => m.name === store.activeModule)?.icon ?? null);
 const canGoBack = computed(() => store.moduleHistoryIndex > 0);
 const canGoForward = computed(() => store.moduleHistoryIndex < store.moduleHistory.length - 1);
 const previousTitle = computed(() => (canGoBack.value ? moduleTitle(store.moduleHistory[store.moduleHistoryIndex - 1]) : ""));
@@ -44,9 +45,10 @@ function step(direction: number) {
 
 <template>
   <div class="relative flex h-full w-full items-center bg-primary/10 pr-1 pl-2" data-name="moduleTitleBar">
-    <button type="button" class="min-w-0 flex-1 truncate text-left text-[13px] font-medium text-foreground hover:text-highlight"
+    <button type="button" class="flex min-w-0 flex-1 items-center gap-1.5 text-left text-[13px] font-medium text-foreground hover:text-highlight"
       :title="'Module: ' + title + ' (click to choose another)'" data-name="moduleTitle" @click="toggleFinder">
-      {{ title }}
+      <img v-if="icon" :src="icon" alt="" class="h-4 w-4 shrink-0" />
+      <span class="truncate">{{ title }}</span>
     </button>
     <button type="button" class="flex h-6 w-6 items-center justify-center text-muted-foreground hover:text-highlight"
       title="Find a module" data-name="findModule" @click="toggleFinder">

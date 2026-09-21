@@ -104,6 +104,22 @@ export class SlicerRuntime {
 
     // Events from Python (slicerweb.host.emit) are dispatched to the bridge event bus.
     // Work that takes long enough to be felt runs in a worker with a Python of its own
+    // Downloads that module code asks for. Python cannot wait for one - it holds the thread the
+    // page draws with - so it asks here and is called back (see slicerweb/downloads.py).
+    pyodide.registerJsModule("slicerweb_downloads", {
+      download: (url: string, path: string,
+                 onProgress: (received: number, total: number) => void,
+                 onDone: (path: string) => void,
+                 onFailed: (message: string) => void) => {
+        const directory = path.slice(0, path.lastIndexOf("/"));
+        this.downloadFile(url, path.split("/").pop(), directory || "/data/downloads", {
+          onProgress: (received, total) => onProgress(received, total),
+        })
+          .then((written) => onDone(written))
+          .catch((error: Error) => onFailed(String(error?.message ?? error)));
+      },
+    });
+
     pyodide.registerJsModule("slicerweb_jobs", {
       run: (specJson: string, onDone: (resultJson: string) => void, onFailed: (error: string) => void,
             onProgress?: (message: string, fraction: number) => void,

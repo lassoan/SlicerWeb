@@ -108,3 +108,23 @@ canvas.sw-view-canvas {
     white-space: normal;
   }
 }
+
+/* A download that a widget is waiting for: the bar fills under whatever asked for the file
+   (see slicerweb/qtcompat/core.py, which sets data-progress while the page fetches it). */
+[data-progress] {
+  position: relative;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+[data-progress]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(to right,
+    var(--color-highlight, #5acce6) var(--sw-progress, 0%),
+    rgb(255 255 255 / 0.15) var(--sw-progress, 0%));
+}

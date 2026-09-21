@@ -55,8 +55,57 @@ def download(url):
     return bytes(memoryview(data.to_py()))
 
 
+class DownloadRequired(Exception):
+    """A file has to be fetched by the page before the code that wants it can go on.
+
+    A download done here blocks everything: Python holds the one thread the page draws with, so a
+    synchronous request leaves the window frozen with nothing to show for it, which is what a user
+    sees as "nothing happens". Where something can run the call again - a widget's slot, see
+    qtcompat.core - this is raised instead, the page fetches the file while it goes on drawing, and
+    the call is made again with the file in place.
+    """
+
+    def __init__(self, url, path):
+        super().__init__(f"{url} has not been downloaded yet")
+        self.url = url
+        self.path = path
+
+
+#: Raised downloads are only useful where something will run the call again; qtcompat.core counts
+#: the slot calls it drives, and only inside one is DownloadRequired worth raising.
+retryable_calls = 0
+
+
+def page_can_download():
+    """Whether the page can fetch a file on its own (registered by the web application)."""
+    try:
+        import slicerweb_downloads  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def download_in_page(url, path, onProgress=None, onDone=None, onFailed=None):
+    """Ask the page to fetch *url* into *path*, reporting how far along it is. Returns at once."""
+    import slicerweb_downloads
+
+    from .qtcompat import dom
+
+    proxies = [dom.proxy(onProgress or (lambda received, total: None)),
+               dom.proxy(onDone or (lambda path: None)),
+               dom.proxy(onFailed or (lambda message: None))]
+    _page_downloads.append(proxies)   # kept alive until the download ends
+    slicerweb_downloads.download(str(url), str(path), *proxies)
+
+
+_page_downloads = []
+
+
 def urlretrieve(url, filename=None, reporthook=None, data=None):
     """urllib.request.urlretrieve for the browser."""
+    if (retryable_calls and filename and not os.path.exists(filename)
+            and page_can_download() and not data):
+        raise DownloadRequired(url, filename)
     logger.info("Downloading %s", url)
     content = download(str(url))
     if filename is None:

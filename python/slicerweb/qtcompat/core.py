@@ -41,13 +41,82 @@ class BoundSignal:
         if owner is not None and getattr(owner, "_signalsBlocked", False):
             return
         for slot, argumentCount in list(self._slots):
+            slotArgs = args if argumentCount is None else args[:argumentCount]
             try:
-                _call_slot(slot, args if argumentCount is None else args[:argumentCount])
+                _call_slot_retrying_downloads(slot, slotArgs, owner)
             except Exception:
                 logger.exception("Error in slot connected to %s", self._name)
 
     def __call__(self, *args):  # PythonQt allows calling a signal to emit it
         self.emit(*args)
+
+
+def _call_slot_retrying_downloads(slot, args, owner=None):
+    """Call a slot; if it wants a file that has not been downloaded, fetch it and call it again.
+
+    A download in the page is asynchronous, and module code is not: it asks for a file and expects
+    to have it. So the slot is let run until it asks (downloads.DownloadRequired), the page fetches
+    the file while the window goes on drawing - the widget the slot belongs to shows how far along
+    it is - and then the slot is run from the start, this time finding the file where it wants it.
+    """
+    from .. import downloads
+
+    downloads.retryable_calls += 1
+    try:
+        return _call_slot(slot, args)
+    except downloads.DownloadRequired as required:
+        _fetch_then_retry(slot, args, owner, required)
+        return None
+    finally:
+        downloads.retryable_calls -= 1
+
+
+def _fetch_then_retry(slot, args, owner, required):
+    """Fetch what a slot asked for, showing the progress on the widget, and call the slot again."""
+    from .. import downloads
+
+    name = required.path.rsplit("/", 1)[-1]
+    _set_progress(owner, 0.0, f"Downloading {name}")
+
+    def progress(received, total):
+        _set_progress(owner, (received / total) if total else 0.0,
+                      f"Downloading {name}" + (f" ({int(100 * received / total)}%)" if total else ""))
+
+    def done(path):
+        _set_progress(owner, None, None)
+        try:
+            _call_slot_retrying_downloads(slot, args, owner)
+        except Exception:
+            logger.exception("The call that waited for %s failed", path)
+
+    def failed(message):
+        _set_progress(owner, None, None)
+        logger.error("Download of %s failed: %s", required.url, message)
+
+    def finished(path):
+        logger.info("Downloaded %s", path)
+        done(path)
+
+    logger.info("Downloading %s into %s in the page", required.url, required.path)
+    downloads.download_in_page(required.url, required.path, progress, finished, failed)
+
+
+def _set_progress(widget, fraction, text):
+    """Show (or clear) a download on a widget: data-progress paints a bar under it (see index.css)."""
+    element = getattr(widget, "_el", None)
+    if element is None:
+        return
+    try:
+        if fraction is None:
+            element.removeAttribute("data-progress")
+            element.removeAttribute("aria-busy")
+            element.style.removeProperty("--sw-progress")
+        else:
+            element.setAttribute("data-progress", text or "")
+            element.setAttribute("aria-busy", "true")
+            element.style.setProperty("--sw-progress", f"{round(100 * fraction)}%")
+    except Exception:
+        logger.debug("Progress could not be shown on %r", widget, exc_info=True)
 
 
 def _signature_argument_count(signature):

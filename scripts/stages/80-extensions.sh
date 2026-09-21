@@ -66,7 +66,12 @@ if want SlicerVMTK; then
   log "vmtk"
   LOADABLE=lib/$SLICER_VERSION_DIR/qt-loadable-modules
   rm -rf "$EXT_INSTALL/SlicerVMTK"
+  # VMTK brings a copy of netlib (its nl library) whose BLAS routines - dtpsv_, dgemm_ and the rest
+  # - would otherwise be exported into the one symbol namespace that all side modules share, where
+  # SciPy's own BLAS binds to them and fails to load ("imported function does not match the expected
+  # type"). The C sources keep their symbols to themselves; VMTK's own code is C++.
   cmake -S "$SW_SRC/vmtk" -B "$EXT_BUILD/vmtk" "${COMMON_ARGS[@]}" \
+    -DCMAKE_C_FLAGS="$SW_ABI_CFLAGS -fvisibility=hidden" \
     -DCMAKE_MODULE_PATH="/work/cmake;$SW_SRC/vtkAddon/CMake" \
     -DCMAKE_INSTALL_PREFIX="$EXT_INSTALL/SlicerVMTK" \
     -DBUILD_SHARED_LIBS=ON -DBUILD_DOCUMENTATION=OFF -DVMTK_BUILD_TESTING=OFF \

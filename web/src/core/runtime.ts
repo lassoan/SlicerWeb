@@ -4,6 +4,7 @@
  */
 import type { PyodideAPI } from "pyodide";
 import { PyodideBridge, setBridge } from "./bridge";
+import { jobRunner } from "./jobs";
 
 export interface RuntimeConfig {
   /** Base URL of Pyodide core files (default: <app>/pyodide/). */
@@ -77,6 +78,33 @@ export class SlicerRuntime {
     this.pyodide = pyodide;
 
     // Events from Python (slicerweb.host.emit) are dispatched to the bridge event bus.
+    // Work that takes long enough to be felt runs in a worker with a Python of its own
+    pyodide.registerJsModule("slicerweb_jobs", {
+      run: (specJson: string, onDone: (resultJson: string) => void, onFailed: (error: string) => void,
+            onProgress?: (message: string, fraction: number) => void) => {
+        const spec = JSON.parse(specJson) as { code: string; globals?: Record<string, unknown>; outputs?: string[]; files?: Record<string, string> };
+        const files: Record<string, Uint8Array> = {};
+        for (const [path, base64] of Object.entries(spec.files ?? {})) {
+          files[path] = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+        }
+        jobRunner(this.config.extensionWheels)
+          .run({ code: spec.code, globals: spec.globals, outputs: spec.outputs, files }, {
+            onProgress: (message, fraction) => onProgress?.(message, fraction),
+            onLog: (level, message) => this.bridge.events.emit("job-log", { level, message }),
+          })
+          .then((result) => {
+            const returned: Record<string, unknown> = { result: result.result, files: {} };
+            for (const [path, data] of Object.entries(result.files)) {
+              (returned.files as Record<string, string>)[path] = btoa(String.fromCharCode(...data));
+            }
+            onDone(JSON.stringify(returned));
+          })
+          .catch((error: Error) => onFailed(String(error.message ?? error)));
+      },
+      cancel: () => jobRunner().cancel(),
+      busy: () => jobRunner().busy,
+    });
+
     pyodide.registerJsModule("slicerweb_host", {
       emit: (event: string, payloadJson: string) => this.bridge.dispatch(event, payloadJson),
       persistFileSystem: () => this.persistFileSystem(),

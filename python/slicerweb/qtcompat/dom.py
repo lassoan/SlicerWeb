@@ -109,6 +109,11 @@ def listen(el, event, callback):
     return None
 
 
+def proxy(callback):
+    """A Python callable JavaScript can hold on to (the caller keeps it alive)."""
+    return create_proxy(callback) if create_proxy is not None else callback
+
+
 def set_timeout(callback, ms):
     if js is not None and hasattr(js, "setTimeout"):
         from pyodide.ffi import create_once_callable

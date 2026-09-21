@@ -97,7 +97,7 @@ onMounted(async () => {
         <DataPanel />
       </SidePanel>
       <main class="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
-        <ViewportGrid v-if="store.status === 'ready'" :node="store.layout.description" />
+        <ViewportGrid v-if="store.status === 'ready'" :node="store.layout.description" class="min-h-0 flex-1" />
         <LoadingScreen v-else />
         <LogWindow v-if="store.logWindowOpen" />
         <PythonConsole v-if="store.pythonConsoleOpen" />

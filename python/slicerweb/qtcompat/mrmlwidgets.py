@@ -563,20 +563,56 @@ class qSlicerSimpleMarkupsWidget(qMRMLWidget):
 
 
 class qSlicerMarkupsPlaceWidget(QWidget):
-    """Button that starts placing control points in the current markups node."""
+    """Buttons that place control points in the current markups node, and remove them again."""
+
+    # How many markups a press of Place places (qSlicerMarkupsPlaceWidget::PlaceMultipleMarkups)
+    ForcePlaceSingleMarkup, ForcePlaceMultipleMarkups = 0, 1
+    ShowPlaceMultipleMarkupsOption, HidePlaceMultipleMarkupsOption = 2, 3
 
     activeMarkupsPlaceModeChanged = Signal("activeMarkupsPlaceModeChanged(bool)")
+    # The name the signal had when the widget only placed fiducials; modules still connect to it.
+    activeMarkupsFiducialPlaceModeChanged = Signal("activeMarkupsFiducialPlaceModeChanged(bool)")
 
     def __init__(self, parent=None):
         from .widgets import QHBoxLayout, QPushButton
 
         super().__init__(parent)
         self._node = None
+        self._deleteAllVisible = True
+        self._placeMultipleMarkups = self.ShowPlaceMultipleMarkupsOption
         layout = QHBoxLayout(self)
         self._button = QPushButton("Place", self)
         self._button.setCheckable(True)
         self._button.toggled.connect(self.setPlaceModeEnabled)
         layout.addWidget(self._button)
+        # Beside Place, as the desktop widget has it: a press removes the point placed last.
+        self._deleteButton = QPushButton("Delete", self)
+        self._deleteButton.setToolTip("Remove the last control point")
+        self._deleteButton.clicked.connect(self.deleteLastPoint)
+        layout.addWidget(self._deleteButton)
+
+    def placeButton(self):
+        return self._button
+
+    def deleteButton(self):
+        return self._deleteButton
+
+    def moreButton(self):
+        # The desktop widget keeps its rarer actions behind a third button; here they all sit on
+        # the delete button, so a module showing or hiding "more" acts on that one.
+        return self._deleteButton
+
+    def deleteLastPoint(self):
+        """Remove the control point that was placed last."""
+        node = self._node
+        if node is None or node.GetNumberOfControlPoints() == 0:
+            return
+        node.RemoveNthControlPoint(node.GetNumberOfControlPoints() - 1)
+
+    def deleteAllPoints(self):
+        """Remove every control point of the current node."""
+        if self._node is not None:
+            self._node.RemoveAllControlPoints()
 
     def setMRMLScene(self, scene):
         pass
@@ -604,6 +640,7 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         interaction = appLogic.GetInteractionNode()
         interaction.SetCurrentInteractionMode(interaction.Place if enabled else interaction.ViewTransform)
         self.activeMarkupsPlaceModeChanged.emit(bool(enabled))
+        self.activeMarkupsFiducialPlaceModeChanged.emit(bool(enabled))
 
     def setPlaceModePersistency(self, persistent):
         import slicer
@@ -611,19 +648,24 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         slicer.app.applicationLogic().GetInteractionNode().SetPlaceModePersistence(1 if persistent else 0)
 
     def setButtonsVisible(self, v):
-        pass
+        self._deleteButton.setVisible(bool(v))
 
     def setDeleteAllControlPointsOptionVisible(self, v):
-        pass
+        self._deleteAllVisible = bool(v)
+
+    deleteAllControlPointsOptionVisible = property(
+        lambda self: self._deleteAllVisible, setDeleteAllControlPointsOptionVisible)
 
     def setUnsetLastControlPointOptionVisible(self, v):
         pass
 
-    def setPlaceMultipleMarkups(self, v):
-        pass
+    unsetLastControlPointOptionVisible = property(lambda self: False,
+                                                  setUnsetLastControlPointOptionVisible)
 
-    def placeButton(self):
-        return self._button
+    def setPlaceMultipleMarkups(self, v):
+        self._placeMultipleMarkups = v
+
+    placeMultipleMarkups = property(lambda self: self._placeMultipleMarkups, setPlaceMultipleMarkups)
 
 
 class qMRMLSliderWidget(_ElementWidget):

@@ -187,7 +187,7 @@ function startResize(e: PointerEvent) {
 </script>
 
 <template>
-  <div class="absolute right-0 bottom-0 left-0 z-10 flex flex-col border-t border-input bg-bkg-low/95 backdrop-blur" :style="{ height: height + 'px' }">
+  <div class="flex shrink-0 flex-col border-t border-input bg-bkg-low/95 backdrop-blur" :style="{ height: height + 'px' }">
     <div class="h-1 cursor-row-resize hover:bg-primary/50" @pointerdown.prevent="startResize" />
     <div class="flex h-6 items-center justify-between px-2 text-[12px] text-muted-foreground">
       <span>Python console</span>

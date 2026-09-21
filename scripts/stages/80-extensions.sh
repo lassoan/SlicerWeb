@@ -45,6 +45,10 @@ if want MarkupsToModel; then
   build_extension MarkupsToModel
 fi
 
+if want SlicerSimVascular; then
+  build_extension SlicerSimVascular
+fi
+
 if want SlicerHeart; then
   build_extension SlicerHeart -DSlicerHeart_BUILD_ITK_FILTERS=OFF
 fi

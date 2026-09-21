@@ -934,17 +934,8 @@ class QTextEdit(_ElementWidget):
         self.ensureCursorVisible()
 
     def append(self, text):
-        self.setPlainText((self.plainText + chr(10) + str(text)) if self.plainText else str(text))
-        self.ensureCursorVisible()
-
-    def insertPlainText(self, text):
-        self.setPlainText(self.plainText + str(text))
-
-    def clear(self):
-        self.setPlainText("")
-
-    def append(self, text):
         self.setPlainText((self.plainText + "\n" if self.plainText else "") + str(text))
+        self.ensureCursorVisible()
 
     def insertPlainText(self, text):
         self.setPlainText(self.plainText + str(text))
@@ -961,12 +952,40 @@ class QTextEdit(_ElementWidget):
     def verticalScrollBar(self):
         return _ScrollBar()
 
-    def moveCursor(self, *args):
-        pass
-
 
 class QPlainTextEdit(QTextEdit):
-    pass
+    """A text edit that keeps only the last so many lines, as a log view does."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self._maximumBlockCount = 0
+
+    def setMaximumBlockCount(self, count):
+        """Keep at most this many lines; 0, the default, keeps all of them."""
+        self._maximumBlockCount = int(count)
+        self._trim()
+
+    def maximumBlockCount(self):
+        return self._maximumBlockCount
+
+    def blockCount(self):
+        return len(self.plainText.split("\n")) if self.plainText else 0
+
+    def setPlainText(self, text):
+        super().setPlainText(text)
+        self._trim()
+
+    def appendPlainText(self, text):
+        self.append(text)
+
+    def _trim(self):
+        limit = self._maximumBlockCount
+        if limit <= 0:
+            return
+        lines = self.plainText.split("\n")
+        if len(lines) > limit:
+            # Straight to the base class: setPlainText is what called this.
+            super().setPlainText("\n".join(lines[-limit:]))
 
 
 class QTextBrowser(QTextEdit):

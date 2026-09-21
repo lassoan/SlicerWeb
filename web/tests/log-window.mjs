@@ -84,6 +84,25 @@ let saved = "";
 for await (const chunk of stream) saved += chunk;
 console.log("saved", await file.suggestedFilename(), "-", saved.split(String.fromCharCode(10)).length, "lines");
 
+// with the Python console open as well, both are visible: one above the other, not one over the other
+await page.getByRole("button", { name: /application menu/i }).click();
+await page.waitForTimeout(300);
+await page.locator("[data-name='menu:python']").click();
+await page.waitForTimeout(800);
+const boxes = await page.evaluate(() => {
+  const rect = (el) => (el ? el.getBoundingClientRect() : null);
+  const logRect = rect(document.querySelector("[data-name='logWindow']"));
+  const console_ = [...document.querySelectorAll("div")].find((d) => d.textContent.startsWith("Python console") && d.className.includes("border-t"));
+  const canvas = rect(document.querySelector("canvas"));
+  return { log: logRect && { top: Math.round(logRect.top), bottom: Math.round(logRect.bottom) },
+           console: console_ && { top: Math.round(rect(console_).top), bottom: Math.round(rect(console_).bottom) },
+           canvasHeight: canvas && Math.round(canvas.height) };
+});
+console.log("log and console together:", JSON.stringify(boxes));
+console.log("log above the console, not under it:", Boolean(boxes.log && boxes.console && boxes.log.bottom <= boxes.console.top + 1));
+console.log("log still on screen:", await log.locator("[data-name='clearLog']").isVisible(), "- views still drawn:", boxes.canvasHeight > 0);
+await page.locator("[data-name='menu:python']").click().catch(() => {});
+
 await log.locator("[data-name='clearLog']").click();
 await page.waitForTimeout(500);
 console.log("after clearing:", await log.locator("[data-level]").count(), "lines,",

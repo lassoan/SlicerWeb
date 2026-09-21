@@ -1,0 +1,40 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] BUG: Do not draw wide lines with a geometry shader in GLES builds
+
+Lines wider than the widest the hardware draws are drawn by VTK with a geometry
+shader, which a build for OpenGL ES (WebAssembly, WebGL) has not got: vtkShader
+refuses it ("Geometry shaders are not supported in this build of VTK"), the shader
+program is never set, and nothing of that actor is drawn - not even thin lines.
+In 3D Slicer this took the interaction handles of markups (drawn by
+vtkOpenGLGlyph3DHelper) and the outlines of widgets with it.
+
+Where there is no geometry shader the wide line path cannot work, so it is not
+taken and the lines are drawn plain, one pixel wide.
+---
+diff --git a/Rendering/OpenGL2/vtkOpenGLPolyDataMapper.cxx b/Rendering/OpenGL2/vtkOpenGLPolyDataMapper.cxx
+index c015595..a18f9bc 100644
+--- a/Rendering/OpenGL2/vtkOpenGLPolyDataMapper.cxx
++++ b/Rendering/OpenGL2/vtkOpenGLPolyDataMapper.cxx
+@@ -368,6 +368,14 @@ void vtkOpenGLPolyDataMapper::BuildShaders(
+ //------------------------------------------------------------------------------
+ bool vtkOpenGLPolyDataMapper::HaveWideLines(vtkRenderer* ren, vtkActor* actor)
+ {
++#ifndef GL_GEOMETRY_SHADER
++  // Lines wider than one pixel are drawn with a geometry shader, which this build has not got
++  // (OpenGL ES): asking for one leaves the shader program unset and nothing of the actor drawn, so
++  // plain lines are drawn instead.
++  (void)ren;
++  (void)actor;
++  return false;
++#else
+   vtkHardwareSelector* selector = ren->GetSelector();
+   if (selector && selector->GetFieldAssociation() == vtkDataObject::FIELD_ASSOCIATION_POINTS)
+   {
+@@ -387,6 +395,7 @@ bool vtkOpenGLPolyDataMapper::HaveWideLines(vtkRenderer* ren, vtkActor* actor)
+   }
+   return this->DrawingSelection &&
+     (this->GetOpenGLMode(this->SelectionType, this->LastBoundBO->PrimitiveType) == GL_LINES);
++#endif
+ }
+ 
+ //------------------------------------------------------------------------------

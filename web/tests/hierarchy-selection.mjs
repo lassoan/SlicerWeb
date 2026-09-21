@@ -26,7 +26,7 @@ await page.waitForTimeout(1500);
 const selected = () => page.evaluate(() => {
   const select = document.querySelector('.sw-panel-scroll select.sw-node-selector');
   const option = select?.selectedOptions?.[0];
-  return { module: document.querySelector("button.h-8.w-full span")?.textContent?.trim(), node: option?.textContent?.trim() };
+  return { module: document.querySelector("[data-name='moduleTitle']")?.textContent?.trim(), node: option?.textContent?.trim() };
 });
 const clickInTree = (name) => page.locator(".sw-panel-scroll >> text=" + name).first().click();
 

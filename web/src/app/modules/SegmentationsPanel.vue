@@ -2,7 +2,7 @@
 import { ref } from "vue";
 import { Eye, EyeOff, Trash2 } from "@lucide/vue";
 import { SwCheckBox, SwCollapsible, SwFormRow, SwNodeSelector, SwSlider, SwButton } from "@/widgets";
-import { store } from "../store";
+import { openModule, store } from "../store";
 import { useNodeState } from "./useNodeState";
 import { useSelectedNode } from "./useSelectedNode";
 
@@ -29,7 +29,7 @@ const setDisplay = (props: Record<string, unknown>) => nodeID.value && bridge.ca
         base-name="Segmentation" @current-node-changed="nodeID = $event" />
     </SwFormRow>
     <template v-if="state">
-      <SwButton text="Edit segments…" primary @clicked="store.activeModule = 'SegmentEditor'" />
+      <SwButton text="Edit segments…" primary @clicked="openModule('SegmentEditor')" />
       <SwCollapsible :text="`Segments (${state.segments.length})`">
         <div v-for="s in state.segments" :key="s.id" class="group flex h-7 items-center gap-2 rounded px-1 text-[13px] hover:bg-accent/40">
           <input type="color" class="h-4 w-5 cursor-pointer border-0 bg-transparent p-0" :value="s.color" @input="setSeg(s.id, { color: ($event.target as HTMLInputElement).value })" />

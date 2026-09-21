@@ -41,7 +41,7 @@ centerlines = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "Centerline
 centerlines.SetAndObserveMesh(poly); centerlines.CreateDefaultDisplayNodes()
 `));
 
-await page.locator("button.h-8.w-full").first().click();
+await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill("Clip Vessel");
 await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
@@ -114,12 +114,12 @@ _clipName = _clipPoints.GetName() if _clipPoints else None
   console.log(`${stamp()} output reference:`, await py('json.dumps([(k, (slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k).GetName() if slicer.modules.ClipVesselWidget._parameterNode.GetNodeReference(k) else None)) for k in ("InputSurface", "InputCenterlines", "ClipPoints", "OutputSurfaceModel")])'));
   if (process.argv.includes("--switch")) {
     // leave the module and come back, as a user does after looking at the result
-    await page.locator("button.h-8.w-full").first().click();
+    await page.locator("[data-name='moduleTitle']").click();
     await page.getByPlaceholder("Search modules").fill("Models");
     await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted
     await page.waitForTimeout(2500);
-    await page.locator("button.h-8.w-full").first().click();
+    await page.locator("[data-name='moduleTitle']").click();
     await page.getByPlaceholder("Search modules").fill("Clip Vessel");
     await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted

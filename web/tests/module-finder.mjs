@@ -18,7 +18,7 @@ await page.reload();
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 300000 });
 await page.waitForTimeout(3000);
 
-const open = async () => { await page.locator("button.h-8.w-full").first().click(); await page.waitForTimeout(400); };
+const open = async () => { await page.locator("[data-name='moduleTitle']").click(); await page.waitForTimeout(400); };
 const highlighted = () => page.locator("[data-highlighted='true']").first().innerText();
 const info = () => page.locator("[data-name='moduleInformation']").innerText();
 const items = () => page.locator("[data-highlighted]").allInnerTexts();
@@ -51,7 +51,7 @@ await page.keyboard.type("extract centerline");
 await page.waitForTimeout(400);
 await page.keyboard.press("Enter");
 await page.waitForTimeout(2500);
-console.log("module after Enter:", await page.evaluate(() => window.slicerWeb.store?.activeModule ?? document.querySelector("button.h-8.w-full span")?.textContent));
+console.log("module after Enter:", await page.evaluate(() => window.slicerWeb.store?.activeModule ?? document.querySelector("[data-name='moduleTitle']")?.textContent));
 
 // the search options
 await open();

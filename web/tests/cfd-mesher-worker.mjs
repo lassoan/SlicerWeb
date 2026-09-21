@@ -26,7 +26,7 @@ tube.CreateDefaultDisplayNodes()
 `));
 
 // open the module and set it up as a user would
-await page.locator("button.h-8.w-full").first().click();
+await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill("CFD mesh generator");
 await page.waitForTimeout(400);
 await page.keyboard.press("Enter");

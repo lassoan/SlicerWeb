@@ -17,7 +17,7 @@ await page.evaluate(() => { window.__logs = []; window.slicerWeb.bridge.events.o
 const py = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, "eval"), code);
 
 // Open the module
-await page.locator("button.h-8.w-full").first().click();
+await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill("MarkupsToModel");
 await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted

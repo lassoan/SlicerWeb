@@ -25,7 +25,10 @@ await page.evaluate((w) => localStorage.setItem("slicerweb.extensions", JSON.str
 await page.reload();
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 300000 });
 await page.waitForTimeout(2000);
-await page.locator("button.h-8.w-full").first().click();
+// The modules of an extension are there once it has finished loading.
+await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title === t || m.name === t),
+  title, { timeout: 120000 });
+await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill(title);
 await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted

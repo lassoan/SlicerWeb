@@ -4,7 +4,7 @@ import { inject, ref } from "vue";
 import { ChevronDown, ChevronRight, Eye, EyeOff, Box, Layers, Image, MapPin, Shapes, Move3d, Table, Folder, User, FileText, Download, X } from "@lucide/vue";
 import type { SlicerBridge, SubjectHierarchyItem } from "@/core/bridge";
 import type { SlicerRuntime } from "@/core/runtime";
-import { store } from "../store";
+import { openModule, store } from "../store";
 
 defineProps<{ items: SubjectHierarchyItem[]; depth: number }>();
 const bridge = inject<SlicerBridge>("bridge")!;
@@ -41,7 +41,7 @@ function select(item: SubjectHierarchyItem) {
   const c = item.className;
   const module = c.includes("Segmentation") ? "Segmentations" : c.includes("Volume") ? "Volumes" : c.includes("Model") ? "Models"
     : c.includes("Markups") ? "Markups" : c.includes("Transform") ? "Transforms" : store.activeModule;
-  store.activeModule = module;
+  openModule(module);
   store.selectedNodeClass = item.className;
   store.selectedNodeID = item.nodeID;
 }

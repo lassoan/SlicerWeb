@@ -42,7 +42,7 @@ await page.waitForTimeout(1500);
 
 async function openModule(title) {
   if (await page.getByPlaceholder("Search modules").count() === 0) {
-    await page.locator("button.h-8.w-full").first().click();
+    await page.locator("[data-name='moduleTitle']").click();
     await page.waitForTimeout(300);
   }
   await page.getByPlaceholder("Search modules").fill(title);

@@ -46,7 +46,7 @@ centerlines.SetAndObserveMesh(poly); centerlines.CreateDefaultDisplayNodes()
 `));
 
 // open the module
-await page.locator("button.h-8.w-full").first().click();
+await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill("Clip Vessel");
 await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted

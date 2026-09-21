@@ -7,7 +7,7 @@ import {
   CircleDot,
   Contrast,
   Hand,
-  LayoutGrid,
+  LayoutPanelLeft,
   Maximize,
   MoreHorizontal,
   Move3d,
@@ -22,7 +22,7 @@ import {
   Square,
 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
-import { store } from "../store";
+import { openModule as openModuleInPanel, store } from "../store";
 import { captureView } from "../captureView";
 import ToolButton from "./ToolButton.vue";
 import ToolMenu from "./ToolMenu.vue";
@@ -77,7 +77,7 @@ function fullScreen() {
 }
 
 function openModule(name: string) {
-  store.activeModule = name;
+  openModuleInPanel(name);
   store.rightPanelOpen = true;
 }
 
@@ -112,10 +112,11 @@ const currentMarkupTool = computed(() =>
 
     <nav class="flex min-w-0 items-center gap-1 max-md:mx-2 max-md:overflow-x-auto max-md:[scrollbar-width:none]" :class="{ 'pointer-events-none opacity-40': !ready }" aria-label="Toolbar">
       <div class="relative">
-        <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutGrid :size="20" /></ToolButton>
+        <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutPanelLeft :size="20" /></ToolButton>
         <LayoutSelector v-if="layoutOpen" @close="layoutOpen = false" />
       </div>
       <ToolButton label="Reset views" @click="resetViews"><RotateCcw :size="20" /></ToolButton>
+      <ToolButton label="Crosshair" class="max-sm:hidden" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
       <div class="mx-1 h-6 w-px bg-input max-sm:hidden" />
       <ToolButton label="Rotate / Pan / Zoom" :active="store.interactionMode === 'ViewTransform'" @click="setMode('ViewTransform')">
         <Hand :size="20" />
@@ -123,7 +124,6 @@ const currentMarkupTool = computed(() =>
       <ToolButton label="Window / Level" class="max-sm:hidden" :active="store.interactionMode === 'AdjustWindowLevel'" @click="setMode('AdjustWindowLevel')">
         <Contrast :size="20" />
       </ToolButton>
-      <ToolButton label="Crosshair" class="max-sm:hidden" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
       <div class="mx-1 h-6 w-px bg-input max-sm:hidden" />
       <!-- The markup tools are a menu: seven buttons of their own leave a phone's toolbar with no
            room for anything else. The button shows the last kind placed, so that it can be started

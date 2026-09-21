@@ -36,8 +36,8 @@ function startResize(e: PointerEvent) {
         <ChevronRight v-else :size="16" />
       </button>
       <div v-for="tab in tabs" :key="tab.id"
-        class="flex h-full flex-1 items-center justify-center bg-primary/10 text-[13px] text-foreground">
-        {{ tab.label }}
+        class="flex h-full min-w-0 flex-1 items-center justify-center bg-primary/10 text-[13px] text-foreground">
+        <slot name="header" :tab="tab">{{ tab.label }}</slot>
       </div>
     </div>
     <div class="sw-panel-scroll mt-[2px] min-h-0 flex-1 bg-bkg-low">

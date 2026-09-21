@@ -9,6 +9,7 @@ import ViewportGrid from "./components/ViewportGrid.vue";
 import LoadingScreen from "./components/LoadingScreen.vue";
 import PythonConsole from "./components/PythonConsole.vue";
 import LogWindow from "./components/LogWindow.vue";
+import ModuleTitleBar from "./components/ModuleTitleBar.vue";
 import ExtensionsManager from "./components/ExtensionsManager.vue";
 import DataPanel from "./panels/DataPanel.vue";
 import ModulePanel from "./panels/ModulePanel.vue";
@@ -104,6 +105,7 @@ onMounted(async () => {
       </main>
       <SidePanel side="right" :open="store.rightPanelOpen" @toggle="store.rightPanelOpen = !store.rightPanelOpen"
         :tabs="[{ id: 'modules', label: 'Modules' }]">
+        <template #header><ModuleTitleBar /></template>
         <ModulePanel />
       </SidePanel>
     </div>

@@ -54,7 +54,10 @@ await page.waitForFunction(() => document.querySelector("canvas"), null, { timeo
 console.log(`${stamp()} app ready (${wheels.length} extension wheels)`);
 
 // Select the module in the module panel
-await page.locator("button.h-8.w-full").first().click();
+// The modules of an extension are there once it has finished loading.
+await page.waitForFunction((t) => (window.slicerWeb?.store?.modules ?? []).some((m) => m.title === t || m.name === t),
+  title, { timeout: 120000 });
+await page.locator("[data-name='moduleTitle']").click();
 await page.getByPlaceholder("Search modules").fill(title);
 await page.waitForTimeout(300);
 await page.keyboard.press("Enter");   // the module finder opens the module that is highlighted

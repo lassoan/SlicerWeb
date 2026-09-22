@@ -55,6 +55,18 @@ await desktop.evaluate(() => { window.slicerWeb.store.leftPanelOpen = false; });
 await desktop.waitForTimeout(800);
 check("closing it there gives the views more width", (await viewWidth(desktop)) > beside, true);
 
+// The whole strip opens the panel again, not only the arrow at its top.
+for (const side of ["left", "right"]) {
+  await desktop.evaluate((s) => { window.slicerWeb.store[s + "PanelOpen"] = false; }, side);
+  await desktop.waitForTimeout(600);
+  const strip = desktop.locator("[title='Expand panel']").nth(side === "left" ? 0 : -1);
+  const box = await strip.boundingBox();
+  await desktop.mouse.click(box.x + box.width / 2, box.y + box.height - 40);   // far below the arrow
+  await desktop.waitForTimeout(700);
+  check(`clicking the bottom of the ${side} strip opens the panel`,
+        await desktop.evaluate((s) => window.slicerWeb.store[s + "PanelOpen"], side), true);
+}
+
 await browser.close();
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");
 process.exit(failures ? 1 : 0);

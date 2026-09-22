@@ -44,9 +44,12 @@ function startResize(e: PointerEvent) {
 <template>
   <!-- The strip that opens the panel again. It stays in the row while the panel lies over the
        views, so that the views neither move nor change size when the panel comes and goes. -->
-  <aside v-if="!open || overlay" class="flex w-[25px] shrink-0 flex-col items-center bg-popover pt-1"
+  <aside v-if="!open || overlay" class="flex w-[25px] shrink-0 flex-col bg-popover"
     :class="side === 'left' ? 'ml-[4px] mr-[8px]' : 'mr-[4px] ml-[8px]'">
-    <button type="button" class="text-muted-foreground hover:text-highlight" title="Expand panel" @click="$emit('toggle')">
+    <!-- The whole strip opens the panel, not only the arrow on it: it is 25 px wide, which is a
+         small thing to hit with a finger, and there is nothing else it could mean. -->
+    <button type="button" class="flex h-full w-full flex-col items-center pt-1 text-muted-foreground hover:bg-accent/40 hover:text-highlight"
+      title="Expand panel" @click="$emit('toggle')">
       <ChevronRight v-if="side === 'left'" :size="16" />
       <ChevronLeft v-else :size="16" />
     </button>

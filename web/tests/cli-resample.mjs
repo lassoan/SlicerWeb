@@ -14,6 +14,7 @@ await page.goto(base + "?sample=MRHead");
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 300000 });
 await page.waitForTimeout(5000);
 
+let volumeIdForMedian;
 const exec = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, "exec"), code);
 const text = async (expr) => String(await page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, "eval"), expr)).replace(/^['"]|['"]$/g, "");
 const call = (method, args) => page.evaluate(([m, a]) => window.slicerWeb.bridge.call(m, a), [method, args]);
@@ -24,8 +25,9 @@ const check = (name, ok, detail) => {
 };
 
 // ---------------------------------------------------------------- the module is there
-check("the module is built into the application",
-  (await text(`str(slicer.vtkSlicerWebCLIModule.GetModuleNames())`)) === "ResampleScalarVectorDWIVolume");
+volumeIdForMedian = await text(`slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")[0].GetID()`);
+const builtIn = (await text(`str(slicer.vtkSlicerWebCLIModule.GetModuleNames())`)).split(";");
+check("the module is built into the application", builtIn.includes("ResampleScalarVectorDWIVolume"), builtIn.join(", "));
 check("and its logic is where C++ looks for it",
   (await text(`str(slicer.app.applicationLogic().GetModuleLogic("ResampleScalarVectorDWIVolume") is not None)`)) === "True");
 
@@ -54,12 +56,43 @@ check("with the spacing that was asked for",
 check("and the voxels are the volume, not an empty image",
   (await text(`"%.0f" % resampleOutput.GetImageData().GetScalarRange()[1]`)) !== "0");
 
+// ---------------------------------------------------------------- the same module from a panel
+// Two of Slicer's CLI modules are built in; where one is, it is what the panel runs, in a worker.
+// Median Image Filter has a Python stand-in as well, so the two can be compared.
+check("the modules built in are offered as modules",
+  (await text(`",".join(sorted(m["name"] for m in slicer.app.moduleManager().moduleSummaries() if m["kind"] == "cli"
+                              and m["name"] in ("MedianImageFilter", "ResampleScalarVectorDWIVolume")))`))
+  === "MedianImageFilter,ResampleScalarVectorDWIVolume");
+
+await page.evaluate(() => {
+  window.cliEvents = [];
+  window.slicerWeb.bridge.events.on("cli-module", (e) => window.cliEvents.push(e));
+});
+const inWorker = await call("runCliModule", ["MedianImageFilter",
+  { inputVolume: volumeIdForMedian, outputVolume: null, neighborhood: "1,1,1" }]);
+await page.waitForFunction(() => window.cliEvents.some((e) => ["finished", "failed"].includes(e.state)),
+  null, { timeout: 240000 }).catch(() => {});
+const last = (await page.evaluate(() => window.cliEvents)).at(-1);
+check("the built in module runs in the worker too", last?.state === "finished", JSON.stringify(last).slice(0, 140));
+
+// and it gives what Slicer's own module gives: the Python stand-in of the same filter agrees
+const fromPython = await call("runCliModule", ["MedianImageFilter",
+  { inputVolume: volumeIdForMedian, outputVolume: null, neighborhood: "1,1,1" }, false]);
+// ITK and VTK take the median the same way inside the volume; they differ at the very edge, where
+// one clamps and the other reflects, so the two are compared away from it.
+const differing = await text(`
+(lambda a, b: "%.3f" % (float((a[1:-1, 1:-1, 1:-1] != b[1:-1, 1:-1, 1:-1]).sum()) / a[1:-1, 1:-1, 1:-1].size))(
+    slicer.util.arrayFromVolume(slicer.mrmlScene.GetNodeByID("${inWorker.outputs.outputVolume}")),
+    slicer.util.arrayFromVolume(slicer.mrmlScene.GetNodeByID("${fromPython.outputs.outputVolume}")))`);
+check("what Slicer's own filter made matches the Python stand-in of it", Number(differing) === 0,
+  `${(Number(differing) * 100).toFixed(1)}% of the inner voxels differ`);
+
 // ---------------------------------------------------------------- what Crop Volume needed it for
 const info = await call("cropVolumeInfo", [null]);
 check("Crop Volume can crop with resampling again", info.interpolatedCropAvailable === true);
 check("and that is what it offers to begin with", info.voxelBased === false);
 
-const volumeId = await text(`resampleInput.GetID()`);
+const volumeId = volumeIdForMedian;
 await call("setCropVolumeParameters", [info.parameterNodeID, { inputVolumeID: volumeId }]);
 await exec(`
 parameters = slicer.mrmlScene.GetNodeByID("${info.parameterNodeID}")

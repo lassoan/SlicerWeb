@@ -27,7 +27,7 @@ target_include_directories(${lib_name} PUBLIC
   )
 target_link_libraries(${lib_name} PUBLIC SlicerBaseLogic MRMLDisplayableManager MRMLLogic MRMLCore ${VTK_LIBRARIES})
 # The CLI modules built into the application, which vtkSlicerWebCLIModule hands to the CLI logic
-target_link_libraries(${lib_name} PRIVATE SlicerWebCLIModules ModuleDescriptionParser)
+target_link_libraries(${lib_name} PRIVATE ${SlicerWeb_CLI_MODULE_LIBRARIES} ModuleDescriptionParser)
 
 include(GenerateExportHeader)
 generate_export_header(${lib_name}

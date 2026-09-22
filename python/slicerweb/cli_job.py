@@ -93,6 +93,9 @@ def readInto(node, path):
 def runInWorker(name, values, inputs, outputs):
     """Run a CLI module here, on files, and write what it made.
 
+    Slicer's own C++ module is used when it is built into the application; otherwise the Python
+    implementation of it (see :mod:`slicerweb.cli_modules`) runs instead.
+
     :param name: the module, e.g. ``"GaussianBlurImageFilter"``
     :param values: the parameters that are not nodes, as the panel holds them
     :param inputs: ``{parameter: [path, nodeType]}`` written by the page
@@ -109,23 +112,88 @@ def runInWorker(name, values, inputs, outputs):
     # in the page; here it is a scene of this worker's own, with nothing in it but these nodes.
     slicer.mrmlScene = scene
 
-    parameters = dict(values)
+    nodes = {}
     for parameter, (path, nodeType) in inputs.items():
-        parameters[parameter] = readNode(scene, path, nodeType, parameter)
+        nodes[parameter] = readNode(scene, path, nodeType, parameter)
     for parameter, (path, nodeType) in outputs.items():
-        parameters[parameter] = scene.AddNewNodeByClass(nodeType, parameter)
+        nodes[parameter] = scene.AddNewNodeByClass(nodeType, parameter)
 
     progress(f"Running {name}", 0.2)
-    implementation = cli_modules.implementation(name)
-    if implementation is None:
-        raise RuntimeError(f"CLI module {name} is not available in the web browser")
-    implementation(parameters)
+    if _runBuiltIn(scene, name, values, nodes):
+        pass
+    else:
+        implementation = cli_modules.implementation(name)
+        if implementation is None:
+            raise RuntimeError(f"CLI module {name} is not available in the web browser")
+        implementation({**values, **nodes})
 
     progress("Writing what it made", 0.9)
     written = {}
     for parameter, (path, nodeType) in outputs.items():
-        written[parameter] = writeNode(parameters[parameter], path)
+        written[parameter] = writeNode(nodes[parameter], path)
     return written
+
+
+def _runBuiltIn(scene, name, values, nodes):
+    """Run Slicer's own C++ module, if this application was built with it.
+
+    It is run the way the application runs it: through vtkSlicerCLIModuleLogic, which writes the
+    nodes to files, calls the module's entry point and reads the files back into the nodes. The
+    worker has no application around it, so it is given an application logic of its own - the logic
+    needs one for the temporary directory and for the queue the results come back through.
+    """
+    import slicer
+
+    factory = getattr(slicer, "vtkSlicerWebCLIModule", None)
+    if factory is None or factory.GetXMLDescription(name) is None:
+        return False
+    logic = factory.CreateLogic(name)
+    if logic is None:
+        return False
+
+    # The node the logic reports its progress through comes from MRMLCLI, not MRMLCore, so a new
+    # scene does not know the class: the application registers it with its own scene, and the
+    # scene here needs it too, or the logic is handed nothing when it asks for one.
+    scene.RegisterNodeClass(slicer.vtkMRMLCommandLineModuleNode())
+
+    applicationLogic = slicer.vtkSlicerApplicationLogic()
+    applicationLogic.SetMRMLScene(scene)
+    applicationLogic.SetTemporaryPath("/work")
+    applicationLogic.CreateProcessingThread()  # opens the result queues; starts no thread here
+    # Reading a file back asks the scene's cache manager whether the name is a remote one, so the
+    # scene needs the same data IO the application gives its own.
+    remoteIO = slicer.vtkMRMLRemoteIOLogic()
+    remoteIO.GetCacheManager().SetRemoteCacheDirectory("/work/cache")
+    dataIO = slicer.vtkDataIOManagerLogic()
+    dataIO.SetMRMLApplicationLogic(applicationLogic)
+    dataIO.SetAndObserveDataIOManager(remoteIO.GetDataIOManager())
+    applicationLogic.SetMRMLSceneDataIO(scene, remoteIO, dataIO)
+    logic.SetMRMLScene(scene)
+    logic.SetMRMLApplicationLogic(applicationLogic)
+
+    cliNode = logic.CreateNodeInScene()
+    for parameter, value in values.items():
+        if value is not None and value != "":
+            cliNode.SetParameterAsString(parameter, str(value))
+    for parameter, node in nodes.items():
+        cliNode.SetParameterAsString(parameter, node.GetID())
+
+    # The module says how far it has got through the node, which the logic modifies as it goes
+    observer = cliNode.AddObserver("ModifiedEvent", lambda caller, event: _cliProgress(caller))
+    try:
+        logic.ApplyAndWait(cliNode, False)
+        status = cliNode.GetStatusString()
+        if status != "Completed":
+            raise RuntimeError(f"{name} {status.lower()}: {cliNode.GetErrorText() or 'no message'}")
+    finally:
+        cliNode.RemoveObserver(observer)
+        scene.RemoveNode(cliNode)
+    return True
+
+
+def _cliProgress(cliNode):
+    done = cliNode.GetProgress()
+    progress("Running", 0.2 + 0.7 * min(max(done / 100.0 if done > 1 else done, 0.0), 1.0))
 
 
 def progress(message, fraction):

@@ -139,6 +139,19 @@ def implementation(name):
     return _IMPLEMENTATIONS.get(str(name).lower())
 
 
+def builtInNames():
+    """The CLI modules of Slicer that are compiled into this application as C++."""
+    factory = getattr(slicer, "vtkSlicerWebCLIModule", None)
+    if factory is None:
+        return []
+    return [name for name in (factory.GetModuleNames() or "").split(";") if name]
+
+
+def runnable(name):
+    """Whether this CLI module can be run here, as Slicer's own C++ or as a Python stand-in."""
+    return implementation(name) is not None or str(name) in builtInNames()
+
+
 def defaultValues(description):
     """What the panel starts with: the defaults of the XML, empty for the nodes."""
     values = {}
@@ -185,6 +198,8 @@ def run(module, node=None, parameters=None, wait_for_completion=False, **kwargs)
     implementation = _IMPLEMENTATIONS.get(name)
     if implementation is None:
         raise RuntimeError(f"CLI module {getattr(module, 'name', module)} is not available in the web browser")
+    # This runs here and now, which is what a scripted module calling it expects. Where Slicer's own
+    # C++ module is built in, the panel runs that instead, in a worker (see slicerweb.cli_job).
     values = {key: _node_or_value(value) for key, value in (parameters or {}).items()}
     cliNode = node
     if cliNode is None:
@@ -615,14 +630,16 @@ def install():
 
     manager = slicer.app.moduleManager()
     offered = []
-    for name, implementation in sorted(_IMPLEMENTATIONS.items()):
+    # Slicer's own C++ modules are offered alongside the Python stand-ins, and are preferred when a
+    # module has both (see slicerweb.cli_job).
+    for name in sorted(set(_IMPLEMENTATIONS) | {n.lower() for n in builtInNames()}):
         found = description(name)
         if found is None:
             # A module of an extension, whose XML is not shipped here: it has no panel, but a
             # scripted module asking for slicer.modules.<name> has to find something to run
             setattr(slicer.modules, name, _Unlisted(name))
             continue
-        manager.registerLoadableModule(CliModuleDescriptor(found, implementation))
+        manager.registerLoadableModule(CliModuleDescriptor(found, _IMPLEMENTATIONS.get(name)))
         offered.append(found["name"])
     logger.info("CLI modules: %s", ", ".join(offered) or "none")
 

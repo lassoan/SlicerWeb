@@ -92,7 +92,7 @@ def runCliModule(name, values, background=True):
     description = cli_modules.description(name)
     if description is None:
         raise ValueError(f"{name} is not a CLI module of this application")
-    if cli_modules.implementation(name) is None:
+    if not cli_modules.runnable(name):
         # Refused here rather than in the worker, so that nothing is made for a module that a run
         # would only fail on (every CLI module of Slicer is described, few are implemented)
         raise RuntimeError(f"CLI module {description['name']} is not available in the web browser")

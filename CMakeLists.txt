@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+
 #-----------------------------------------------------------------------------
 # Inputs
 #-----------------------------------------------------------------------------
@@ -253,6 +254,35 @@ endforeach()
 include(SlicerWebMacros)
 add_subdirectory(SlicerWebCore)
 add_subdirectory(Modules)
+
+#-----------------------------------------------------------------------------
+# ITK stays inside the libraries that use it
+#-----------------------------------------------------------------------------
+# Every library that uses ITK compiles its own copy of the ITK class templates it touches - their
+# code is in the headers - and each copy brings its own description of those types. The loader
+# shares one copy of each symbol between libraries, and which library a copy comes from is settled
+# name by name, so a type can end up described by one library while the base it derives from is
+# described by another. Code reaches a description through the table the loader fills in, but a
+# description's pointer to its base is fixed when its own library is linked, so the two can point
+# at different copies of the same thing. dynamic_cast compares them by address and fails, which is
+# how itk::Image<bool,2> stopped being an itk::ImageBase<2> and took several vtkITK filters with it:
+# grow-cut, contour interpolation, level tracing, island math and the VTK-to-ITK bridge, each
+# throwing "cannot cast DataObject to ImageBase<2>" or refusing to downcast its own output.
+#
+# Marking the ITK templates hidden keeps each library's copies to itself, so every description a
+# library casts against is one of its own and they agree. ITK is an implementation detail of these
+# two libraries - the ITK objects they make never leave them - and ITK's plain classes (DataObject,
+# ProcessObject, the IO factories) are not templates, so they stay shared as before.
+#
+# This is done for the libraries whose ITK use is entirely their own. MRMLCore is left alone: it
+# reads transforms, and the transform objects come from ITK's factory in another library, so its
+# casts are between descriptions that have to be shared.
+foreach(target vtkITK SlicerWebCore)
+  if(TARGET ${target})
+    target_compile_definitions(${target} PRIVATE
+      "ITK_TEMPLATE_EXPORT=__attribute__((visibility(\"hidden\")))")
+  endif()
+endforeach()
 
 #-----------------------------------------------------------------------------
 # Extension SDK (build tree): SlicerConfig.cmake for extensions

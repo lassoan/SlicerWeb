@@ -84,6 +84,31 @@ The wheels, sample data and extensions are taken from the build's `dist` directo
 `SLICERWEB_WHEELS`, `SLICERWEB_SAMPLE_DATA` and `SLICERWEB_EXTENSIONS` elsewhere if you keep them
 somewhere else. Pyodide itself is served from the application, not from a CDN.
 
+## Publishing
+
+The application is published at <https://lassoan.github.io/slicerweb-app/> by the
+[Publish app](.github/workflows/publish-app.yml) workflow, which runs when anything under `web/`
+changes on `main`, and on request.
+
+A build of the site is a few hundred megabytes: the WebAssembly runtime, and the sample data, which
+it carries itself because a site of static files cannot fetch files from servers that refuse
+cross-origin requests (the development server fetches them for the page; the published site has no
+such proxy, and is built with `VITE_DOWNLOAD_PROXY=0` so that it says so plainly instead of trying).
+Keeping those builds in a branch here would mean carrying every one of them in this repository's
+history for ever, so the site is pushed to a repository of its own,
+[lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), as a single commit with no
+parent: it holds one build and no history.
+
+The wheels take hours to compile and no runner could build them, so they travel through a release:
+
+```powershell
+.\build.ps1 60-wheels 80-extensions      # build them here
+.\scripts\publish-runtime.ps1 -Publish   # upload them, and rebuild the site
+```
+
+Set up once: a repository `slicerweb-app` whose Pages source is the `main` branch, and a secret
+`SLICERWEB_APP_TOKEN` in this repository holding a token that may write to it.
+
 ## Tests
 
 The tests drive a real browser (Playwright, `channel: "chrome"`) against a running application and

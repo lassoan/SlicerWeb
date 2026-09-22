@@ -67,6 +67,32 @@ async function downloadFailureReason(proxied: string, response: Response | null)
   return "This site could not be reached.";
 }
 
+/**
+ * Whether a file that another site holds may be fetched through this site.
+ *
+ * The development server fetches such a file for the page (most servers do not let another site
+ * read their files), but a site that is only static files - the one published on GitHub Pages -
+ * has nothing that could. There the files it offers are its own (see mirroredFiles), and asking
+ * for a proxy that is not there would only turn a clear failure into a confusing one.
+ */
+const DOWNLOAD_PROXY = import.meta.env?.VITE_DOWNLOAD_PROXY !== "0";
+
+/**
+ * Files this site holds copies of, by the address they are published under elsewhere.
+ *
+ * Sample data lives on servers that do not allow cross-origin requests, so a site that has no
+ * download proxy carries the files itself (web/scripts/mirror-sample-data.mjs writes both the
+ * files and this map when the site is built). Missing map, or a file not in it: the download goes
+ * to where the data set says it is.
+ */
+let mirror: Promise<Record<string, string>> | null = null;
+function mirroredFiles(): Promise<Record<string, string>> {
+  mirror ??= fetch(new URL("sample-data/mirror.json", document.baseURI).href)
+    .then((r) => (r.ok ? r.json() : {}))
+    .catch(() => ({}));
+  return mirror;
+}
+
 export function formatBytes(bytes: number): string {
   if (!bytes) {
     return "unknown size";
@@ -396,13 +422,19 @@ bridge.call
                        tooLarge?: (total: number, name: string) => boolean | Promise<boolean>;
                        warnAboveBytes?: number;
                      } = {}): Promise<string> {
+    const copy = (await mirroredFiles())[url];
+    const from = copy ? new URL("sample-data/" + copy, document.baseURI).href : url;
     let response: Response | null = null;
     try {
-      response = await fetch(url);
+      response = await fetch(from);
     } catch {
       response = null; // other origin without cross-origin headers: use the download proxy
     }
     if (!response || !response.ok) {
+      if (!DOWNLOAD_PROXY) {
+        throw new Error(`Download failed: ${url}
+This site holds no copy of this file and cannot fetch it from another site.`);
+      }
       const proxied = new URL("download?url=" + encodeURIComponent(new URL(url, document.baseURI).href), document.baseURI).href;
       const previous = response;
       response = await fetch(proxied).catch(() => null);

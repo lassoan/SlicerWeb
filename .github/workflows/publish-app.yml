@@ -1,0 +1,146 @@
+# Publish the application at https://lassoan.github.io/slicerweb-app/
+#
+# The site is a few hundred megabytes of WebAssembly, wheels and sample data, and it is rebuilt
+# whenever the web application changes. Keeping it in a branch of this repository would mean
+# carrying every one of those builds in its history for ever, so the site is pushed to a repository
+# of its own (lassoan/slicerweb-app), as a single commit that replaces what was there before. That
+# repository holds one build and no history; this one stays small.
+#
+# What the site is made of:
+#  - the web application, built here from web/
+#  - the WebAssembly runtime (VTK, ITK, Slicer libraries and modules, extensions), which takes hours
+#    to compile and cannot be built by a runner: it is downloaded from the "runtime" release of this
+#    repository, uploaded from a local build with scripts/publish-runtime.ps1
+#  - the sample data, copied into the site because a site of static files cannot fetch files from
+#    servers that refuse cross-origin requests (web/scripts/mirror-sample-data.mjs)
+#
+# Needs the secret SLICERWEB_APP_TOKEN: a token that may write to lassoan/slicerweb-app.
+
+name: Publish app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/publish-app.yml"
+  workflow_dispatch:
+    inputs:
+      runtime:
+        description: Release holding the runtime wheels
+        default: runtime
+      sampleData:
+        description: Copy the sample data into the site
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish-app
+  cancel-in-progress: true
+
+env:
+  APP_REPOSITORY: lassoan/slicerweb-app
+  RUNTIME_RELEASE: ${{ inputs.runtime || 'runtime' }}
+  SLICERWEB_WHEELS: ${{ github.workspace }}/runtime/wheels
+  SLICERWEB_EXTENSIONS: ${{ github.workspace }}/runtime/extensions
+  SLICERWEB_SAMPLE_DATA: ${{ github.workspace }}/runtime/sample-data
+  # The published site is static files only: it has no download proxy, and asking for one would
+  # turn a clear failure into a confusing one. The development server keeps its proxy.
+  VITE_DOWNLOAD_PROXY: "0"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Take the runtime from the ${{ env.RUNTIME_RELEASE }} release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p runtime
+          gh release download "$RUNTIME_RELEASE" --repo "$GITHUB_REPOSITORY" --dir runtime --clobber
+          unzip -q runtime/wheels.zip -d "$SLICERWEB_WHEELS"
+          unzip -q runtime/extensions.zip -d "$SLICERWEB_EXTENSIONS"
+          ls -la "$SLICERWEB_WHEELS" "$SLICERWEB_EXTENSIONS"
+
+      # Sample data is large and rarely changes, so a build starts from what the last one downloaded
+      # and fetches only what is missing.
+      - name: Sample data downloaded earlier
+        if: ${{ inputs.sampleData != false }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.SLICERWEB_SAMPLE_DATA }}
+          key: sample-data-${{ github.run_id }}
+          restore-keys: sample-data-
+
+      - name: Install
+        working-directory: web
+        run: npm ci
+
+      - name: Sample data of the Samples menu
+        if: ${{ inputs.sampleData != false }}
+        working-directory: web
+        run: node scripts/fetch-sample-data.mjs
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+      # Which sample data sets exist is known only to a running application - modules and extensions
+      # register them as they load - so the built site is served here and asked.
+      - name: Copy the sample data of every module into the site
+        if: ${{ inputs.sampleData != false }}
+        working-directory: web
+        run: |
+          npx vite preview --port 4173 --strictPort &
+          preview=$!
+          for i in $(seq 1 60); do curl -sf http://localhost:4173/ >/dev/null && break || sleep 2; done
+          node scripts/mirror-sample-data.mjs http://localhost:4173/ "$SLICERWEB_SAMPLE_DATA"
+          mkdir -p dist/app/sample-data
+          cp -r "$SLICERWEB_SAMPLE_DATA"/. dist/app/sample-data/
+          kill $preview || true
+
+      - name: Size of the site
+        working-directory: web/dist/app
+        run: |
+          du -sh . */ | sort -h
+          # GitHub refuses a file above 100 MB, and asks a Pages site to stay under a gigabyte.
+          large=$(find . -type f -size +100M) && [ -z "$large" ] || { echo "Too large to publish:"; echo "$large"; exit 1; }
+
+      - name: Push the site to ${{ env.APP_REPOSITORY }}
+        working-directory: web/dist/app
+        env:
+          TOKEN: ${{ secrets.SLICERWEB_APP_TOKEN }}
+        run: |
+          [ -n "$TOKEN" ] || { echo "The secret SLICERWEB_APP_TOKEN is not set"; exit 1; }
+          touch .nojekyll   # otherwise GitHub Pages hides files whose name starts with an underscore
+          git init -q -b main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:$TOKEN@github.com/$APP_REPOSITORY.git"
+          # What the site repository already holds, without the files themselves: the commit here
+          # has no parent, so it replaces the last build - but knowing what is there already means
+          # only the files that changed are uploaded, not the half a gigabyte of sample data again.
+          git fetch --depth 1 --filter=blob:none origin main || echo "Nothing published yet"
+          git add -A
+          git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
+          # One commit and no history: the site repository holds this build alone.
+          git push --force --quiet origin main || {
+            echo "Pushing what changed did not work; uploading the whole site"
+            rm -rf .git
+            git init -q -b main
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
+            git push --force --quiet "https://x-access-token:$TOKEN@github.com/$APP_REPOSITORY.git" main
+          }
+          echo "Published https://${APP_REPOSITORY%%/*}.github.io/${APP_REPOSITORY##*/}/" >> "$GITHUB_STEP_SUMMARY"

@@ -105,15 +105,42 @@ async function loadModuleSample(source: SampleDataSource) {
       files.push({ path, nodeName: source.nodeNames[i], fileType: source.loadFileTypes[i], load: source.loadFiles[i] !== false });
     }
     busy.value = `Loading ${source.name}`;
-    const result = await bridge.call<{ loaded: string[]; messages: string[] }>("loadSampleDataFiles", [files, source]);
+    const result = await bridge.call<{ loaded: string[]; messages: string[]; unpacked: UnpackedFile[] }>(
+      "loadSampleDataFiles", [files, source]);
     // A data set that puts nothing in the scene - an archive of files a module reads itself - says
-    // so, rather than leaving the window looking as though nothing happened.
-    if (result?.messages?.length) alert(`${source.name}\n\n${result.messages.join("\n")}`);
+    // so, rather than leaving the window looking as though nothing happened, and offers what of it
+    // can be read here (its tables, most often), because nothing else in the window would reach it.
+    await offerUnpacked(source.name, result);
   } catch (e: any) {
     alert(`${source.name}: ${e.message ?? e}`);
   } finally {
     busy.value = "";
   }
+}
+
+/** A file of an unpacked archive that the application can read. */
+interface UnpackedFile { path: string; name: string; size: number }
+
+/**
+ * Say what an archive held, and offer to load what can be loaded.
+ *
+ * The files are in the virtual file system, which nothing else in the window can reach, so this is
+ * the moment to offer them; afterwards they can still be loaded by their path with the URL button.
+ */
+async function offerUnpacked(name: string, result: { messages?: string[]; unpacked?: UnpackedFile[] }) {
+  const said = (result?.messages ?? []).join("\n");
+  if (!said) return;
+  const files = result.unpacked ?? [];
+  if (!files.length) {
+    alert(`${name}\n\n${said}`);
+    return;
+  }
+  const bytes = files.reduce((total, f) => total + f.size, 0);
+  const size = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (!window.confirm(`${name}\n\n${said}\n\nLoad ${files.length === 1 ? "it" : "them"} into the scene now`
+                      + ` (${files.length} file${files.length === 1 ? "" : "s"}, ${size})?`)) return;
+  busy.value = `Loading ${name}`;
+  await bridge.call("loadFiles", [files.map((f) => f.path)]);
 }
 
 async function loadBrowserFiles(files: File[]) {
@@ -161,11 +188,14 @@ async function onDrop(e: DragEvent) {
 }
 
 async function loadUrl() {
-  const url = window.prompt("URL of a file to load (NRRD, NIfTI, VTK, STL, MRB, ...)");
+  const url = window.prompt("URL or path of a file to load (NRRD, NIfTI, VTK, STL, MRB, ...)");
   if (!url) return;
   busy.value = "Downloading";
   try {
-    const path = await runtime.downloadFile(url, undefined, undefined, downloadOptions(url.split("/").pop() || "file"));
+    // A path is a file that is already here - unpacked from an archive, written by a module - and
+    // is loaded as it is; anything else is fetched first.
+    const path = url.startsWith("/") ? url
+      : await runtime.downloadFile(url, undefined, undefined, downloadOptions(url.split("/").pop() || "file"));
     await bridge.call("loadFiles", [[path]]);
   } catch (e: any) {
     alert(e.message ?? e);

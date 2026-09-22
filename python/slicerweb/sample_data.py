@@ -165,16 +165,39 @@ def getSampleDataSources():
     return result
 
 
+def _readableFiles(directory):
+    """The files under this directory that something here can read, largest last.
+
+    An archive of a module's data holds what that module reads, but some of it - tables of
+    measurements, a surface, a volume - the application can read as well, and offering that is
+    better than leaving a directory nobody can reach from the window.
+    """
+    manager = slicer.app.coreIOManager()
+    files = []
+    for root, _dirs, names in os.walk(directory):
+        for name in sorted(names):
+            path = os.path.join(root, name)
+            try:
+                if manager.fileType(path) == "NoFile":
+                    continue
+                files.append({"path": path, "name": name, "size": os.path.getsize(path)})
+            except Exception:
+                logger.debug("Nothing here reads %s", path, exc_info=True)
+    return files
+
+
 @method()
 def loadSampleDataFiles(files, source=None):
     """Load files downloaded by the web page: files is [{path, nodeName, fileType, properties}].
 
-    Returns {"loaded": [...], "messages": [...]}: what went into the scene, and what is worth
-    saying about a data set that put nothing there.
+    Returns {"loaded": [...], "messages": [...], "unpacked": [{path, name, size}]}: what went into
+    the scene, what is worth saying about a data set that put nothing there, and the files of an
+    archive that something here can read, which the page may offer to load.
     """
     logic = _logic()
     loaded = []
     messages = []
+    unpacked = []
     for f in files:
         path = f["path"]
         if not os.path.exists(path):
@@ -195,11 +218,14 @@ def loadSampleDataFiles(files, source=None):
             directory = os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0])
             os.makedirs(directory, exist_ok=True)
             slicer.util.extractArchive(path, directory)
+            files = _readableFiles(directory)
             count = len(os.listdir(directory))
+            one = count == 1
             messages.append(f"{os.path.basename(path)} holds no scene. Its {count} file"
-                            f"{'' if count == 1 else 's'} went into {directory}, "
-                            "where the module that asked for them can read them.")
+                            f"{'' if one else 's'} went into {directory}, where the module that "
+                            f"asked for {'it' if one else 'them'} can read {'it' if one else 'them'}.")
             logger.info(messages[-1])
+            unpacked += files
             loaded.append(directory)
             continue
         if fileType == "SceneFile":
@@ -213,4 +239,4 @@ def loadSampleDataFiles(files, source=None):
         if node is None:
             raise RuntimeError(f"Failed to load {os.path.basename(path)}")
         loaded.append(node.GetID() if hasattr(node, "GetID") else str(node))
-    return {"loaded": loaded, "messages": messages}
+    return {"loaded": loaded, "messages": messages, "unpacked": unpacked}

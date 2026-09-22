@@ -29,7 +29,9 @@ left behind is Qt: the widgets are Vue components that talk to the same objects.
 - **Python**: the console is the one from the desktop, `slicer.util` works, and packages are
   installed on demand from the Pyodide distribution or PyPI.
 
-`docs/known-issues.md` says what is not there yet, and why.
+`docs/known-issues.md` says what is not there yet, and why, and
+[docs/embedding.md](docs/embedding.md) describes how to put the application in a website of your
+own and how that website and the application can talk to each other.
 
 ## How it fits together
 

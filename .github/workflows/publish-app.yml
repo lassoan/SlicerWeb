@@ -75,7 +75,7 @@ jobs:
       # Sample data is large and rarely changes, so a build starts from what the last one downloaded
       # and fetches only what is missing.
       - name: Sample data downloaded earlier
-        if: ${{ inputs.sampleData != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.sampleData }}
         uses: actions/cache@v4
         with:
           path: ${{ env.SLICERWEB_SAMPLE_DATA }}
@@ -87,7 +87,7 @@ jobs:
         run: npm ci
 
       - name: Sample data of the Samples menu
-        if: ${{ inputs.sampleData != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.sampleData }}
         working-directory: web
         run: node scripts/fetch-sample-data.mjs
 
@@ -98,7 +98,7 @@ jobs:
       # Which sample data sets exist is known only to a running application - modules and extensions
       # register them as they load - so the built site is served here and asked.
       - name: Copy the sample data of every module into the site
-        if: ${{ inputs.sampleData != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.sampleData }}
         working-directory: web
         run: |
           npx vite preview --port 4173 --strictPort &

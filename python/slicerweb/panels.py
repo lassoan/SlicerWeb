@@ -342,6 +342,8 @@ def createSegmentation(sourceVolumeID=None, name="Segmentation"):
 # --------------------------------------------------------------------------- Volume rendering
 @method()
 def volumeRenderingInfo(volumeNodeID):
+    import slicer
+
     logic = _logic("VolumeRendering")
     volume = _node(volumeNodeID)
     displayNode = logic.GetFirstVolumeRenderingDisplayNode(volume)
@@ -365,6 +367,8 @@ def volumeRenderingInfo(volumeNodeID):
 
 @method()
 def setVolumeRendering(volumeNodeID, properties):
+    import slicer
+
     logic = _logic("VolumeRendering")
     volume = _node(volumeNodeID)
     displayNode = logic.GetFirstVolumeRenderingDisplayNode(volume)

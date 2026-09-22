@@ -47,6 +47,13 @@ const rendered = () => page.evaluate(async () => {
 });
 
 const volumeId = await text(`__import__("slicer").util.getNodesByClass("vtkMRMLScalarVolumeNode")[0].GetID()`);
+
+// what the module panel asks for before it can show anything
+const info = await page.evaluate(([id]) => window.slicerWeb.bridge.call("volumeRenderingInfo", [id]), [volumeId])
+  .catch((e) => ({ error: String(e.message).slice(0, 120) }));
+check("the panel can read the state of the volume",
+  !info.error && Array.isArray(info.presets) && info.presets.length > 0 && typeof info.quality === "number",
+  info.error ?? `${info.presets.length} presets, quality ${info.quality}, aiming for ${info.expectedFPS} fps`);
 check("no cropping region before anything is cropped",
   (await number(`__import__("slicer").mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsROINode")`)) === 0);
 

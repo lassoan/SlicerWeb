@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { Eye, EyeOff, Link2, Link2Off, Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
+import { Eye, EyeOff, Link2, Link2Off, Pin, ScanSearch, Maximize2, Minimize2 } from "@lucide/vue";
 import PopupMenu from "./PopupMenu.vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
 import TableView from "./TableView.vue";
@@ -361,7 +361,7 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
           @click="rotateTo(d)">{{ l }}</button>
       </template>
       <div v-else class="flex-1" />
-      <button type="button" class="text-muted-foreground hover:text-highlight" title="Reset view" @click="resetView"><RotateCcw :size="13" /></button>
+      <button type="button" class="text-muted-foreground hover:text-highlight" title="Reset view" @click="resetView"><ScanSearch :size="13" /></button>
       <button type="button" class="text-muted-foreground hover:text-highlight" :title="maximized ? 'Restore view layout' : 'Maximize view'"
         @click="maximize"><Minimize2 v-if="maximized" :size="13" /><Maximize2 v-else :size="13" /></button>
       <Pin v-if="false" :size="13" />

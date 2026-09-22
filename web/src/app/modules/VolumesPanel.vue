@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
@@ -38,6 +38,45 @@ onMounted(async () => {
 function set(props: Record<string, unknown>) {
   if (nodeID.value) bridge.call("setVolumeDisplay", [nodeID.value, props]);
 }
+
+/**
+ * How the window and level are chosen, as in desktop Slicer (qMRMLWindowLevelWidget::ControlMode):
+ * by the application, by window and level, or by the two ends of the displayed range.
+ *
+ * The scene knows only whether the choosing is automatic, so which of the two manual ways is shown
+ * is remembered here.
+ */
+const MODES = ["Auto", "Manual", "Manual Min/Max"];
+const manualMode = ref(1);
+const mode = computed(() => (state.value?.autoWindowLevel ? 0 : manualMode.value));
+
+function setMode(index: number) {
+  if (index > 0) manualMode.value = index;
+  set(index === 0 ? { autoWindowLevel: true } : { window: state.value?.window, level: state.value?.level });
+}
+
+/**
+ * What the sliders span: the values the volume holds, a whole range further either way, and
+ * whatever is set now - a display range wider than the data is worth keeping reachable.
+ */
+const bounds = computed<[number, number]>(() => {
+  const info = state.value;
+  if (!info) return [0, 1];
+  const [low, high] = info.scalarRange;
+  const width = high - low || 1;
+  const window = info.window ?? width;
+  const level = info.level ?? (low + high) / 2;
+  return [Math.min(low - width, level - window / 2), Math.max(high + width, level + window / 2)];
+});
+
+const displayedMin = computed(() => (state.value!.level ?? 0) - (state.value!.window ?? 0) / 2);
+const displayedMax = computed(() => (state.value!.level ?? 0) + (state.value!.window ?? 0) / 2);
+
+/** Set the displayed range by its ends; the scene keeps it as a window and a level. */
+function setMinMax(min: number, max: number) {
+  const window = Math.max(max - min, 0.001);
+  set({ window, level: min + window / 2 });
+}
 const fmt = (v: number[] | undefined, d = 2) => (v ?? []).map((x) => x.toFixed(d)).join(" × ");
 </script>
 
@@ -64,15 +103,29 @@ const fmt = (v: number[] | undefined, d = 2) => (v ?? []).map((x) => x.toFixed(d
           <SwComboBox :items="colors.map((c) => c.name)" :current-index="Math.max(0, colors.findIndex((c) => c.id === state!.colorNodeID))"
             @current-index-changed="set({ colorNodeID: colors[$event].id })" />
         </SwFormRow>
-        <SwCheckBox text="Auto window/level" :checked="state.autoWindowLevel" @toggled="set({ autoWindowLevel: $event })" />
-        <SwFormRow label="Window">
-          <SwSlider :value="state.window" :minimum="0" :maximum="(state.scalarRange[1] - state.scalarRange[0]) * 2 || 1" :decimals="0"
-            @value-changed="set({ window: $event })" />
+        <SwFormRow label="Window/level">
+          <SwComboBox :items="MODES" :current-index="mode" @current-index-changed="setMode($event)" />
         </SwFormRow>
-        <SwFormRow label="Level">
-          <SwSlider :value="state.level" :minimum="state.scalarRange[0]" :maximum="state.scalarRange[1]" :decimals="0"
-            @value-changed="set({ level: $event })" />
-        </SwFormRow>
+        <template v-if="mode === 2">
+          <SwFormRow label="Min">
+            <SwSlider :value="displayedMin" :minimum="bounds[0]" :maximum="bounds[1]" :decimals="0"
+              @value-changed="setMinMax($event, displayedMax)" />
+          </SwFormRow>
+          <SwFormRow label="Max">
+            <SwSlider :value="displayedMax" :minimum="bounds[0]" :maximum="bounds[1]" :decimals="0"
+              @value-changed="setMinMax(displayedMin, $event)" />
+          </SwFormRow>
+        </template>
+        <template v-else>
+          <SwFormRow label="Window">
+            <SwSlider :value="state.window" :minimum="0" :maximum="bounds[1] - bounds[0]" :decimals="0"
+              :enabled="mode === 1" @value-changed="set({ window: $event })" />
+          </SwFormRow>
+          <SwFormRow label="Level">
+            <SwSlider :value="state.level" :minimum="bounds[0]" :maximum="bounds[1]" :decimals="0"
+              :enabled="mode === 1" @value-changed="set({ level: $event })" />
+          </SwFormRow>
+        </template>
         <SwCheckBox text="Threshold" :checked="state.applyThreshold" @toggled="set({ applyThreshold: $event })" />
         <SwRangeSlider v-if="state.applyThreshold" :minimum="state.scalarRange[0]" :maximum="state.scalarRange[1]"
           :minimum-value="state.lowerThreshold" :maximum-value="state.upperThreshold"

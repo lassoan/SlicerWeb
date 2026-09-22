@@ -12,7 +12,7 @@ import {
   MoreHorizontal,
   Move3d,
   Puzzle,
-  RotateCcw,
+  ScanSearch,
   Ruler,
   Spline,
   ScrollText,
@@ -104,7 +104,7 @@ const currentMarkupTool = computed(() =>
         <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutPanelLeft :size="20" /></ToolButton>
         <LayoutSelector v-if="layoutOpen" @close="layoutOpen = false" />
       </div>
-      <ToolButton label="Reset views" @click="resetViews"><RotateCcw :size="20" /></ToolButton>
+      <ToolButton label="Reset views" @click="resetViews"><ScanSearch :size="20" /></ToolButton>
       <ToolButton label="Crosshair" class="max-sm:hidden" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
       <div class="mx-1 h-6 w-px bg-input max-sm:hidden" />
       <ToolButton label="Rotate / Pan / Zoom" :active="store.interactionMode === 'ViewTransform'" @click="setMode('ViewTransform')">

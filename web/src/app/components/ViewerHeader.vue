@@ -16,6 +16,7 @@ import {
   Ruler,
   Spline,
   ScrollText,
+  Settings,
   Terminal,
   Triangle,
   Brush,
@@ -150,7 +151,7 @@ const currentMarkupTool = computed(() =>
     <!-- The tools that are not about the views: in a menu of their own, at the end of the bar -->
     <div class="flex shrink-0 items-center justify-end gap-1">
       <ToolMenu label="Application menu" align="right" :active="store.logWindowOpen || store.pythonConsoleOpen">
-        <template #button><MoreHorizontal :size="20" /></template>
+        <template #button><Settings :size="20" /></template>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.logWindowOpen ? 'text-highlight' : ''" data-name="menu:log"
           @click="store.logWindowOpen = !store.logWindowOpen"><ScrollText :size="16" />Application log</button>

@@ -151,8 +151,9 @@ check("running one in the background answers at once, with the node it will fill
 await page.waitForFunction(() => window.cliEvents.some((e) => ["finished", "failed"].includes(e.state)),
   null, { timeout: 180000 }).catch(() => {});
 const events = await page.evaluate(() => window.cliEvents);
-check("it says how it is going while it runs", events.some((e) => e.state === "running" && e.message),
-  events.map((e) => e.state).join(" "));
+const fractions = events.filter((e) => e.state === "running").map((e) => e.fraction);
+check("it says how it is going while it runs", fractions.length > 5 && fractions.every((f, i, all) => i === 0 || f >= all[i - 1]),
+  `${fractions.length} steps, ${fractions.slice(0, 3).map((f) => f.toFixed(2)).join(" ")} … ${(fractions.at(-1) ?? 0).toFixed(2)}`);
 check("and says when it is done", events.some((e) => e.state === "finished"),
   JSON.stringify(events[events.length - 1]).slice(0, 120));
 const backgroundOutput = `slicer.mrmlScene.GetNodeByID("${inBackground.outputs.outputVolume}")`;

@@ -14,6 +14,8 @@ Nothing in this module touches the application: the worker has no views, no modu
 import logging
 import os
 
+import vtk
+
 logger = logging.getLogger("slicerweb.cli")
 
 #: What each kind of node is written as. The formats are the ones Slicer itself uses for these.
@@ -127,10 +129,28 @@ def runInWorker(name, values, inputs, outputs):
 
 
 def progress(message, fraction):
-    """Say how far the work has got, if this is running in a worker."""
+    """Say how far the work has got. Nothing is listening outside a worker."""
     try:
         import slicerweb_job  # registered by the worker (web/src/core/jobWorker.ts)
     except ImportError:
-        logger.info("%s (%.0f%%)", message, fraction * 100)
         return
     slicerweb_job.progress(message, fraction)
+
+
+def watch(filter, message, start=0.2, end=0.9):
+    """Report a VTK filter's own progress as the module's, between these two marks.
+
+    VTK's threaded image filters report about fifty times as they work, which is what fills the
+    bar in the panel while a module runs; the ones that only report when they start and finish
+    (marching cubes, for one) simply leave it where it was.
+    """
+    last = [0.0]
+
+    def tick(caller, event):
+        fraction = start + (end - start) * caller.GetProgress()
+        if fraction - last[0] >= 0.02:
+            last[0] = fraction
+            progress(message, fraction)
+
+    filter.AddObserver(vtk.vtkCommand.ProgressEvent, tick)
+    return filter

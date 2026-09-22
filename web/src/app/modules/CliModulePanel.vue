@@ -3,7 +3,7 @@
 // CLI module's GUI from the same XML. One panel serves every CLI module.
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { SlicerBridge } from "@/core/bridge";
-import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwLineEdit, SwNodeSelector, SwSpinBox } from "@/widgets";
+import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwLineEdit, SwNodeSelector, SwProgressBar, SwSpinBox } from "@/widgets";
 
 interface CliParameter {
   name: string;
@@ -35,6 +35,7 @@ const busy = ref(false);
 const error = ref("");
 const result = ref("");
 const progress = ref("");
+const fraction = ref(0);
 /** The output nodes of the run that is going on, to describe once it is done. */
 let running: Record<string, string> = {};
 let off: (() => void) | null = null;
@@ -86,6 +87,7 @@ async function apply() {
   error.value = "";
   result.value = "";
   progress.value = description.value.runsInWorker ? "Starting" : "";
+  fraction.value = 0;
   try {
     const run = await bridge.call<{ outputs: Record<string, string>; seconds?: number; worker: boolean }>(
       "runCliModule", [description.value.name, values.value]);
@@ -112,6 +114,7 @@ async function onJobEvent(event: { state: string; name?: string; message?: strin
   if (!busy.value) return;  // something else's run, or one this panel has already heard about
   if (event.state === "running") {
     progress.value = event.message ?? "";
+    fraction.value = event.fraction ?? fraction.value;
   } else if (event.state === "finished") {
     progress.value = "";
     busy.value = false;
@@ -166,13 +169,15 @@ onBeforeUnmount(() => off?.());
       </div>
     </SwCollapsible>
 
-    <div class="flex items-center gap-2">
-      <SwButton class="flex-1" text="Apply" primary :enabled="!busy" data-name="cliApply" @clicked="apply" />
-      <SwButton v-if="busy" text="Cancel" data-name="cliCancel" @clicked="cancel" />
-    </div>
-    <p v-if="busy" class="text-[12px] text-muted-foreground" data-name="cliProgress">
-      {{ progress || "Running" }} {{ description.runsInWorker ? "in the background" : "" }}…
-    </p>
+    <!-- One button: it starts the work, and stops it while the work is going on -->
+    <SwButton :text="busy ? 'Cancel' : 'Apply'" :primary="!busy" data-name="cliApply"
+      @clicked="busy ? cancel() : apply()" />
+    <template v-if="busy">
+      <SwProgressBar :value="fraction * 100" data-name="cliProgressBar" />
+      <p class="text-[12px] text-muted-foreground" data-name="cliProgress">
+        {{ progress || "Running" }} {{ description.runsInWorker ? "in the background" : "" }}…
+      </p>
+    </template>
     <p v-if="result" class="rounded bg-card/70 p-2 text-[12px] text-muted-foreground" data-name="cliResult">{{ result }}</p>
     <p v-if="error" class="rounded bg-card/70 p-2 text-[12px] text-red-400" data-name="cliError">{{ error }}</p>
     <p v-if="!outputs.length" class="text-[12px] text-muted-foreground">

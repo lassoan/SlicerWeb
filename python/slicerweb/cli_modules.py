@@ -25,6 +25,7 @@ import xml.etree.ElementTree as ElementTree
 import slicer
 import vtk
 
+from . import cli_job
 from .modules import ModuleBase
 
 logger = logging.getLogger("slicerweb.cli")
@@ -339,6 +340,7 @@ def _threshold_scalar_volume(parameters):
     negate = _boolean(parameters.get("Negate"))
 
     threshold = vtk.vtkImageThreshold()
+    cli_job.watch(threshold, "Thresholding")
     threshold.SetInputData(_image_of(inputVolume))
     if thresholdType == "Below":
         threshold.ThresholdByLower(_number(parameters, "ThresholdValue", 128))
@@ -413,6 +415,7 @@ def _cast_scalar_volume(parameters):
     if scalarType is None:
         raise ValueError(f"Cast Scalar Volume: unknown type {parameters.get('Type')}")
     cast = vtk.vtkImageCast()
+    cli_job.watch(cast, "Casting")
     cast.SetInputData(_image_of(inputVolume))
     cast.SetOutputScalarType(scalarType)
     cast.ClampOverflowOn()
@@ -440,6 +443,7 @@ def _gaussian_blur(parameters):
     inputVolume, outputVolume = _required(parameters, "inputVolume", "outputVolume")
     sigma = _number(parameters, "sigma", 1.0)
     blur = vtk.vtkImageGaussianSmooth()
+    cli_job.watch(blur, "Blurring")
     blur.SetInputData(_image_of(inputVolume))
     # The module's sigma is in millimetres, the filter's standard deviation in voxels
     blur.SetStandardDeviations(*[sigma / s for s in inputVolume.GetSpacing()])
@@ -453,6 +457,7 @@ def _median_filter(parameters):
     inputVolume, outputVolume = _required(parameters, "inputVolume", "outputVolume")
     radius = _vector(parameters.get("neighborhood"), [1, 1, 1], int)
     median = vtk.vtkImageMedian3D()
+    cli_job.watch(median, "Filtering")
     median.SetInputData(_image_of(inputVolume))
     median.SetKernelSize(*[2 * r + 1 for r in radius])
     median.Update()
@@ -474,6 +479,7 @@ def _resample_scalar_volume(parameters):
     kind = str(parameters.get("interpolationType") or "linear")
 
     resample = vtk.vtkImageResample()
+    cli_job.watch(resample, "Resampling")
     resample.SetInputData(_image_of(inputVolume))
     for axis, (old, new) in enumerate(zip(inputVolume.GetSpacing(), spacing)):
         resample.SetAxisOutputSpacing(axis, new)
@@ -516,6 +522,7 @@ def _grayscale_model_maker(parameters):
     pointNormals = _boolean(parameters.get("PointNormals"), True)
 
     surface = vtk.vtkFlyingEdges3D() if hasattr(vtk, "vtkFlyingEdges3D") else vtk.vtkMarchingCubes()
+    cli_job.watch(surface, "Finding the surface", end=0.6)
     surface.SetInputData(_image_of(inputVolume))
     surface.SetValue(0, threshold)
     surface.ComputeNormalsOff()

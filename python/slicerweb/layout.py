@@ -56,7 +56,8 @@ class LayoutManager:
         for event in (slicer.vtkMRMLScene.EndCloseEvent, slicer.vtkMRMLScene.EndImportEvent,
                       slicer.vtkMRMLScene.EndBatchProcessEvent, slicer.vtkMRMLScene.EndRestoreEvent):
             self._scene.AddObserver(event, self._onSceneUpdated)
-        self._views = {}  # layout name -> vtkSlicerWebView
+        self._views = {}           # layout name -> vtkSlicerWebView
+        self._volumeQuality = {}   # layout name -> AdaptiveVolumeQuality, for the 3D views
         self._widgets = {}  # layout name -> SliceWidget / ThreeDWidget proxy
         self._lastLayoutJson = None
         self._viewsToDetach = set()
@@ -317,6 +318,7 @@ class LayoutManager:
             return False
         self._app.applyScreenScaleFactor(viewNode)
 
+        makeAdaptive = False   # only the 3D views coarsen a volume while the camera moves
         if viewNode.IsA("vtkMRMLSliceNode"):
             view = slicer.vtkSlicerWebSliceView()
             widget_cls = SliceWidget
@@ -324,6 +326,7 @@ class LayoutManager:
             view = slicer.vtkSlicerWebThreeDView()
             widget_cls = ThreeDWidget
             self._renderVolumesAdaptively(viewNode)
+            makeAdaptive = True
         else:
             logger.warning("attachView: views of type %s are displayed by the web page", viewNode.GetClassName())
             return False
@@ -337,6 +340,10 @@ class LayoutManager:
         view.Start()
         self._views[layoutName] = view
         self._widgets[layoutName] = widget_cls(self, layoutName, view)
+        if makeAdaptive:
+            from .volume_quality import AdaptiveVolumeQuality
+
+            self._volumeQuality[layoutName] = AdaptiveVolumeQuality(view)
         host.emit("view-attached", {"layoutName": layoutName, "nodeID": viewNode.GetID()})
         if viewNode.IsA("vtkMRMLViewNode") and len([v for v in self._views.values() if v.IsA("vtkSlicerWebThreeDView")]) == 1:
             view.ResetCamera(-1)
@@ -356,8 +363,15 @@ class LayoutManager:
 
         if viewNode.GetVolumeRenderingQuality() == slicer.vtkMRMLViewNode.Normal:
             viewNode.SetVolumeRenderingQuality(slicer.vtkMRMLViewNode.Adaptive)
+            # Slicer aims for 8 frames a second, which on a desktop graphics card it reaches
+            # without giving up much. A browser has less to work with, so it is asked for more and
+            # gives up more while the camera is moving (slicerweb.volume_quality).
+            viewNode.SetExpectedFPS(15.0)
 
     def detachView(self, layoutName):
+        quality = self._volumeQuality.pop(layoutName, None)
+        if quality is not None:
+            quality.remove()
         view = self._views.pop(layoutName, None)
         self._widgets.pop(layoutName, None)
         if view is not None:

@@ -71,6 +71,31 @@ check("the 3D view draws the volume", view.drawn > 2000, `${view.drawn} of ${vie
 check("and it has the shading of a volume, not one flat colour", view.shades > 20, `${view.shades} shades`);
 check("no GL errors while it rendered", glErrors.length === 0, glErrors.slice(0, 2).join(" | "));
 
+// while the camera is being moved the volume is rendered with fewer rays and bigger steps, and
+// goes back to full detail when the movement stops. VTK cannot decide this for itself in a
+// browser - it measures how long the last frame took, and WebGL returns before the frame is drawn
+// - so the view does it on what the interactor says (slicerweb/volume_quality.py).
+const mapperState = () => text(`
+(lambda m: "%.0f|%.2f" % (m.GetImageSampleDistance(), m.GetSampleDistance()))(
+    [v for v in __import__("slicer").app.layoutManager().views().values() if v.IsA("vtkSlicerWebThreeDView")][0]
+    .GetRenderWindow().GetRenderers().GetItemAsObject(0).GetVolumes().GetItemAsObject(0).GetMapper())`);
+const still = await mapperState();
+const canvas = await page.locator("#slicer-view-1").boundingBox();
+const cx = canvas.x + canvas.width / 2, cy = canvas.y + canvas.height / 2;
+await page.mouse.move(cx, cy);
+await page.mouse.down();
+for (let i = 1; i <= 5; i++) { await page.mouse.move(cx + i * 9, cy + i * 5); await page.waitForTimeout(60); }
+const moving = await mapperState();
+await page.mouse.up();
+await page.waitForTimeout(600);
+const afterwards = await mapperState();
+const [stillRays, stillStep] = still.split("|").map(Number);
+const [movingRays, movingStep] = moving.split("|").map(Number);
+check("moving the camera renders the volume more coarsely",
+  movingRays > stillRays && movingStep > stillStep,
+  `still: every ${stillRays} px at ${stillStep} mm, moving: every ${movingRays} px at ${movingStep} mm`);
+check("and it goes back to full detail when the camera stops", afterwards === still, `${afterwards} against ${still}`);
+
 // the cropping region is made, and shown, when cropping is asked for
 await call("setVolumeRendering", [volumeId, { croppingEnabled: true }]);
 await page.waitForTimeout(1500);

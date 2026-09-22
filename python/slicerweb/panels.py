@@ -363,8 +363,12 @@ def setVolumeRendering(volumeNodeID, properties):
     volume = _node(volumeNodeID)
     displayNode = logic.GetFirstVolumeRenderingDisplayNode(volume)
     if displayNode is None:
+        # CreateDefaultVolumeRenderingNodes gives the volume the preset that suits what it holds -
+        # MR-Default for the narrow range of an MR volume, a CT preset for the wide range of a CT.
+        # UpdateDisplayNodeFromVolumeNode is deliberately not called after it: that replaces the
+        # preset with a ramp made from the window and level, which for an MR volume renders as a
+        # solid block, and it makes a cropping region before anyone has asked to crop anything.
         displayNode = logic.CreateDefaultVolumeRenderingNodes(volume)
-        logic.UpdateDisplayNodeFromVolumeNode(displayNode, volume)
     if "preset" in properties:
         preset = logic.GetPresetByName(properties["preset"])
         if preset:
@@ -378,7 +382,17 @@ def setVolumeRendering(volumeNodeID, properties):
         vp.SetAttribute("SlicerWeb.Shift", str(float(properties["shift"])))
         _shift_transfer_functions(vp.GetVolumeProperty(), delta)
     if "croppingEnabled" in properties:
-        displayNode.SetCroppingEnabled(bool(properties["croppingEnabled"]))
+        # The region to crop to is made when cropping is first asked for, not before, and is shown
+        # while cropping is on so that it can be moved and resized.
+        cropping = bool(properties["croppingEnabled"])
+        if cropping and displayNode.GetROINode() is None:
+            logic.CreateROINode(displayNode)
+            logic.FitROIToVolume(displayNode)
+        roi = displayNode.GetROINode()
+        if roi is not None:
+            roi.CreateDefaultDisplayNodes()
+            roi.GetDisplayNode().SetVisibility(cropping)
+        displayNode.SetCroppingEnabled(cropping)
     if "visible" in properties:
         displayNode.SetVisibility(bool(properties["visible"]))
     return True

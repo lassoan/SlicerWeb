@@ -56,6 +56,21 @@ shared. The same care applies to any library that passes ITK objects to another 
 
 Covered by `web/tests/itk-filters.mjs`, which runs each filter on an input whose answer is known.
 
+## 16 bit volumes did not reach the graphics card (fixed)
+
+Volume rendering showed a solid block the size of the volume, whatever the preset. The console
+said why: `glTexImage3D: Invalid combination of format, type and internalFormat`. WebGL 2 has no
+normalized 16 bit texture format, so VTK's table leaves `GL_R16` and `GL_R16_SNORM` out and offers
+the float format instead - but `GetDefaultDataType` still said `GL_SHORT` for a texture whose
+internal format had become `GL_R32F`, which OpenGL refuses, and unsigned short had no float format
+at all. The volume texture was never uploaded, and what was drawn was an empty box.
+
+`patches/VTK/0007-BUG-Upload-16-bit-textures-as-float-on-OpenGL-ES.patch` uploads 16 bit data as
+float where that is the format in use, divided the way a normalized 16 bit texture divides it so
+that shaders read the same values, and gives unsigned short the float internal format as well.
+Current VTK master fixes this the same way; the pin here is older than that work. Covered by
+`web/tests/volume-rendering.mjs`, which reads the pixels of the 3D view.
+
 ### Still open
 
 - `vtkITKLevelTracingImageFilter` no longer throws but returns an empty contour, for every plane

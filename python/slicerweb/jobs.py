@@ -40,6 +40,20 @@ def busy():
     return bool(slicerweb_jobs.busy())
 
 
+def start():
+    """Start the worker before there is work for it.
+
+    Loading Python and the wheels into a worker takes a few seconds. A panel that is about to give
+    it work can ask for it early, so that the wait happens while the user is still choosing.
+    """
+    if not available():
+        return False
+    import slicerweb_jobs
+
+    slicerweb_jobs.start()
+    return True
+
+
 def run(code, globals=None, files=None, outputs=None, onDone=None, onFailed=None, onProgress=None,
         onLog=None, packages=None):
     """Run Python in the worker and answer later.

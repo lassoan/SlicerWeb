@@ -108,6 +108,11 @@ covers the independent-component and label-map paths. Both are covered by
   Volume, Merge Models, Grayscale Model Maker, and Decimation for the VMTK modules. The ones that
   would need ITK registration or bias field correction (BRAINSFit, N4ITK, Extract Skeleton,
   Fiducial Registration) are not among them, so the extension modules that call those still fail.
+  From a panel a module runs in a worker, as Slicer runs one in a separate program: the nodes are
+  written to files, the work happens away from the page and the files come back. That costs a
+  round trip through NRRD (about two seconds for a 7 million voxel volume) and a few seconds more
+  the first time, while Python and the wheels are loaded into the worker. `slicer.cli.run()` from
+  Python still runs in the page, which is quicker but holds the thread that draws.
 - Crop Volume can only crop voxel based: cropping with resampling is done by Slicer's C++ logic
   through `vtkSlicerCLIModuleLogic`, which cannot reach a Python implementation, so choosing a
   resampled crop would need the logic to be bypassed here.

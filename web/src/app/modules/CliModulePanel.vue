@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // The panel of a CLI module, built from the description the module ships, the way Slicer builds a
 // CLI module's GUI from the same XML. One panel serves every CLI module.
-import { computed, inject, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwLineEdit, SwNodeSelector, SwSpinBox } from "@/widgets";
 
@@ -22,6 +22,8 @@ interface CliGroup { label: string; description: string; advanced: boolean; para
 interface CliDescription {
   name: string; title: string; category: string; description: string; contributor: string;
   documentationUrl: string; groups: CliGroup[]; values: Record<string, string | null>;
+  /** Whether it will run in a worker, away from the page, or here because there is no worker. */
+  runsInWorker: boolean;
 }
 
 const props = defineProps<{ name: string }>();
@@ -32,6 +34,10 @@ const values = ref<Record<string, unknown>>({});
 const busy = ref(false);
 const error = ref("");
 const result = ref("");
+const progress = ref("");
+/** The output nodes of the run that is going on, to describe once it is done. */
+let running: Record<string, string> = {};
+let off: (() => void) | null = null;
 
 const NUMBERS = ["integer", "float", "double"];
 const VECTORS = ["integer-vector", "float-vector", "double-vector"];
@@ -67,25 +73,63 @@ function indexOf(parameter: CliParameter): number {
   return Math.max(0, parameter.elements.indexOf(current));
 }
 
+/** Say what came out, and keep it selected so that it can be used again. */
+async function describeOutputs(outputs: Record<string, string>, seconds: number) {
+  values.value = { ...values.value, ...outputs };
+  const summaries = await Promise.all(Object.values(outputs).map((id) => bridge.call<string>("cliOutputSummary", [id])));
+  result.value = `${summaries.filter(Boolean).join("; ")} (${seconds} s)`;
+}
+
 async function apply() {
   if (!description.value) return;
   busy.value = true;
   error.value = "";
   result.value = "";
+  progress.value = description.value.runsInWorker ? "Starting" : "";
   try {
-    const run = await bridge.call<{ outputs: Record<string, string>; seconds: number }>(
+    const run = await bridge.call<{ outputs: Record<string, string>; seconds?: number; worker: boolean }>(
       "runCliModule", [description.value.name, values.value]);
-    // Show what was made, and keep it selected so that it can be used again
+    running = run.outputs;
     values.value = { ...values.value, ...run.outputs };
-    const summaries = await Promise.all(Object.values(run.outputs)
-      .map((id) => bridge.call<string>("cliOutputSummary", [id])));
-    result.value = `${summaries.filter(Boolean).join("; ")} (${run.seconds} s)`;
+    if (!run.worker) {
+      // No worker to be had: it ran in the page and is already done
+      await describeOutputs(run.outputs, run.seconds ?? 0);
+      busy.value = false;
+    }
   } catch (e: any) {
     error.value = e?.message ?? String(e);
-  } finally {
     busy.value = false;
   }
 }
+
+async function cancel() {
+  await bridge.call("cancelCliModule", []);
+}
+
+/** How the run in the worker is going. */
+async function onJobEvent(event: { state: string; name?: string; message?: string; fraction?: number; seconds?: number }) {
+  if (!description.value || (event.name && event.name !== description.value.name)) return;
+  if (!busy.value) return;  // something else's run, or one this panel has already heard about
+  if (event.state === "running") {
+    progress.value = event.message ?? "";
+  } else if (event.state === "finished") {
+    progress.value = "";
+    busy.value = false;
+    await describeOutputs(running, event.seconds ?? 0);
+  } else if (event.state === "failed" || event.state === "cancelled") {
+    progress.value = "";
+    busy.value = false;
+    error.value = event.state === "cancelled" ? "Stopped." : (event.message ?? "It did not finish.");
+  }
+}
+
+onMounted(() => {
+  // Loading Python and the wheels into the worker takes a few seconds; asking for it now means the
+  // wait happens while the parameters are being chosen rather than after Apply is pressed.
+  bridge.call("prepareCliWorker", []).catch(() => {});
+  off = bridge.events.on("cli-module", onJobEvent);
+});
+onBeforeUnmount(() => off?.());
 </script>
 
 <template>
@@ -122,8 +166,13 @@ async function apply() {
       </div>
     </SwCollapsible>
 
-    <SwButton text="Apply" primary :enabled="!busy" data-name="cliApply" @clicked="apply" />
-    <p v-if="busy" class="text-[12px] text-muted-foreground">Running {{ description.title }}…</p>
+    <div class="flex items-center gap-2">
+      <SwButton class="flex-1" text="Apply" primary :enabled="!busy" data-name="cliApply" @clicked="apply" />
+      <SwButton v-if="busy" text="Cancel" data-name="cliCancel" @clicked="cancel" />
+    </div>
+    <p v-if="busy" class="text-[12px] text-muted-foreground" data-name="cliProgress">
+      {{ progress || "Running" }} {{ description.runsInWorker ? "in the background" : "" }}…
+    </p>
     <p v-if="result" class="rounded bg-card/70 p-2 text-[12px] text-muted-foreground" data-name="cliResult">{{ result }}</p>
     <p v-if="error" class="rounded bg-card/70 p-2 text-[12px] text-red-400" data-name="cliError">{{ error }}</p>
     <p v-if="!outputs.length" class="text-[12px] text-muted-foreground">

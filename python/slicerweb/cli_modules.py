@@ -130,6 +130,11 @@ def description(name):
     return descriptions().get(str(name).lower())
 
 
+def implementation(name):
+    """The function that stands for this CLI module, or None if there is none."""
+    return _IMPLEMENTATIONS.get(str(name).lower())
+
+
 def defaultValues(description):
     """What the panel starts with: the defaults of the XML, empty for the nodes."""
     values = {}

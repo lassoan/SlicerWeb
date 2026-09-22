@@ -168,6 +168,10 @@ export class SlicerRuntime {
       },
       cancel: () => jobRunner().cancel(),
       busy: () => jobRunner().busy,
+      // Started before there is work for it, so that the first job does not wait for the wheels
+      start: () => {
+        void jobRunner(this.config.extensionWheels).start();
+      },
     });
 
     pyodide.registerJsModule("slicerweb_host", {

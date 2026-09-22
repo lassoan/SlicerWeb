@@ -71,13 +71,11 @@ that shaders read the same values, and gives unsigned short the float internal f
 Current VTK master fixes this the same way; the pin here is older than that work. Covered by
 `web/tests/volume-rendering.mjs`, which reads the pixels of the 3D view.
 
-### Still open
+## Still open
 
 - `vtkITKLevelTracingImageFilter` no longer throws but returns an empty contour, for every plane
-  and seed tried, with the same calls that Slicer's Level Tracing effect makes. Nothing uses it yet.
+  and seed tried, with the same calls that Slicer's Level Tracing effect makes. Nothing uses it
+  yet; the Level Tracing effect would.
 - The extension libraries (SlicerVMTK's `vtkvmtkITK` and `vtkvmtkSegmentation`) also compile ITK
-  templates of their own and have not been given the same treatment; if a filter of theirs fails
-  the same way, that is where to look.
-- The segment editor's grow from seeds, fill between slices, margin and hollow are written with
-  NumPy and SciPy, from when these filters could not be used. They work and are tested, but the
-  ITK filters are what desktop Slicer uses and are faster; switching back is worth doing.
+  templates of their own and have not been given the hidden-template treatment; if a filter of
+  theirs fails the way the vtkITK ones did, that is where to look.

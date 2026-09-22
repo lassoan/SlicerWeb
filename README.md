@@ -1,6 +1,6 @@
 # SlicerWeb
 
-Run 3D Slicer natively in the web browser.
+Run 3D Slicer natively in the web browser. Try it here: **https://lassoan.github.io/slicerweb-app/**
 
 Not a re-implementation: this is Slicer's own C++ — MRML, the logic and displayable manager
 libraries, the loadable modules, VTK and ITK — compiled to WebAssembly, with Slicer's Python

@@ -549,16 +549,24 @@ def getSliceViewState(layoutName):
         "foregroundOpacity": composite.GetForegroundOpacity(),
         "labelOpacity": composite.GetLabelOpacity(),
         "sliceVisible": bool(sliceNode.GetSliceVisible()),
-        "linked": bool(composite.GetLinkedControl()),
         "fieldOfView": list(sliceNode.GetFieldOfView()),
     }
 
 
 @method()
 def setSliceOffset(layoutName, offset):
+    """Move the slice, taking the parallel slices of linked views with it.
+
+    The change is wrapped in the slice logic's interaction, as qMRMLSliceControllerWidget does:
+    vtkMRMLSliceLinkLogic passes a change on to the other views only while the node it came from
+    says it is being interacted with.
+    """
     import slicer
 
-    slicer.app.layoutManager().sliceWidget(layoutName).sliceLogic().SetSliceOffset(float(offset))
+    logic = slicer.app.layoutManager().sliceWidget(layoutName).sliceLogic()
+    logic.StartSliceOffsetInteraction()
+    logic.SetSliceOffset(float(offset))
+    logic.EndSliceOffsetInteraction()
     return True
 
 
@@ -566,7 +574,11 @@ def setSliceOffset(layoutName, offset):
 def setSliceOrientation(layoutName, orientation):
     import slicer
 
-    slicer.app.layoutManager().sliceWidget(layoutName).mrmlSliceNode().SetOrientation(orientation)
+    widget = slicer.app.layoutManager().sliceWidget(layoutName)
+    logic = widget.sliceLogic()
+    logic.StartSliceNodeInteraction(slicer.vtkMRMLSliceNode.OrientationFlag)
+    widget.mrmlSliceNode().SetOrientation(orientation)
+    logic.EndSliceNodeInteraction()
     return True
 
 
@@ -591,12 +603,56 @@ def setSliceVisible(layoutName, visible):
 
 
 @method()
-def setSliceLayerVolume(layoutName, layer, volumeNodeID):
+def getViewLinked(layoutName):
+    """Whether this view moves the other views of its kind with it."""
     import slicer
 
-    composite = slicer.app.layoutManager().sliceWidget(layoutName).mrmlSliceCompositeNode()
-    {"background": composite.SetBackgroundVolumeID, "foreground": composite.SetForegroundVolumeID,
-     "label": composite.SetLabelVolumeID}[layer](volumeNodeID or None)
+    node = slicer.app.layoutManager().viewNode(layoutName)
+    if node is None:
+        return False
+    if node.IsA("vtkMRMLSliceNode"):
+        widget = slicer.app.layoutManager().sliceWidget(layoutName)
+        return widget is not None and bool(widget.mrmlSliceCompositeNode().GetLinkedControl())
+    return bool(node.GetLinkedControl())
+
+
+@method()
+def setViewLinked(layoutName, linked):
+    """Link or unlink all the views of this one's kind.
+
+    Linking is a property of each view, but Slicer's link buttons set it on all of them at once, so
+    that the chain is never half closed: slice views through their composite nodes
+    (qMRMLSliceControllerWidget::setSliceLink), 3D views through their view nodes
+    (qMRMLThreeDViewControllerWidget::setViewLink). vtkMRMLApplicationLogic owns the logics that do
+    the propagating, so there is nothing else to set up.
+    """
+    import slicer
+
+    node = slicer.app.layoutManager().viewNode(layoutName)
+    if node is None:
+        return False
+    className = "vtkMRMLSliceCompositeNode" if node.IsA("vtkMRMLSliceNode") else "vtkMRMLViewNode"
+    for other in slicer.util.getNodesByClass(className):
+        other.SetLinkedControl(bool(linked))
+    return True
+
+
+@method()
+def setSliceLayerVolume(layoutName, layer, volumeNodeID):
+    """Choose what a slice view shows, in linked views as well."""
+    import slicer
+
+    widget = slicer.app.layoutManager().sliceWidget(layoutName)
+    composite = widget.mrmlSliceCompositeNode()
+    setter, flag = {
+        "background": (composite.SetBackgroundVolumeID, slicer.vtkMRMLSliceCompositeNode.BackgroundVolumeFlag),
+        "foreground": (composite.SetForegroundVolumeID, slicer.vtkMRMLSliceCompositeNode.ForegroundVolumeFlag),
+        "label": (composite.SetLabelVolumeID, slicer.vtkMRMLSliceCompositeNode.LabelVolumeFlag),
+    }[layer]
+    logic = widget.sliceLogic()
+    logic.StartSliceCompositeNodeInteraction(flag)
+    setter(volumeNodeID or None)
+    logic.EndSliceCompositeNodeInteraction()
     return True
 
 

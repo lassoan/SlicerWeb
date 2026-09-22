@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
-import { Eye, EyeOff, Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
+import { Eye, EyeOff, Link2, Link2Off, Pin, RotateCcw, Maximize2, Minimize2 } from "@lucide/vue";
 import PopupMenu from "./PopupMenu.vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
 import TableView from "./TableView.vue";
@@ -33,6 +33,8 @@ interface SliceState {
   fieldOfView: number[];
 }
 const slice = reactive<Partial<SliceState>>({});
+/** Whether this view's controls move the other views of its kind (Slicer's link button). */
+const linked = ref(false);
 const volumes = ref<{ id: string; name: string }[]>([]);
 let attached = false;
 let resizeObserver: ResizeObserver | null = null;
@@ -42,6 +44,11 @@ async function refreshSliceState() {
   if (!isSlice.value || !attached) return;
   const s = await bridge.call<SliceState | null>("getSliceViewState", [props.view.layoutName]);
   if (s) Object.assign(slice, s);
+}
+
+async function refreshLinked() {
+  if (!attached) return;
+  linked.value = await bridge.call<boolean>("getViewLinked", [props.view.layoutName]);
 }
 
 function deviceSize() {
@@ -56,6 +63,7 @@ async function attach() {
   if (!attached) return;
   if (props.view.nodeID) await bridge.call("observeNode", [props.view.nodeID, true]);
   await refreshSliceState();
+  await refreshLinked();
   await refreshVolumes();
 }
 
@@ -255,6 +263,19 @@ async function setSliceVisible(visible: boolean) {
   await refreshSliceState();
 }
 
+/** Link or unlink all the views of this kind, as the link button of Slicer's controllers does. */
+async function setLinked(value: boolean) {
+  linked.value = value;
+  await bridge.call("setViewLinked", [props.view.layoutName, value]);
+  await refreshLinked();
+}
+
+/** Linking is set on the other views too, so read it again rather than show a stale chain. */
+function openViewMenu(toggle: () => void) {
+  refreshLinked();
+  toggle();
+}
+
 async function resetView() {
   if (isSlice.value) {
     await bridge.evalPython(`slicer.app.layoutManager().sliceWidget(${JSON.stringify(props.view.layoutName)}).sliceLogic().FitSliceToAll()`);
@@ -293,18 +314,23 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
     @pointerdown="store.activeView = view.layoutName ?? ''">
     <!-- Slice / 3D view controller bar (Slicer's colored view controller, OHIF styling) -->
     <div v-if="!isTable && !isPlot" class="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-input/40 bg-card px-1.5 text-[12px]">
-      <PopupMenu v-if="isSlice">
+      <PopupMenu v-if="isSlice || isThreeD">
         <template #trigger="{ open, toggle }">
           <button type="button" data-name="viewMenu" class="flex h-5 items-center gap-1.5 rounded px-1 hover:bg-accent/60"
-            :class="open ? 'bg-accent/60' : ''" :title="`${view.label ?? view.layoutName} view menu`" @click="toggle">
+            :class="open ? 'bg-accent/60' : ''" :title="`${view.label ?? view.layoutName} view menu`" @click="openViewMenu(toggle)">
             <span class="inline-block h-3 w-3 shrink-0 rounded-sm" :style="{ background: view.color ?? '#888' }" />
             <span class="shrink-0 font-medium text-foreground">{{ view.label ?? view.layoutName }}</span>
           </button>
         </template>
-        <button type="button" role="menuitem" data-name="menu:showIn3D"
+        <button v-if="isSlice" type="button" role="menuitem" data-name="menu:showIn3D"
           class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="slice.sliceVisible ? 'text-highlight' : ''" @click="setSliceVisible(!slice.sliceVisible)">
           <Eye v-if="slice.sliceVisible" :size="16" /><EyeOff v-else :size="16" />Show in 3D
+        </button>
+        <button type="button" role="menuitem" data-name="menu:linkViews"
+          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          :class="linked ? 'text-highlight' : ''" @click="setLinked(!linked)">
+          <Link2 v-if="linked" :size="16" /><Link2Off v-else :size="16" />Link views
         </button>
       </PopupMenu>
       <template v-else>

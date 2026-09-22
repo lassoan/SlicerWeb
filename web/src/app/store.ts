@@ -76,6 +76,11 @@ export const store = reactive({
   logs: [] as LogEntry[],
   leftPanelOpen: true,
   rightPanelOpen: true,
+  // How wide each side panel is when it is open (dragged by its edge, OHIF's 280 px to start with;
+  // the module panel is wider because module GUIs are). Kept here because the shell decides from
+  // these whether a panel still fits beside the views or has to lie over them.
+  leftPanelWidth: 280,
+  rightPanelWidth: 340,
   pythonConsoleOpen: false,
   logWindowOpen: false,
   extensionsManagerOpen: false,

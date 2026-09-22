@@ -167,9 +167,14 @@ def getSampleDataSources():
 
 @method()
 def loadSampleDataFiles(files, source=None):
-    """Load files downloaded by the web page: files is [{path, nodeName, fileType, properties}]."""
+    """Load files downloaded by the web page: files is [{path, nodeName, fileType, properties}].
+
+    Returns {"loaded": [...], "messages": [...]}: what went into the scene, and what is worth
+    saying about a data set that put nothing there.
+    """
     logic = _logic()
     loaded = []
+    messages = []
     for f in files:
         path = f["path"]
         if not os.path.exists(path):
@@ -178,9 +183,23 @@ def loadSampleDataFiles(files, source=None):
         properties.update(f.get("properties") or {})
         fileType = f.get("fileType")
         nodeName = f.get("nodeName")
+        if fileType is None and path.lower().endswith(".zip"):
+            # A data set that says nothing about its files: a zip is a scene where it holds one,
+            # and a set of files for a module to read where it does not (SampleDataLogic reads an
+            # unnamed .zip the same way). Without this it would be handed to the node reader, which
+            # would find no scene in it and add nothing, saying nothing either.
+            from .io import archiveHoldsScene
+
+            fileType = "SceneFile" if archiveHoldsScene(path) else "ZipFile"
         if fileType == "ZipFile":
             directory = os.path.join(os.path.dirname(path), os.path.splitext(os.path.basename(path))[0])
+            os.makedirs(directory, exist_ok=True)
             slicer.util.extractArchive(path, directory)
+            count = len(os.listdir(directory))
+            messages.append(f"{os.path.basename(path)} holds no scene. Its {count} file"
+                            f"{'' if count == 1 else 's'} went into {directory}, "
+                            "where the module that asked for them can read them.")
+            logger.info(messages[-1])
             loaded.append(directory)
             continue
         if fileType == "SceneFile":
@@ -194,4 +213,4 @@ def loadSampleDataFiles(files, source=None):
         if node is None:
             raise RuntimeError(f"Failed to load {os.path.basename(path)}")
         loaded.append(node.GetID() if hasattr(node, "GetID") else str(node))
-    return loaded
+    return {"loaded": loaded, "messages": messages}

@@ -1,7 +1,7 @@
 """Qt-free equivalent of qSlicerCoreIOManager and the qSlicer*Reader / qSlicerNodeWriter classes.
 
 ``slicer.util.loadVolume()``, ``loadModel()``, ``loadSegmentation()``, ``saveNode()``,
-``saveScene()`` ... call ``slicer.app.coreIOManager()``; this class implements the methods they use
+``saveScene()`` ... call ``slicer.app.coreIOManager()``; this implements the methods they use
 with the same file types (``"VolumeFile"``, ``"ModelFile"``, ...) and IO properties, and the same
 module logic calls as the desktop readers.
 
@@ -57,6 +57,21 @@ WRITER_DESCRIPTIONS = {
     "SequenceFile": "Sequence",
     "SceneFile": "Scene",
 }
+
+
+def archiveHoldsScene(fileName):
+    """Whether this zip is a scene saved as one file (a .mrb is one under another name).
+
+    What makes it one is a scene file inside; an archive of a module's data has none.
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(fileName) as archive:
+            return any(name.lower().endswith(".mrml") for name in archive.namelist())
+    except Exception:
+        logger.debug("%s could not be read as an archive", fileName, exc_info=True)
+        return False
 
 
 class IOManager:
@@ -416,6 +431,9 @@ class IOManager:
         clear = bool(properties.get("clear", False))
         before = set(scene.GetNodes().GetItemAsObject(i).GetID() for i in range(scene.GetNumberOfNodes()))
         ext = _lower_ext(fileName)
+        if ext == ".zip" and not archiveHoldsScene(fileName):
+            self._unpackArchive(fileName, userMessages)
+            return []
         if ext in (".mrb", ".zip"):
             ok = scene.ReadFromMRB(fileName, clear, userMessages)
         else:
@@ -429,6 +447,27 @@ class IOManager:
 
         transforms_hdf5.read_scene_transforms(loaded)
         return loaded
+
+    def _unpackArchive(self, fileName, userMessages):
+        """Unpack an archive that holds no scene, and say where its files went.
+
+        A zip is usually a scene saved as one file, but not always: a module's sample data set can
+        be a zip of files the module reads itself - tables of measurements, for instance. There is
+        nothing in such an archive to put in a scene, so unpacking it and saying where is all that
+        can be done, which is what desktop Slicer does with one as well.
+        """
+        import zipfile
+
+        directory = os.path.splitext(fileName)[0]
+        os.makedirs(directory, exist_ok=True)
+        with zipfile.ZipFile(fileName) as archive:
+            names = [n for n in archive.namelist() if not n.endswith("/")]
+            archive.extractall(directory)
+        message = (f"{os.path.basename(fileName)} holds no scene. Its {len(names)} file"
+                   f"{'' if len(names) == 1 else 's'} went into {directory}, for whatever reads them.")
+        logger.info(message)
+        self._addMessage(userMessages, message)
+        return directory
 
     # ------------------------------------------------------------------ saving
     def writerForNode(self, node, fileName=None):

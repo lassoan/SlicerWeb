@@ -105,7 +105,10 @@ async function loadModuleSample(source: SampleDataSource) {
       files.push({ path, nodeName: source.nodeNames[i], fileType: source.loadFileTypes[i], load: source.loadFiles[i] !== false });
     }
     busy.value = `Loading ${source.name}`;
-    await bridge.call("loadSampleDataFiles", [files, source]);
+    const result = await bridge.call<{ loaded: string[]; messages: string[] }>("loadSampleDataFiles", [files, source]);
+    // A data set that puts nothing in the scene - an archive of files a module reads itself - says
+    // so, rather than leaving the window looking as though nothing happened.
+    if (result?.messages?.length) alert(`${source.name}\n\n${result.messages.join("\n")}`);
   } catch (e: any) {
     alert(`${source.name}: ${e.message ?? e}`);
   } finally {

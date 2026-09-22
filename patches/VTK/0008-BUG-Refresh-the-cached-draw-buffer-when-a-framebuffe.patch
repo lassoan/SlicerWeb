@@ -1,0 +1,35 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] BUG: Refresh the cached draw buffer when a framebuffer is bound, on ES too
+
+vtkOpenGLState caches the draw buffer per binding point rather than per
+framebuffer, and relies on re-reading it from OpenGL whenever a framebuffer is
+bound to keep the cache honest. That read asks for GL_DRAW_BUFFER, which only
+desktop OpenGL has, so on OpenGL ES the cache kept the previously bound
+framebuffer's value and vtkglDrawBuffers skipped the call it needed to make.
+
+A framebuffer that had been left with glDrawBuffers(GL_NONE) - which
+vtkOpenGLFramebufferObject::DeactivateDrawBuffers does at the end of every use -
+therefore stayed switched off the next time it was used, and everything drawn
+into it, including the clear, was discarded. Volume rendering with an image
+sample distance other than 1 showed this as a frozen picture: the reduced
+resolution image was drawn once, when the framebuffer was new, and every later
+frame kept the first one.
+
+ES 3.0 has GL_DRAW_BUFFER0 for the same query, so use that where GL_DRAW_BUFFER
+is not defined.
+---
+diff --git a/Rendering/OpenGL2/vtkOpenGLState.cxx b/Rendering/OpenGL2/vtkOpenGLState.cxx
+index 1111111..2222222 100644
+--- a/Rendering/OpenGL2/vtkOpenGLState.cxx
++++ b/Rendering/OpenGL2/vtkOpenGLState.cxx
+@@ -497,6 +497,10 @@ void vtkOpenGLState::vtkglBindFramebuffer(unsigned int target, unsigned int val)
+       ::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, val);
+ #ifdef GL_DRAW_BUFFER
+       ::glGetIntegerv(GL_DRAW_BUFFER, (int*)&cs.DrawBinding.DrawBuffers[0]);
++#elif defined(GL_DRAW_BUFFER0)
++      // OpenGL ES has no GL_DRAW_BUFFER. Without this the cached value would be the previously
++      // bound framebuffer's, and vtkglDrawBuffers below would skip a call it has to make.
++      ::glGetIntegerv(GL_DRAW_BUFFER0, (int*)&cs.DrawBinding.DrawBuffers[0]);
+ #endif
+     }
+   }

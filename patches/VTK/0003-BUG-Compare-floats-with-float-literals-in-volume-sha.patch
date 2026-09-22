@@ -3,12 +3,27 @@ Subject: [PATCH] BUG: Compare floats with float literals in volume shaders
 
 GLSL ES 3.00 (WebGL 2) has no implicit int to float conversion: comparing a
 float with an int literal fails to compile, so volume rendering with shading,
-gradient opacity or linear interpolation rendered nothing in WebAssembly.
+gradient opacity, linear interpolation, clipping planes, independent components
+or a label map mask rendered nothing in WebAssembly.
 ---
 diff --git a/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h b/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
-index 45ddb3e986..1f2c138d4b 100644
+index 45ddb3e986..76d23458cc 100644
 --- a/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
 +++ b/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
+@@ -741,11 +741,11 @@ inline std::string ComputeGradientDeclaration(
+                     "                                      in_clippingPlanes[i + 6]));\n"
+                     "    for (int j = 0; j < 3; ++j)\n"
+                     "    {\n"
+-                    "      if (dot(vec3(planeOrigin - g1ObjDataPos[j].xyz), planeNormal) > 0)\n"
++                    "      if (dot(vec3(planeOrigin - g1ObjDataPos[j].xyz), planeNormal) > 0.0)\n"
+                     "      {\n"
+                     "        g1[j] = in_clippedVoxelIntensity;\n"
+                     "      }\n"
+-                    "      if (dot(vec3(planeOrigin - g2ObjDataPos[j].xyz), planeNormal) > 0)\n"
++                    "      if (dot(vec3(planeOrigin - g2ObjDataPos[j].xyz), planeNormal) > 0.0)\n"
+                     "      {\n"
+                     "        g2[j] = in_clippedVoxelIntensity;\n"
+                     "      }\n"
 @@ -789,7 +789,7 @@ inline std::string ComputeGradientDeclaration(
          "\n"
          "  // Since the actual range of the gradient magnitude is unknown,\n"
@@ -18,6 +33,20 @@ index 45ddb3e986..1f2c138d4b 100644
          "  grad_mag = grad_mag / (0.25 * range);\n"
          "  grad_mag = clamp(grad_mag, 0.0, 1.0);\n"
          "\n"
+@@ -1117,11 +1117,11 @@ inline std::string ComputeDensityGradientDeclaration(vtkOpenGLGPUVolumeRayCastMa
+                     "                                      in_clippingPlanes[i + 6]));\n"
+                     "    for (int j = 0; j < 3; ++j)\n"
+                     "    {\n"
+-                    "      if (dot(vec3(planeOrigin - g1ObjDataPos[j].xyz), planeNormal) > 0)\n"
++                    "      if (dot(vec3(planeOrigin - g1ObjDataPos[j].xyz), planeNormal) > 0.0)\n"
+                     "      {\n"
+                     "        g1[j] = in_clippedVoxelIntensity;\n"
+                     "      }\n"
+-                    "      if (dot(vec3(planeOrigin - g2ObjDataPos[j].xyz), planeNormal) > 0)\n"
++                    "      if (dot(vec3(planeOrigin - g2ObjDataPos[j].xyz), planeNormal) > 0.0)\n"
+                     "      {\n"
+                     "        g2[j] = in_clippedVoxelIntensity;\n"
+                     "      }\n"
 @@ -1162,7 +1162,7 @@ inline std::string ComputeDensityGradientDeclaration(vtkOpenGLGPUVolumeRayCastMa
          "\n"
          "  // Since the actual range of the gradient magnitude is unknown,\n"
@@ -36,3 +65,46 @@ index 45ddb3e986..1f2c138d4b 100644
          \n    {\
          \n      l_initialIndex = findIsoSurfaceIndex(scalar[maxComp], l_normValues);\
          \n    }\
+@@ -2951,7 +2951,7 @@ inline std::string ShadingSingleInput(vtkRenderer* vtkNotUsed(ren), vtkVolumeMap
+           \n        for (int i = 0; i < in_noOfComponents; ++i)\
+           \n          {\
+           \n          // Only let visible components contribute to the final color\
+-          \n          if (in_componentWeight[i] <= 0) continue;\
++          \n          if (in_componentWeight[i] <= 0.0) continue;\
+           \n\
+           \n          tmp.x += color[i].x * color[i].w * in_componentWeight[i];\
+           \n          tmp.y += color[i].y * color[i].w * in_componentWeight[i];\
+@@ -3751,7 +3751,7 @@ inline std::string CompositeMaskImplementation(vtkRenderer* vtkNotUsed(ren),
+         \nif (in_maskBlendFactor == 0.0)\
+         \n  {\
+         \n  g_srcColor.a = computeOpacity(scalar);\
+-        \n  if (g_srcColor.a > 0)\
++        \n  if (g_srcColor.a > 0.0)\
+         \n    {\
+         \n    g_srcColor = computeColor(scalar, g_srcColor.a);\
+         \n    }\
+@@ -3776,7 +3776,7 @@ inline std::string CompositeMaskImplementation(vtkRenderer* vtkNotUsed(ren),
+         \n  if(maskValue.r == 0.0)\
+         \n    {\
+         \n    g_srcColor.a = opacity;\
+-        \n    if (g_srcColor.a > 0)\
++        \n    if (g_srcColor.a > 0.0)\
+         \n      {\
+         \n      g_srcColor = computeColor(scalar, g_srcColor.a);\
+         \n      }\
+@@ -3785,13 +3785,13 @@ inline std::string CompositeMaskImplementation(vtkRenderer* vtkNotUsed(ren),
+         \n    {\
+         \n    g_srcColor = texture2D(in_labelMapTransfer,\
+         \n                           vec2(scalar.r, maskValue.r));\
+-        \n    if (g_srcColor.a > 0)\
++        \n    if (g_srcColor.a > 0.0)\
+         \n      {\
+         \n      g_srcColor = computeLighting(g_srcColor, 0, maskValue.r);\
+         \n      }\
+         \n    if (in_maskBlendFactor < 1.0)\
+         \n      {\
+-        \n      vec4 color = opacity > 0 ? computeColor(scalar, opacity) : vec4(0);\
++        \n      vec4 color = opacity > 0.0 ? computeColor(scalar, opacity) : vec4(0.0);\
+         \n      g_srcColor = (1.0 - in_maskBlendFactor) * color +\
+         \n                           in_maskBlendFactor * g_srcColor;\
+         \n      }\

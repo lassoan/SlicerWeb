@@ -12,7 +12,12 @@ const browser = await chromium.launch({ channel: "chrome", headless: true, args:
 const page = await (await browser.newContext({ viewport: { width: 1200, height: 900 } })).newPage();
 page.on("pageerror", (e) => console.log("[pageerror] " + String(e).slice(0, 160)));
 const glErrors = [];
-page.on("console", (m) => { if (/INVALID_OPERATION|INVALID_ENUM|INVALID_VALUE/.test(m.text())) glErrors.push(m.text().slice(0, 160)); });
+const shaderErrors = [];
+page.on("console", (m) => {
+  const t = m.text();
+  if (/INVALID_OPERATION|INVALID_ENUM|INVALID_VALUE/.test(t)) glErrors.push(t.slice(0, 160));
+  if (/Shader failed to compile|Shader compilation failed/.test(t)) shaderErrors.push(t.slice(0, 200));
+});
 await page.goto(base + "?sample=" + sample);
 await page.waitForFunction(() => document.querySelector("#slicer-view-Red") && window.slicerWeb?.bridge, null, { timeout: 300000 });
 await page.waitForTimeout(6000);
@@ -96,6 +101,42 @@ check("moving the camera renders the volume more coarsely",
   `still: every ${stillRays} px at ${stillStep} mm, moving: every ${movingRays} px at ${movingStep} mm`);
 check("and it goes back to full detail when the camera stops", afterwards === still, `${afterwards} against ${still}`);
 
+// Coarse frames have to follow the camera. They did not: VTK caches the draw buffer per binding
+// point and refreshed it from GL_DRAW_BUFFER, which OpenGL ES does not have, so the reduced
+// resolution buffer stayed switched off after its first use and every later frame repeated the
+// first one (patches/VTK/0008-...). Only the volume's own pixels are compared, so a rotating
+// bounding box cannot make this pass.
+const setRays = (n) => text(`
+(lambda m: (m.SetAutoAdjustSampleDistances(False), m.SetImageSampleDistance(${n}), "")[2])(
+    [v for v in __import__("slicer").app.layoutManager().views().values() if v.IsA("vtkSlicerWebThreeDView")][0]
+    .GetRenderWindow().GetRenderers().GetItemAsObject(0).GetVolumes().GetItemAsObject(0).GetMapper())`);
+const volumePixels = () => page.evaluate(async () => {
+  await window.slicerWeb.bridge.call("renderView", ["1"]);
+  const host = document.querySelector("#slicer-view-1");
+  const canvas = host?.matches("canvas") ? host : host?.querySelector("canvas");
+  const gl = canvas.getContext("webgl2") ?? canvas.getContext("webgl");
+  const px = new Uint8Array(canvas.width * canvas.height * 4);
+  gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  let hash = 0;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i] > px[i + 2] + 12) hash = (hash * 31 + i + px[i]) % 1000000007;
+  }
+  return hash;
+});
+const turn = () => text(`
+(lambda c: (c.Azimuth(60), "")[1])(
+    [v for v in __import__("slicer").app.layoutManager().views().values() if v.IsA("vtkSlicerWebThreeDView")][0]
+    .GetRenderWindow().GetRenderers().GetItemAsObject(0).GetActiveCamera())`);
+await setRays(3);
+const coarseHere = await volumePixels();
+await turn();
+const coarseTurned = await volumePixels();
+await setRays(1);
+const fineTurned = await volumePixels();
+check("a coarsely rendered volume follows the camera", coarseHere !== coarseTurned && coarseTurned !== 0,
+  `${coarseHere} then ${coarseTurned}`);
+check("and full detail draws the same turned volume, not the old one", fineTurned !== coarseHere);
+
 // the cropping region is made, and shown, when cropping is asked for
 await call("setVolumeRendering", [volumeId, { croppingEnabled: true }]);
 await page.waitForTimeout(1500);
@@ -106,6 +147,15 @@ await call("setVolumeRendering", [volumeId, { croppingEnabled: false }]);
 await page.waitForTimeout(1000);
 check("and hides it again when cropping is turned off", (await text(`
 str(bool(__import__("slicer").util.getNodesByClass("vtkMRMLMarkupsROINode")[0].GetDisplayNode().GetVisibility()))`)) === "False");
+
+// Clipping planes bring in a piece of shader that compared a float with an int literal, which
+// GLSL ES refuses; the volume then vanished as soon as cropping was switched on. Cropping is
+// turned on again here and the volume has to still be there (patches/VTK/0003-...).
+await call("setVolumeRendering", [volumeId, { croppingEnabled: true }]);
+await page.waitForTimeout(1500);
+const cropped = await rendered();
+check("the volume is still drawn once it is cropped", cropped.drawn > 1000, `${cropped.drawn} pixels`);
+check("and its shaders compiled", shaderErrors.length === 0, shaderErrors.slice(0, 1).join(" "));
 
 if (shot) await page.screenshot({ path: shot });
 await browser.close();

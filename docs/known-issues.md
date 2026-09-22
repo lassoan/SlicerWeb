@@ -71,6 +71,33 @@ that shaders read the same values, and gives unsigned short the float internal f
 Current VTK master fixes this the same way; the pin here is older than that work. Covered by
 `web/tests/volume-rendering.mjs`, which reads the pixels of the 3D view.
 
+## A coarsely rendered volume kept the first picture (fixed)
+
+With adaptive quality the volume mapper renders into a smaller buffer while the camera moves and
+stretches the result over the view. Here that buffer was filled once and never again: the volume
+stopped turning with the camera as soon as a drag started, while everything else in the view - the
+bounding box, the orientation marker - kept turning, and the full detail render at the end of the
+drag showed the right orientation.
+
+`vtkOpenGLState` caches the draw buffer for each binding point rather than for each framebuffer, and
+keeps that cache honest by re-reading it from OpenGL whenever a framebuffer is bound. The read asks
+for `GL_DRAW_BUFFER`, which only desktop OpenGL has, so under OpenGL ES nothing was read and the
+cache still held the previously bound framebuffer's value. `vtkOpenGLFramebufferObject` leaves every
+framebuffer it has used with `glDrawBuffers(GL_NONE)`, so from the second frame on the reduced
+buffer was switched off, and the clear and the ray cast that followed were both discarded - with no
+GL error, since a framebuffer with no draw buffer is perfectly legal. The texture kept the one
+picture that had been drawn into it when it was new.
+
+`patches/VTK/0008-BUG-Refresh-the-cached-draw-buffer-when-a-framebuffe.patch` reads
+`GL_DRAW_BUFFER0` where `GL_DRAW_BUFFER` is not defined. Anything that renders to a framebuffer
+twice is affected, not just volume rendering.
+
+The same report also had the volume disappear when cropping was switched on, which was a second
+instance of the int-literal comparison in `patches/VTK/0003-...`: the clipping code in the gradient
+shader compares a `dot` product with `0`, and GLSL ES will not compile that. That patch now also
+covers the independent-component and label-map paths. Both are covered by
+`web/tests/volume-rendering.mjs`.
+
 ## Still open
 
 - `vtkITKLevelTracingImageFilter` no longer throws but returns an empty contour, for every plane

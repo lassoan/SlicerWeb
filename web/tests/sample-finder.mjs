@@ -28,6 +28,21 @@ check("with the cursor in the search box",
 
 const items = page.locator("[data-name='sampleItem']");
 const all = await items.count();
+
+// The order is the Sample Data module's: categories sorted with the built-in one first, and inside
+// a category the data sets as they were registered - not everything in alphabetical order.
+const shown = (await page.locator("[data-name='sampleFinder'] [data-name='sampleItem'] .truncate").allInnerTexts())
+  .filter((_, i, list) => i % 2 === 0 || list.length === all).slice(0, 0);
+const namesShown = await page.evaluate(() => [...document.querySelectorAll("[data-name='sampleItem']")]
+  .map((el) => el.querySelector("span > span")?.textContent?.trim()).filter(Boolean));
+const fromModule = await page.evaluate(() => window.slicerWeb.bridge.call("getSampleDataSources", [])
+  .then((sources) => sources.map((s) => s.name)).catch(() => []));
+const inBoth = namesShown.filter((n) => fromModule.includes(n));
+check("the data sets are in the order the Sample Data module lists them",
+  inBoth.join("|") === fromModule.filter((n) => inBoth.includes(n)).join("|"),
+  inBoth.slice(0, 5).join(", ") + " …");
+check("which begins with the built-in ones, not with the first name in the alphabet",
+  inBoth[0] === fromModule[0], `${inBoth[0]} (the module starts with ${fromModule[0]})`);
 check("it lists the data sets", all > 10, `${all} of them`);
 const headings = await page.evaluate(() => [...document.querySelectorAll("[data-name='sampleFinder'] .sticky")].map((h) => h.textContent.trim()));
 check("under category headings", headings.length > 0, headings.join(", "));

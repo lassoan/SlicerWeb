@@ -109,16 +109,38 @@ def _thumbnail(source):
     return picture
 
 
+def _ordered_categories(sources):
+    """The categories in the order the Sample Data module shows them: sorted, the built-in ones first.
+
+    The name of the built-in category is set on the logic when it is made ("General"), so it is
+    read from there rather than assumed.
+    """
+    import SampleData
+
+    categories = sorted(sources.keys())
+    builtIn = getattr(SampleData.SampleDataLogic(), "builtInCategoryName", "General")
+    if builtIn in categories:
+        categories.remove(builtIn)
+        categories.insert(0, builtIn)
+    return categories
+
+
 @method()
 def getSampleDataSources():
-    """Sample data sets registered by modules: [{category, categoryTitle, name, ...}]."""
+    """Sample data sets registered by modules: [{category, categoryTitle, name, ...}].
+
+    In the order the Sample Data module lists them, so that the menu of the application and the
+    module agree: the categories sorted with the built-in one first, and inside a category the data
+    sets in the order they were registered.
+    """
     try:
         import SampleData
     except ImportError:
         return []
+    sources_by_category = _sources()
     result = []
-    for category, sources in _sources().items():
-        for source in sources:
+    for category in _ordered_categories(sources_by_category):
+        for source in sources_by_category[category]:
             uris = list(source.uris or [])
             count = len(uris)
             result.append({
@@ -140,7 +162,6 @@ def getSampleDataSources():
                 "customDownloader": source.customDownloader is not None,
                 "thumbnail": _thumbnail(source),
             })
-    result.sort(key=lambda s: (s["categoryTitle"], s["name"]))
     return result
 
 

@@ -32,10 +32,11 @@ const results = computed(() => {
     || s.categoryTitle.toLowerCase().includes(text));
   if (!text) return matching;
   // What was typed is most likely the start of the name being looked for, so those come first -
-  // typing "MRHead" offers MRHead before CBCTMRHead.
+  // typing "MRHead" offers MRHead before CBCTMRHead. Data sets that rank the same keep the order
+  // they are listed in, which is the order the Sample Data module lists them.
   const rank = (s: SampleEntry) => (s.name.toLowerCase() === text ? 0 : s.name.toLowerCase().startsWith(text) ? 1 : 2);
-  return [...matching].sort((a, b) => rank(a) - rank(b)
-    || a.categoryTitle.localeCompare(b.categoryTitle) || a.name.localeCompare(b.name));
+  const given = new Map(props.samples.map((s, index) => [s, index]));
+  return [...matching].sort((a, b) => rank(a) - rank(b) || (given.get(a) ?? 0) - (given.get(b) ?? 0));
 });
 
 /** The list as it is shown: a heading wherever the category changes. */

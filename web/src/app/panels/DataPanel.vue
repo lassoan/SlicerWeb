@@ -79,8 +79,9 @@ const sampleEntries = computed<SampleEntry[]>(() => {
     categoryTitle: "Sample data",
     source: s,
   }));
-  return [...fromModules, ...fromApplication].sort((a, b) =>
-    a.categoryTitle.localeCompare(b.categoryTitle) || a.name.localeCompare(b.name));
+  // Kept in the order the Sample Data module lists them (see slicerweb.sample_data): categories
+  // sorted with the built-in one first, and the data sets of a category as they were registered.
+  return [...fromModules, ...fromApplication];
 });
 
 function loadSampleEntry(entry: SampleEntry) {

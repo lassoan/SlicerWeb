@@ -58,6 +58,57 @@ def _as_list(value, count, default=None):
     return [value] * count
 
 
+_thumbnails = {}
+
+
+def _icon_named_after(source):
+    """The icon file named after what a data set loads, in the SampleData module's icons."""
+    try:
+        import SampleData
+
+        icons = os.path.join(os.path.dirname(SampleData.__file__), "Resources", "Icons")
+    except Exception:
+        return ""
+    names = [source.sampleName] + list(source.nodeNames or [])
+    for name in names:
+        if not name:
+            continue
+        candidate = os.path.join(icons, name + ".png")
+        if os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
+def _thumbnail(source):
+    """The picture a data set is known by, as a data URL, or "" where it has none.
+
+    A data set names a file (SampleDataLogic registers them with thumbnailFileName), which lives in
+    the Resources/Icons of the module that registered it. The page cannot read the file system of
+    the runtime, so the picture travels with the list.
+    """
+    path = getattr(source, "thumbnailFileName", None)
+    if not path:
+        # A data set that names no picture may still have one, under the name of what it loads, in
+        # the icons of the SampleData module - which is where the module's own GUI looks for it.
+        path = _icon_named_after(source)
+    if not path:
+        return ""
+    if path in _thumbnails:
+        return _thumbnails[path]
+    picture = ""
+    try:
+        import base64
+
+        if os.path.isfile(path):
+            with open(path, "rb") as handle:
+                kind = "jpeg" if path.lower().endswith((".jpg", ".jpeg")) else "png"
+                picture = "data:image/%s;base64,%s" % (kind, base64.b64encode(handle.read()).decode("ascii"))
+    except Exception:
+        logger.debug("The thumbnail %s could not be read", path, exc_info=True)
+    _thumbnails[path] = picture
+    return picture
+
+
 @method()
 def getSampleDataSources():
     """Sample data sets registered by modules: [{category, categoryTitle, name, ...}]."""
@@ -87,6 +138,7 @@ def getSampleDataSources():
                 # data sets with their own downloader (e.g. from a server that needs a login) can only
                 # be downloaded by their module
                 "customDownloader": source.customDownloader is not None,
+                "thumbnail": _thumbnail(source),
             })
     result.sort(key=lambda s: (s["categoryTitle"], s["name"]))
     return result

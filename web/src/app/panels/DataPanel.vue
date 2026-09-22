@@ -6,6 +6,7 @@ import { formatBytes, type SlicerRuntime } from "@/core/runtime";
 import { store } from "../store";
 import ShTree from "../components/ShTree.vue";
 import { SAMPLE_DATA } from "../sampleData";
+import SampleFinder, { type SampleEntry } from "../components/SampleFinder.vue";
 
 const bridge = inject<SlicerBridge>("bridge")!;
 const runtime = inject<SlicerRuntime>("runtime")!;
@@ -31,6 +32,7 @@ interface SampleDataSource {
   loadFileTypes: (string | null)[];
   loadFileProperties: Record<string, unknown>;
   customDownloader: boolean;
+  thumbnail?: string;
 }
 const moduleSamples = ref<SampleDataSource[]>([]);
 
@@ -58,14 +60,34 @@ function downloadOptions(what: string) {
 async function refreshModuleSamples() {
   moduleSamples.value = await bridge.call<SampleDataSource[]>("getSampleDataSources").catch(() => []);
 }
-const sampleCategories = computed(() => {
-  const groups = new Map<string, SampleDataSource[]>();
-  for (const s of moduleSamples.value) {
-    if (!groups.has(s.categoryTitle)) groups.set(s.categoryTitle, []);
-    groups.get(s.categoryTitle)!.push(s);
-  }
-  return [...groups.entries()];
+// Everything the finder offers, in one list: the data sets the application ships (which are there
+// before the runtime has started) and the ones the modules registered, which say more about
+// themselves. A data set in both is shown once, as the module's.
+const sampleEntries = computed<SampleEntry[]>(() => {
+  const fromModules = moduleSamples.value.map((s) => ({
+    name: s.name,
+    description: s.description,
+    categoryTitle: s.categoryTitle || "Sample data",
+    thumbnail: s.thumbnail,
+    customDownloader: s.customDownloader,
+    source: s,
+  }));
+  const known = new Set(fromModules.map((s) => s.name));
+  const fromApplication = SAMPLE_DATA.filter((s) => !known.has(s.name)).map((s) => ({
+    name: s.name,
+    description: s.description,
+    categoryTitle: "Sample data",
+    source: s,
+  }));
+  return [...fromModules, ...fromApplication].sort((a, b) =>
+    a.categoryTitle.localeCompare(b.categoryTitle) || a.name.localeCompare(b.name));
 });
+
+function loadSampleEntry(entry: SampleEntry) {
+  const source = entry.source as SampleDataSource | (typeof SAMPLE_DATA)[number];
+  if ("uris" in source) loadModuleSample(source);
+  else loadSample(source);
+}
 const offModules = bridge.events.on("modules-changed", refreshModuleSamples);
 onBeforeUnmount(() => offModules());
 watch(sampleOpen, (open) => open && refreshModuleSamples(), { immediate: true });
@@ -185,23 +207,8 @@ async function closeScene() {
       <button type="button" class="sw-data-btn" title="Load from URL" @click="loadUrl"><Link :size="15" />URL</button>
       <div class="relative">
         <button type="button" class="sw-data-btn" title="Sample data" @click="sampleOpen = !sampleOpen"><Database :size="15" />Samples</button>
-        <div v-if="sampleOpen" class="absolute top-8 left-0 z-20 max-h-[70vh] w-72 overflow-y-auto rounded-lg border border-input bg-popover p-1 shadow-xl">
-          <button v-for="s in SAMPLE_DATA" :key="s.name" type="button" class="block w-full rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent"
-            @click="loadSample(s)">
-            <div>{{ s.name }}</div>
-            <div class="text-[11px] text-muted-foreground">{{ s.description }}</div>
-          </button>
-          <template v-for="[category, items] in sampleCategories" :key="category">
-            <div class="px-2 pt-2 pb-0.5 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{{ category }}</div>
-            <button v-for="s in items" :key="category + s.name" type="button"
-              class="block w-full rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent disabled:opacity-40"
-              :disabled="s.customDownloader" :title="s.customDownloader ? 'This data set can only be downloaded by its module' : s.uris.join(', ')"
-              @click="loadModuleSample(s)">
-              <div>{{ s.name }}</div>
-              <div v-if="s.description" class="text-[11px] text-muted-foreground">{{ s.description }}</div>
-            </button>
-          </template>
-        </div>
+        <SampleFinder v-if="sampleOpen" :samples="sampleEntries"
+          @load="loadSampleEntry" @close="sampleOpen = false" />
       </div>
       <button type="button" class="sw-data-btn" title="Save scene" @click="saveScene"><Save :size="15" /></button>
       <button type="button" class="sw-data-btn" title="Close scene" @click="closeScene"><Trash2 :size="15" /></button>

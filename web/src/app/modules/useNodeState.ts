@@ -8,6 +8,8 @@ import type { SlicerBridge } from "@/core/bridge";
 export function useNodeState<T>(method: string, nodeID: Ref<string | null>) {
   const bridge = inject<SlicerBridge>("bridge")!;
   const state = ref<T | null>(null) as Ref<T | null>;
+  /** What went wrong the last time the state was read, for the panel to show. */
+  const error = ref("");
   let observed: string | null = null;
   let pending = false;
 
@@ -22,8 +24,12 @@ export function useNodeState<T>(method: string, nodeID: Ref<string | null>) {
       pending = false;
       try {
         state.value = nodeID.value ? await bridge.call<T>(method, [nodeID.value]) : null;
-      } catch {
-        state.value = null;
+        error.value = "";
+      } catch (e: any) {
+        // Keep what the panel is showing. A reading that fails - the node has gone, say, or the
+        // application was busy - used to leave the panel with nothing in it but its node selector.
+        error.value = e?.message ?? String(e);
+        console.error(`${method} could not be read`, e);
       }
     });
   }
@@ -48,5 +54,5 @@ export function useNodeState<T>(method: string, nodeID: Ref<string | null>) {
     if (observed) bridge.call("observeNode", [observed, false]).catch(() => {});
   });
 
-  return { state, refresh, bridge };
+  return { state, error, refresh, bridge };
 }

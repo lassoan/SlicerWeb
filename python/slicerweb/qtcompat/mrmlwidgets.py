@@ -3,6 +3,7 @@
 from . import dom
 from .core import property_value
 from .core import QProp, Signal
+from .ctkwidgets import ctkRangeWidget
 from .widgets import QVBoxLayout, QWidget, _ElementWidget
 
 
@@ -701,8 +702,21 @@ class qMRMLSpinBox(qMRMLSliderWidget):
     _tag = "sw-spinbox"
 
 
-class qMRMLRangeWidget(QWidget):
-    pass
+class qMRMLRangeWidget(ctkRangeWidget):
+    """A range slider that knows what it is showing, as the Qt one does (it derives from ctkRangeWidget).
+
+    Modules connect to valuesChanged and read minimumValue and maximumValue, all of which the ctk
+    widget already has; the quantity and the scene only decide how the numbers are displayed.
+    """
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+    def quantity(self):
+        return getattr(self, "_quantity", "")
+
+    def setMRMLScene(self, scene):
+        self._scene = scene
 
 
 class qMRMLWindowLevelWidget(QWidget):

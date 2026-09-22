@@ -20,7 +20,7 @@ interface VRInfo {
 const qualities = ["Adaptive", "Normal", "Maximum"];
 
 const nodeID = useSelectedNode("Volume");
-const { state, bridge, refresh } = useNodeState<VRInfo>("volumeRenderingInfo", nodeID);
+const { state, error, bridge, refresh } = useNodeState<VRInfo>("volumeRenderingInfo", nodeID);
 
 async function set(props: Record<string, unknown>) {
   if (!nodeID.value) return;
@@ -55,5 +55,6 @@ async function set(props: Record<string, unknown>) {
       <SwCheckBox text="Crop (ROI)" :checked="state.croppingEnabled" @toggled="set({ croppingEnabled: $event })" />
     </template>
     <div v-else class="py-6 text-center text-[12px] text-muted-foreground">Load a volume to render it in 3D.</div>
+    <p v-if="error" class="rounded bg-card/70 p-2 text-[12px] text-red-400" data-name="vrError">{{ error }}</p>
   </div>
 </template>

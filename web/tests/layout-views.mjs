@@ -60,6 +60,14 @@ for (const layout of ["FourUp", "Dual3D", "Conventional", "OneUp3D", "TwoOverTwo
   check(`${layout}: of the right kind`, wrong.length === 0, wrong.join("; ") || Object.entries(wanted).map(([n, k]) => `${n}:${k}`).join(" "));
 }
 
+// The names in the layout menu: the words parted, and "3D" left whole (it read "Dual3 D" before).
+await page.getByRole("button", { name: "Layout" }).first().click();
+await page.waitForTimeout(600);
+const names = (await page.locator("[data-name='layoutItem']").allInnerTexts()).map((t) => t.trim());
+check("the layout menu lists the layouts", names.length > 5, `${names.length} of them`);
+check("named with 3D whole, not split after the digit",
+  !names.some((n) => /\d\s+D/.test(n)), names.filter((n) => /3D/.test(n)).join(", "));
+
 if (shot) await page.screenshot({ path: shot });
 await browser.close();
 console.log(fail.length ? "FAILED: " + fail.join(", ") : "ALL PASSED");

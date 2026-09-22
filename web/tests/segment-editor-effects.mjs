@@ -15,6 +15,7 @@ await page.waitForTimeout(3000);
 const run = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c), code);
 const value = (expr) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, "eval"), expr);
 const number = async (expr) => Number(await value(expr));
+const text = async (expr) => String(await value(expr)).replace(/^['"]|['"]$/g, "");
 const fail = [];
 const check = (name, ok, detail) => {
   console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail === undefined ? "" : ": " + detail}`);
@@ -83,9 +84,25 @@ await apply("Margin", { marginMm: -2 });
 const shrunk = await number(`count(shapes, theBall)`);
 check("and shrinks it again", shrunk < grown && Math.abs(shrunk - ballVoxels) < ballVoxels * 0.1,
   `${grown} -> ${shrunk}, from ${ballVoxels}`);
-await apply("Hollow", { thicknessMm: 2, shellMode: "inside" });
+// Slicer's shell modes say what the surface the segment has now becomes: with "outside" the shell
+// is taken from within that surface, with "inside" it is added around it. Either way the middle of
+// the ball is emptied out, which is what hollow means.
+await run(`
+def middleIsSet(node, segmentID):
+    labelmap = node.GetSegmentation().GetSegment(segmentID).GetRepresentation("Binary labelmap")
+    if labelmap is None:
+        return False
+    extent = labelmap.GetExtent()
+    middle = [(extent[2 * a] + extent[2 * a + 1]) // 2 for a in range(3)]
+    return labelmap.GetScalarComponentAsDouble(middle[0], middle[1], middle[2], 0) > 0
+`);
+const middleBefore = await text(`str(middleIsSet(shapes, theBall))`);
+await apply("Hollow", { thicknessMm: 2, shellMode: "outside" });
 const shell = await number(`count(shapes, theBall)`);
-check("hollow leaves a shell", shell > 0 && shell < shrunk, `${shrunk} -> ${shell}`);
+const middleAfter = await text(`str(middleIsSet(shapes, theBall))`);
+check("hollow leaves a shell and empties the middle",
+  shell > 0 && shell < shrunk && middleBefore === "True" && middleAfter === "False",
+  `${shrunk} -> ${shell} voxels, middle set before: ${middleBefore}, after: ${middleAfter}`);
 
 // --- fill between slices
 await run(`

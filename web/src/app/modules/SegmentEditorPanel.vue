@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, Waves, Eraser as ClearIcon,
+import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, Waves,
   MousePointer2, Sprout, Layers, Expand, CircleDashed, Combine } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider, SwButton, SwComboBox } from "@/widgets";
+import TerminologySelector from "../components/TerminologySelector.vue";
 
 interface EditorState {
   segmentationNodeID: string | null;
@@ -16,6 +17,7 @@ interface EditorState {
   show3D: boolean;
   canUndo: boolean;
   canRedo: boolean;
+  segmentsWithContent: number;
   scalarRange: number[];
   maskMode: number;
   overwriteMode: number;
@@ -26,6 +28,9 @@ const state = ref<EditorState | null>(null);
 const threshold = ref<[number, number]>([0, 0]);
 const smoothing = ref(3);
 const error = ref("");
+// Double-clicking a segment asks what it is, the way the desktop Segment Editor does: the choice
+// names the segment and colours it from the terminology.
+const terminologyFor = ref<{ id: string; name: string } | null>(null);
 
 async function refresh() {
   state.value = await bridge.call<EditorState>("segmentEditorState");
@@ -88,7 +93,6 @@ const effects = [
   { name: "Logic", label: "Logical operators", icon: Combine },
   { name: "Islands", label: "Islands", icon: Sparkles },
   { name: "Smoothing", label: "Smoothing", icon: Waves },
-  { name: "Clear", label: "Clear", icon: ClearIcon },
 ];
 const shellModes = [
   { value: "inside", label: "Inside the surface" },
@@ -122,8 +126,25 @@ const maskModes = ["Everywhere", "Inside all segments", "Inside all visible segm
 const overwriteModes = ["All segments", "Visible segments", "None"];
 const current = computed(() => state.value?.segments.find((s) => s.id === state.value?.currentSegmentID));
 
+/** Why an effect cannot be used now, if it cannot: every effect works on a segment. */
+function unusable(effect: string | null): string {
+  if (!effect) return "";
+  if (!state.value?.segments.length) return "Add a segment first";
+  if (effect === "GrowFromSeeds" && (state.value?.segmentsWithContent ?? 0) < 2) {
+    return "Paint into two segments first - one of them for what is around the structure";
+  }
+  if (effect === "FillBetweenSlices" && (state.value?.segmentsWithContent ?? 0) < 1) {
+    return "Segment a few slices first";
+  }
+  return "";
+}
+
 const off = bridge.events.on("segment-editor-changed", () => refresh());
-onMounted(refresh);
+// There is nothing to edit in an empty scene, and every effect needs a segmentation, so the module
+// makes one when it is opened - the Segment Editor of the desktop offers to, this does it.
+onMounted(async () => {
+  state.value = await bridge.call<EditorState>("segmentEditorEnsureSegmentation");
+});
 onBeforeUnmount(() => {
   off();
   bridge.call("segmentEditorSetEffect", [null]);
@@ -132,6 +153,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-2">
+    <TerminologySelector v-if="terminologyFor && state?.segmentationNodeID" :segmentation-node-id="state.segmentationNodeID"
+      :segment-id="terminologyFor.id" :segment-name="terminologyFor.name"
+      @close="terminologyFor = null" @applied="refresh" />
     <SwFormRow label="Segmentation">
       <SwNodeSelector node-types="vtkMRMLSegmentationNode" add-enabled base-name="Segmentation" :current-node-id="state?.segmentationNodeID"
         @current-node-changed="setup($event, state?.sourceVolumeNodeID ?? null)" />
@@ -154,18 +178,21 @@ onBeforeUnmount(() => {
           @click="run('segmentEditorRedo')"><Redo2 :size="16" /></button>
       </div>
       <div class="max-h-48 overflow-y-auto rounded-md border border-input/60">
-        <button v-for="s in state.segments" :key="s.id" type="button" class="flex w-full items-center gap-2 px-2 py-1 text-left text-[13px]"
+        <button v-for="s in state.segments" :key="s.id" type="button" data-name="segmentRow"
+          class="flex w-full items-center gap-2 px-2 py-1 text-left text-[13px]"
           :class="s.id === state.currentSegmentID ? 'bg-accent text-foreground' : 'hover:bg-accent/40'"
-          @click="run('segmentEditorSelectSegment', [s.id])">
+          title="Double-click to say what this segment is"
+          @click="run('segmentEditorSelectSegment', [s.id])"
+          @dblclick="terminologyFor = { id: s.id, name: s.name }">
           <span class="h-3 w-3 rounded-sm" :style="{ background: s.color }" />{{ s.name }}
         </button>
         <div v-if="!state.segments.length" class="p-2 text-[12px] text-muted-foreground">Add a segment to start editing.</div>
       </div>
       <div class="grid grid-cols-4 gap-1">
-        <button v-for="e in effects" :key="e.label" type="button"
-          class="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[11px]"
-          :class="state.effect === e.name ? 'bg-highlight text-background' : 'bg-card text-foreground/85 hover:bg-accent'"
-          @click="run('segmentEditorSetEffect', [e.name])">
+        <button v-for="e in effects" :key="e.label" type="button" :disabled="!!unusable(e.name)"
+          class="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-40"
+          :class="state.effect === e.name ? 'bg-highlight text-background' : 'bg-card text-foreground/85 enabled:hover:bg-accent'"
+          :title="unusable(e.name) || e.label" @click="run('segmentEditorSetEffect', [e.name])">
           <component :is="e.icon" :size="16" />{{ e.label }}
         </button>
       </div>
@@ -250,9 +277,6 @@ onBeforeUnmount(() => {
         <template v-else-if="state.effect === 'Smoothing'">
           <SwFormRow label="Kernel size"><SwSlider :value="smoothing" :minimum="1" :maximum="15" :decimals="1" suffix="mm" @value-changed="smoothing = $event" /></SwFormRow>
           <SwButton text="Apply median smoothing" primary class="mt-1" @clicked="run('segmentEditorApply', ['Smoothing', { kernelSizeMm: smoothing }])" />
-        </template>
-        <template v-else-if="state.effect === 'Clear'">
-          <SwButton text="Clear selected segment" primary @clicked="run('segmentEditorApply', ['Clear'])" />
         </template>
       </div>
       <details class="text-[12px]">

@@ -252,6 +252,7 @@ endforeach()
 # SlicerWeb libraries
 #-----------------------------------------------------------------------------
 include(SlicerWebMacros)
+add_subdirectory(Modules/CLI ${CMAKE_BINARY_DIR}/Modules/CLI)
 add_subdirectory(SlicerWebCore)
 add_subdirectory(Modules)
 

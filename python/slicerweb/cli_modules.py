@@ -34,6 +34,9 @@ logger = logging.getLogger("slicerweb.cli")
 _IMPLEMENTATIONS = {}
 #: name (lower case) -> parsed XML description
 _DESCRIPTIONS = None
+#: The logics of the CLI modules built in as C++. The application logic only keeps a weak pointer to
+#: a module's logic - on the desktop the module object owns it - so they are held here instead.
+_BUILT_IN_LOGICS = {}
 
 #: What a parameter of each XML tag is, and what kind of node it takes.
 _NODE_TYPES = {
@@ -608,6 +611,8 @@ def install():
     slicer.cli.run = run
     slicer.cli.runSync = runSync
 
+    _installBuiltIn()
+
     manager = slicer.app.moduleManager()
     offered = []
     for name, implementation in sorted(_IMPLEMENTATIONS.items()):
@@ -620,6 +625,40 @@ def install():
         manager.registerLoadableModule(CliModuleDescriptor(found, implementation))
         offered.append(found["name"])
     logger.info("CLI modules: %s", ", ".join(offered) or "none")
+
+
+def _installBuiltIn():
+    """Let the C++ of other modules use the CLI modules that are built into the application.
+
+    A few CLI modules are compiled into SlicerWebCore and run through vtkSlicerCLIModuleLogic, the
+    way desktop Slicer runs a CLI module that is a library rather than a program (see
+    SlicerWebCore/vtkSlicerWebCLIModule.h). Their logic goes into the application logic under the
+    module's name, which is where C++ looks for it: vtkSlicerCropVolumeLogic asks the application
+    logic for "ResampleScalarVectorDWIVolume" when it crops with resampling.
+    """
+    factory = getattr(slicer, "vtkSlicerWebCLIModule", None)
+    if factory is None:
+        logger.debug("No CLI modules are built into this application")
+        return
+    appLogic = slicer.app.applicationLogic()
+    for name in (factory.GetModuleNames() or "").split(";"):
+        name = name.strip()
+        if not name:
+            continue
+        logic = factory.CreateLogic(name)
+        if logic is None:
+            logger.warning("The CLI module %s is built in but its logic could not be made", name)
+            continue
+        logic.SetMRMLScene(slicer.mrmlScene)
+        logic.SetMRMLApplicationLogic(appLogic)
+        _BUILT_IN_LOGICS[name] = logic
+        appLogic.SetModuleLogic(name, logic)
+        logger.info("CLI module %s is built in and runs in the page", name)
+
+
+def builtIn(name):
+    """Whether this CLI module is compiled into the application and can be run from C++."""
+    return slicer.app.applicationLogic().GetModuleLogic(str(name)) is not None
 
 
 class _Unlisted:

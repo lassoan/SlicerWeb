@@ -223,7 +223,10 @@ class SlicerWebApplication:
         appLogic.SetSliceLogics(vtk.vtkCollection())
         appLogic.SetViewLogics(vtk.vtkCollection())
         appLogic.SetMRMLScene(scene)
-        # No processing/networking threads in the browser: CreateProcessingThread() is not called.
+        # No processing or networking threads in the browser: under Emscripten this starts none and
+        # only opens the queues that carry results back (see the Slicer patch of the same name), so
+        # that what a module asks to be read in, is read in. Tasks run where they are scheduled.
+        appLogic.CreateProcessingThread()
         # Data IO manager and cache directory (vtkMRMLScene::ReadFromMRB extracts bundles there);
         # remote downloads are not handled by the RemoteIO stub (the browser fetches URLs instead).
         remoteIOLogic = slicer.vtkMRMLRemoteIOLogic()

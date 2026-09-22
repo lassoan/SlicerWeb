@@ -12,6 +12,7 @@ import os
 import slicer
 import vtk
 
+from . import cli_modules
 from .bridge import _node, method
 
 logger = logging.getLogger("slicerweb.panels")
@@ -469,9 +470,7 @@ def cropVolumeInfo(parameterNodeID=None):
         node = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLCropVolumeParametersNode")
     if node is None:
         node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLCropVolumeParametersNode", "CropVolume")
-        # Cropping without resampling is done here; resampling is a CLI module, which is a separate
-        # program and cannot be run in the page (see interpolatedCropAvailable below).
-        node.SetVoxelBased(True)
+        node.SetVoxelBased(not cli_modules.builtIn("ResampleScalarVectorDWIVolume"))
     inputVolume = node.GetInputVolumeNode()
     roi = node.GetROINode()
     logic = slicer.app.applicationLogic().GetModuleLogic("CropVolume")
@@ -487,7 +486,7 @@ def cropVolumeInfo(parameterNodeID=None):
         spacing = [round(s / max(node.GetSpacingScalingConst(), 1e-6), 3) for s in inputVolume.GetSpacing()]
     return {
         "parameterNodeID": node.GetID(),
-        "interpolatedCropAvailable": False,
+        "interpolatedCropAvailable": cli_modules.builtIn("ResampleScalarVectorDWIVolume"),
         "inputVolumeID": inputVolume.GetID() if inputVolume is not None else None,
         "outputVolumeID": node.GetOutputVolumeNode().GetID() if node.GetOutputVolumeNode() is not None else None,
         "roiID": roi.GetID() if roi is not None else None,
@@ -529,10 +528,9 @@ def applyCropVolume(parameterNodeID):
         raise RuntimeError("The Crop Volume module is not available")
     if node.GetInputVolumeNode() is None or node.GetROINode() is None:
         raise ValueError("Choose an input volume and a region of interest")
-    if not node.GetVoxelBased():
-        raise RuntimeError("Cropping with resampling uses the Resample Scalar/Vector/DWI Volume "
-                           "module, which is a separate program and cannot be run in a web browser. "
-                           "Use voxel based cropping instead.")
+    if not node.GetVoxelBased() and not cli_modules.builtIn("ResampleScalarVectorDWIVolume"):
+        raise RuntimeError("Cropping with resampling needs the Resample Scalar/Vector/DWI Volume "
+                           "module, which is not built into this application. Crop voxel based instead.")
     if node.GetOutputVolumeNode() is None:
         output = slicer.mrmlScene.AddNewNodeByClass(node.GetInputVolumeNode().GetClassName(),
                                                     node.GetInputVolumeNode().GetName() + " cropped")

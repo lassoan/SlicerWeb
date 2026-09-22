@@ -68,8 +68,8 @@ onMounted(refresh);
     </SwFormRow>
     <SwCheckBox text="Voxel based (no resampling)" :checked="state.voxelBased" @toggled="set({ voxelBased: $event })" />
     <div v-if="!state.voxelBased && !state.interpolatedCropAvailable" class="rounded bg-card/70 p-2 text-[12px] text-muted-foreground">
-      Cropping with resampling uses the Resample Scalar/Vector/DWI Volume module, which is a separate
-      program and cannot be run in a web browser. Crop voxel based instead.
+      Cropping with resampling needs the Resample Scalar/Vector/DWI Volume module, which is not built
+      into this application. Crop voxel based instead.
     </div>
     <template v-if="!state.voxelBased">
       <SwFormRow label="Interpolation">

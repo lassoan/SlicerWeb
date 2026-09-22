@@ -13,6 +13,7 @@ set(SlicerWebCore_SRCS
   vtkSlicerWebSegmentEditorWidgetRepresentation.cxx
   vtkSlicerWebSegmentEditorWidget.cxx
   vtkSlicerWebSegmentEditorDisplayableManager.cxx
+  vtkSlicerWebCLIModule.cxx
   )
 
 set(lib_name SlicerWebCore)
@@ -22,8 +23,11 @@ target_include_directories(${lib_name} PUBLIC
   ${CMAKE_CURRENT_BINARY_DIR}
   ${Slicer_Libs_INCLUDE_DIRS}
   ${Slicer_Base_INCLUDE_DIRS}
+  ${SlicerExecutionModel_INCLUDE_DIRS}   # ModuleDescription, for the CLI modules built in
   )
 target_link_libraries(${lib_name} PUBLIC SlicerBaseLogic MRMLDisplayableManager MRMLLogic MRMLCore ${VTK_LIBRARIES})
+# The CLI modules built into the application, which vtkSlicerWebCLIModule hands to the CLI logic
+target_link_libraries(${lib_name} PRIVATE SlicerWebCLIModules ModuleDescriptionParser)
 
 include(GenerateExportHeader)
 generate_export_header(${lib_name}

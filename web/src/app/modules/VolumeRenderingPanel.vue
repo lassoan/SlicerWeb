@@ -12,7 +12,12 @@ interface VRInfo {
   shift: number;
   shiftRange: number[];
   croppingEnabled?: boolean;
+  quality: number;
+  expectedFPS: number;
 }
+
+// vtkMRMLViewNode::VolumeRenderingQualityType
+const qualities = ["Adaptive", "Normal", "Maximum"];
 
 const nodeID = useSelectedNode("Volume");
 const { state, bridge, refresh } = useNodeState<VRInfo>("volumeRenderingInfo", nodeID);
@@ -37,6 +42,15 @@ async function set(props: Record<string, unknown>) {
       </SwFormRow>
       <SwFormRow label="Shift">
         <SwSlider :value="state.shift" :minimum="state.shiftRange[0]" :maximum="state.shiftRange[1]" :decimals="0" @value-changed="set({ shift: $event })" />
+      </SwFormRow>
+      <SwFormRow label="Quality">
+        <SwComboBox :items="qualities" :current-index="state.quality"
+          tool-tip="Adaptive gives up detail while the camera is moving, so that it keeps up; the others always render in full."
+          @current-index-changed="set({ quality: $event })" />
+      </SwFormRow>
+      <SwFormRow v-if="state.quality === 0" label="Aim for">
+        <SwSlider :value="state.expectedFPS" :minimum="1" :maximum="60" :decimals="0" suffix=" fps"
+          @value-changed="set({ expectedFPS: $event })" />
       </SwFormRow>
       <SwCheckBox text="Crop (ROI)" :checked="state.croppingEnabled" @toggled="set({ croppingEnabled: $event })" />
     </template>

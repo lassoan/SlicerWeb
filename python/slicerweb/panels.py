@@ -347,7 +347,13 @@ def volumeRenderingInfo(volumeNodeID):
     displayNode = logic.GetFirstVolumeRenderingDisplayNode(volume)
     presets = logic.GetPresetsScene().GetNodesByClass("vtkMRMLVolumePropertyNode")
     names = [presets.GetItemAsObject(i).GetName() for i in range(presets.GetNumberOfItems())]
-    info = {"visible": False, "presets": names, "preset": None, "shift": 0.0, "shiftRange": [-500.0, 500.0]}
+    # How hard the views work at a volume is a property of the view, not of the volume, so it is
+    # read from the first 3D view (they are all set together below).
+    viewNodes = [slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLViewNode")
+                 for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLViewNode"))]
+    info = {"visible": False, "presets": names, "preset": None, "shift": 0.0, "shiftRange": [-500.0, 500.0],
+            "quality": viewNodes[0].GetVolumeRenderingQuality() if viewNodes else 0,
+            "expectedFPS": viewNodes[0].GetExpectedFPS() if viewNodes else 8.0}
     if displayNode is not None:
         info["visible"] = bool(displayNode.GetVisibility())
         vp = displayNode.GetVolumePropertyNode()
@@ -381,6 +387,17 @@ def setVolumeRendering(volumeNodeID, properties):
         delta = float(properties["shift"]) - previous
         vp.SetAttribute("SlicerWeb.Shift", str(float(properties["shift"])))
         _shift_transfer_functions(vp.GetVolumeProperty(), delta)
+    if "quality" in properties or "expectedFPS" in properties:
+        # Adaptive quality takes coarser steps through the volume while the camera is moving and
+        # goes back to full detail when it stops; the frame rate it aims for is what decides how
+        # much detail it gives up (vtkMRMLVolumeRenderingDisplayableManager passes both to the
+        # mapper). Normal and Maximum render the same whatever is happening.
+        for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLViewNode")):
+            viewNode = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLViewNode")
+            if "quality" in properties:
+                viewNode.SetVolumeRenderingQuality(int(properties["quality"]))
+            if "expectedFPS" in properties:
+                viewNode.SetExpectedFPS(float(properties["expectedFPS"]))
     if "croppingEnabled" in properties:
         # The region to crop to is made when cropping is first asked for, not before, and is shown
         # while cropping is on so that it can be moved and resized.

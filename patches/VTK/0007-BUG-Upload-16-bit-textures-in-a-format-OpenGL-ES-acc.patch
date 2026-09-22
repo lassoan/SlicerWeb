@@ -1,0 +1,224 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@localhost>
+Date: Sun, 21 Sep 2026 22:30:00 -0400
+Subject: [PATCH] BUG: Upload 16 bit textures in a format OpenGL ES accepts
+
+OpenGL ES 3.0 (and so WebGL 2) has the normalized 16 bit texture formats only
+with GL_EXT_texture_norm16, so vtkOpenGLState left GL_R16 and GL_R16_SNORM out
+of its table and offered the float format instead. The data type was not told
+about it: GetDefaultDataType went on saying GL_SHORT for a texture whose
+internal format had become GL_R32F, which is not a combination OpenGL accepts,
+and the upload failed with GL_INVALID_OPERATION - "glTexImage3D: Invalid
+combination of format, type and internalFormat". Nothing was drawn from the
+texture afterwards, which in a volume rendering shows as a solid block the size
+of the volume. Unsigned short had no float format at all, so its internal format
+came out as nothing.
+
+The extension is now looked for. Where it is there, 16 bit data goes to the card
+as it is - half the memory of the float fallback, half the bandwidth to read it
+back while ray casting, and no pass over the data on the way. Where it is not,
+the data is uploaded as float, divided the way a normalized 16 bit texture
+divides it so that what a shader reads is unchanged.
+---
+--- a/Rendering/OpenGL2/vtkOpenGLState.cxx
++++ b/Rendering/OpenGL2/vtkOpenGLState.cxx
+@@ -16,6 +16,7 @@
+ #include "vtkOpenGLError.h"
+ 
+ #include <cmath>
++#include <cstring>
+ 
+ #include "vtksys/SystemInformation.hxx"
+ 
+@@ -2202,6 +2203,44 @@ void vtkOpenGLState::InitializeTextureInternalFormats()
+   this->TextureInternalFormats[VTK_SHORT][1][2] = GL_RG32F;
+   this->TextureInternalFormats[VTK_SHORT][1][3] = GL_RGB32F;
+   this->TextureInternalFormats[VTK_SHORT][1][4] = GL_RGBA32F;
++
++  this->TextureInternalFormats[VTK_UNSIGNED_SHORT][1][1] = GL_R32F;
++  this->TextureInternalFormats[VTK_UNSIGNED_SHORT][1][2] = GL_RG32F;
++  this->TextureInternalFormats[VTK_UNSIGNED_SHORT][1][3] = GL_RGB32F;
++  this->TextureInternalFormats[VTK_UNSIGNED_SHORT][1][4] = GL_RGBA32F;
++#endif
++
++#ifdef GL_ES_VERSION_3_0
++  // GL_EXT_texture_norm16 brings the normalized 16 bit formats to OpenGL ES. Where it is there,
++  // 16 bit data goes to the card as it is: half the memory of the float fallback, half the
++  // bandwidth to read it back, and no pass over the data on the way.
++  this->SupportsTextureNorm16 = false;
++  GLint numberOfExtensions = 0;
++  glGetIntegerv(GL_NUM_EXTENSIONS, &numberOfExtensions);
++  for (GLint i = 0; i < numberOfExtensions; ++i)
++  {
++    const char* extension = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i));
++    if (extension && strcmp(extension, "GL_EXT_texture_norm16") == 0)
++    {
++      this->SupportsTextureNorm16 = true;
++      break;
++    }
++  }
++  if (this->SupportsTextureNorm16)
++  {
++    const GLenum R16 = 0x822A;         // GL_R16_EXT
++    const GLenum RG16 = 0x822C;        // GL_RG16_EXT
++    const GLenum RGBA16 = 0x805B;      // GL_RGBA16_EXT
++    const GLenum R16_SNORM = 0x8F98;   // GL_R16_SNORM_EXT
++    const GLenum RG16_SNORM = 0x8F99;  // GL_RG16_SNORM_EXT
++    const GLenum RGBA16_SNORM = 0x8F9B;// GL_RGBA16_SNORM_EXT
++    this->TextureInternalFormats[VTK_UNSIGNED_SHORT][0][1] = R16;
++    this->TextureInternalFormats[VTK_UNSIGNED_SHORT][0][2] = RG16;
++    this->TextureInternalFormats[VTK_UNSIGNED_SHORT][0][4] = RGBA16;
++    this->TextureInternalFormats[VTK_SHORT][0][1] = R16_SNORM;
++    this->TextureInternalFormats[VTK_SHORT][0][2] = RG16_SNORM;
++    this->TextureInternalFormats[VTK_SHORT][0][4] = RGBA16_SNORM;
++  }
+ #endif
+ }
+ VTK_ABI_NAMESPACE_END
+diff --git a/Rendering/OpenGL2/vtkOpenGLState.h b/Rendering/OpenGL2/vtkOpenGLState.h
+index 81dd48a..bbc0e0e 100644
+--- a/Rendering/OpenGL2/vtkOpenGLState.h
++++ b/Rendering/OpenGL2/vtkOpenGLState.h
+@@ -330,6 +330,13 @@ public:
+   int GetDefaultTextureInternalFormat(
+     int vtktype, int numComponents, bool needInteger, bool needFloat, bool needSRGB);
+ 
++  /**
++   * Whether normalized 16 bit textures are available. They always are on desktop OpenGL; on
++   * OpenGL ES they come with GL_EXT_texture_norm16, and without it 16 bit data is held in a float
++   * texture instead (see vtkTextureObject).
++   */
++  bool GetSupportsTextureNorm16() { return this->SupportsTextureNorm16; }
++
+   /**
+    * Get the current stored state of the draw buffer and binding
+    */
+@@ -396,6 +403,7 @@ protected:
+   void Scissor(std::array<int, 4> val);
+   void Viewport(std::array<int, 4> val);
+ 
++  bool SupportsTextureNorm16 = true;
+   int TextureInternalFormats[VTK_OBJECT + 1][3][5];
+   void InitializeTextureInternalFormats();
+ 
+diff --git a/Rendering/OpenGL2/vtkTextureObject.cxx b/Rendering/OpenGL2/vtkTextureObject.cxx
+index e80f511..b902011 100644
+--- a/Rendering/OpenGL2/vtkTextureObject.cxx
++++ b/Rendering/OpenGL2/vtkTextureObject.cxx
+@@ -24,6 +24,7 @@
+ #include "vtkOpenGLHelper.h"
+ 
+ #include <cassert>
++#include <vector>
+ 
+ // #define VTK_TO_DEBUG
+ // #define VTK_TO_TIMING
+@@ -37,6 +38,41 @@
+ 
+ #define BUFFER_OFFSET(i) (reinterpret_cast<char*>(i))
+ 
++#ifdef GL_ES_VERSION_3_0
++// 16 bit data on its way to a float texture: divided as a normalized 16 bit texture would divide
++// it, so that a shader reads the same values either way. Returns an empty vector when the data is
++// not 16 bit, in which case it is uploaded as it is.
++static std::vector<float> NormalizeIntegerToFloat(
++  int dataType, unsigned int glType, const void* data, size_t numValues)
++{
++  if (glType != GL_FLOAT || !data)
++  {
++    return {};
++  }
++  if (dataType == VTK_UNSIGNED_SHORT)
++  {
++    std::vector<float> result(numValues);
++    const unsigned short* source = static_cast<const unsigned short*>(data);
++    for (size_t i = 0; i < numValues; ++i)
++    {
++      result[i] = source[i] / 65535.0f;
++    }
++    return result;
++  }
++  if (dataType == VTK_SHORT)
++  {
++    std::vector<float> result(numValues);
++    const short* source = static_cast<const short*>(data);
++    for (size_t i = 0; i < numValues; ++i)
++    {
++      result[i] = source[i] / 32767.0f;
++    }
++    return result;
++  }
++  return {};
++}
++#endif
++
+ // Mapping from DepthTextureCompareFunction values to OpenGL values.
+ //------------------------------------------------------------------------------
+ VTK_ABI_NAMESPACE_BEGIN
+@@ -867,9 +903,25 @@ int vtkTextureObject::GetDefaultDataType(int vtk_scalar_type)
+       return GL_UNSIGNED_BYTE;
+ 
+     case VTK_SHORT:
++#ifdef GL_ES_VERSION_3_0
++      // Without GL_EXT_texture_norm16 OpenGL ES has no normalized 16 bit texture format, so the
++      // data is held in a float texture (GL_R32F, see
++      // vtkOpenGLState::InitializeTextureInternalFormats) and normalized on the way there (see
++      // NormalizeIntegerToFloat below), which leaves what a shader reads unchanged.
++      if (this->Context && !this->Context->GetState()->GetSupportsTextureNorm16())
++      {
++        return GL_FLOAT;
++      }
++#endif
+       return GL_SHORT;
+ 
+     case VTK_UNSIGNED_SHORT:
++#ifdef GL_ES_VERSION_3_0
++      if (this->Context && !this->Context->GetState()->GetSupportsTextureNorm16())
++      {
++        return GL_FLOAT;
++      }
++#endif
+       return GL_UNSIGNED_SHORT;
+ 
+     case VTK_INT:
+@@ -1543,9 +1595,17 @@ bool vtkTextureObject::Create3DFromRaw(unsigned int width, unsigned int height,
+   // Source texture data from the PBO.
+   this->Context->GetState()->vtkglPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+ 
++#ifdef GL_ES_VERSION_3_0
++  std::vector<float> normalized =
++    NormalizeIntegerToFloat(dataType, this->Type, data, static_cast<size_t>(width) * height * depth * numComps);
++  const void* uploaded = normalized.empty() ? data : normalized.data();
++#else
++  const void* uploaded = data;
++#endif
++
+   glTexImage3D(this->Target, 0, this->InternalFormat, static_cast<GLsizei>(this->Width),
+     static_cast<GLsizei>(this->Height), static_cast<GLsizei>(this->Depth), 0, this->Format,
+-    this->Type, static_cast<const GLvoid*>(data));
++    this->Type, static_cast<const GLvoid*>(uploaded));
+ 
+   this->Deactivate();
+ 
+@@ -1627,9 +1687,17 @@ bool vtkTextureObject::Create2DFromRaw(
+   // Source texture data from the PBO.
+   this->Context->GetState()->vtkglPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+ 
++#ifdef GL_ES_VERSION_3_0
++  std::vector<float> normalized =
++    NormalizeIntegerToFloat(dataType, this->Type, data, static_cast<size_t>(width) * height * numComps);
++  const void* uploaded = normalized.empty() ? data : normalized.data();
++#else
++  const void* uploaded = data;
++#endif
++
+   glTexImage2D(this->Target, 0, this->InternalFormat, static_cast<GLsizei>(this->Width),
+     static_cast<GLsizei>(this->Height), 0, this->Format, this->Type,
+-    static_cast<const GLvoid*>(data));
++    static_cast<const GLvoid*>(uploaded));
+ 
+   vtkOpenGLCheckErrorMacro("failed at glTexImage2D");
+ 
+-- 
+2.43.0
+

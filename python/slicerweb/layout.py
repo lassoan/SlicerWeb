@@ -323,6 +323,7 @@ class LayoutManager:
         elif viewNode.IsA("vtkMRMLViewNode"):
             view = slicer.vtkSlicerWebThreeDView()
             widget_cls = ThreeDWidget
+            self._renderVolumesAdaptively(viewNode)
         else:
             logger.warning("attachView: views of type %s are displayed by the web page", viewNode.GetClassName())
             return False
@@ -340,6 +341,21 @@ class LayoutManager:
         if viewNode.IsA("vtkMRMLViewNode") and len([v for v in self._views.values() if v.IsA("vtkSlicerWebThreeDView")]) == 1:
             view.ResetCamera(-1)
         return True
+
+    @staticmethod
+    def _renderVolumesAdaptively(viewNode):
+        """Let a volume rendering give up detail while the camera is moving.
+
+        Slicer's default is to render a volume at the same quality whatever is happening, which a
+        desktop graphics card can do. A browser cannot, and the whole view waits for it: every
+        turn of the camera costs a full-quality pass over the volume. Adaptive quality is what
+        Slicer offers for this - the mapper is told what frame rate to aim for and takes coarser
+        steps through the volume while the camera moves, going back to full detail when it stops.
+        """
+        import slicer
+
+        if viewNode.GetVolumeRenderingQuality() == slicer.vtkMRMLViewNode.Normal:
+            viewNode.SetVolumeRenderingQuality(slicer.vtkMRMLViewNode.Adaptive)
 
     def detachView(self, layoutName):
         view = self._views.pop(layoutName, None)

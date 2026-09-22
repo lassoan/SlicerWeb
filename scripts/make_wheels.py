@@ -265,6 +265,15 @@ def main():
             icon = module_icon_file(module_dir, name)
             if icon:
                 w.add_file(icon, f"{icons}/{name}.png")
+    # What each CLI module is called, what it does and what parameters it takes. A CLI module is a
+    # program that prints this description of itself; here it says what slicerweb/cli_modules.py
+    # stands in for and what its panel offers (only modules with an implementation are offered).
+    cli_descriptions = f"slicer_home/share/Slicer-{slicer_ver}/cli-modules"
+    for module_dir in sorted(glob.glob(os.path.join(modules_src, "CLI", "*"))):
+        name = os.path.basename(module_dir)
+        xml = os.path.join(module_dir, name + ".xml")
+        if os.path.isfile(xml):
+            w.add_file(xml, f"{cli_descriptions}/{name}.xml")
 
     for package_dir, package in (
             ("Scripted/SegmentStatistics/SegmentStatisticsPlugins", "SegmentStatisticsPlugins"),

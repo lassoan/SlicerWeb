@@ -7,6 +7,7 @@ import ModuleFinder from "../components/ModuleFinder.vue";
 import ModuleInformation from "../components/ModuleInformation.vue";
 import ScriptedModuleHost from "../modules/ScriptedModuleHost.vue";
 import GenericModulePanel from "../modules/GenericModulePanel.vue";
+import CliModulePanel from "../modules/CliModulePanel.vue";
 
 // The module that is open, what it is called and the panel that shows it. Which module that is,
 // and whether the finder is open, is decided in the title bar above the panel (ModuleTitleBar).
@@ -48,6 +49,8 @@ function select(name: string) {
     <div class="sw-panel-scroll min-h-0 flex-1 px-2 pt-2 pb-3">
       <component :is="panel" v-if="panel" :key="store.activeModule" />
       <ScriptedModuleHost v-else-if="active?.kind === 'scripted'" :key="active.name" :module="active.name" />
+      <!-- Every CLI module has the same panel, built from the description the module ships -->
+      <CliModulePanel v-else-if="active?.kind === 'cli'" :key="active.name" :name="active.name" />
       <GenericModulePanel v-else :module="active" :name="store.activeModule" />
     </div>
   </div>

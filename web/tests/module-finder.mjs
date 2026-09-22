@@ -20,7 +20,8 @@ await page.waitForTimeout(3000);
 
 const open = async () => { await page.locator("[data-name='moduleTitle']").click(); await page.waitForTimeout(400); };
 const highlighted = () => page.locator("[data-highlighted='true']").first().innerText();
-const info = () => page.locator("[data-name='moduleInformation']").innerText();
+// the finder's information pane, which holds a ModuleInformation of the same name
+const info = () => page.locator("[data-name='moduleInformation']").first().innerText();
 const items = () => page.locator("[data-highlighted]").allInnerTexts();
 
 await open();

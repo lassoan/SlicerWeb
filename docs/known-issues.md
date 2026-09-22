@@ -100,6 +100,18 @@ covers the independent-component and label-map paths. Both are covered by
 
 ## Still open
 
+- Most CLI modules are not here. A CLI module is a separate program, which a web page cannot start,
+  so each one offered is a Python implementation described by the XML of the real module
+  (`python/slicerweb/cli_modules.py`); the others are described but refuse to run, naming
+  themselves. What is implemented: Threshold Scalar Volume, Add/Subtract/Multiply Scalar Volumes,
+  Cast Scalar Volume, Mask Scalar Volume, Gaussian Blur, Median Image Filter, Resample Scalar
+  Volume, Merge Models, Grayscale Model Maker, and Decimation for the VMTK modules. The ones that
+  would need ITK registration or bias field correction (BRAINSFit, N4ITK, Extract Skeleton,
+  Fiducial Registration) are not among them, so the extension modules that call those still fail.
+- Crop Volume can only crop voxel based: cropping with resampling is done by Slicer's C++ logic
+  through `vtkSlicerCLIModuleLogic`, which cannot reach a Python implementation, so choosing a
+  resampled crop would need the logic to be bypassed here.
+
 - `vtkITKLevelTracingImageFilter` no longer throws but returns an empty contour, for every plane
   and seed tried, with the same calls that Slicer's Level Tracing effect makes. Nothing uses it
   yet; the Level Tracing effect would.

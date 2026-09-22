@@ -153,6 +153,9 @@ export class SlicerRuntime {
     // Downloads that module code asks for. Python cannot wait for one - it holds the thread the
     // page draws with - so it asks here and is called back (see slicerweb/downloads.py).
     pyodide.registerJsModule("slicerweb_downloads", {
+      // Whether this site fetches files of other sites for the page: Python downloads synchronously
+      // (slicerweb/downloads.py) and has to know, because a site without a proxy has other ways.
+      proxy: DOWNLOAD_PROXY,
       download: (url: string, path: string,
                  onProgress: (received: number, total: number) => void,
                  onDone: (path: string) => void,

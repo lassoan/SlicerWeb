@@ -2,8 +2,11 @@
 
 Pyodide has no sockets, so urllib cannot open connections. Downloads are done by the browser with a
 synchronous XMLHttpRequest, so that they can be used from synchronous Python code (module logic,
-self tests). Hosts that do not allow cross-origin requests (e.g. GitHub release assets) are fetched
-through the application's download proxy (see web/vite.assets.ts).
+self tests). Hosts that do not allow cross-origin requests (e.g. GitHub release assets) cannot be
+read by the page at all, so a file from one is looked for in two other places first: the copies the
+site carries of the sample data (sample-data/mirror.json, written when the site is built), and the
+application's download proxy where there is one (see web/vite.assets.ts; a site of static files,
+such as the published one, has none).
 """
 
 import logging
@@ -44,22 +47,67 @@ _JS_DOWNLOAD = """
 """
 
 _download = None
+_mirror = None
 
 
-def download(url):
+def _site_base():
+    """Where the application is published, with a trailing slash."""
+    import js
+
+    base = str(js.document.baseURI)
+    return base[: base.rfind("/") + 1]
+
+
+def _has_proxy():
+    """Whether this site fetches files of other sites for the page."""
+    try:
+        import slicerweb_downloads
+
+        return bool(getattr(slicerweb_downloads, "proxy", True))
+    except ImportError:
+        return True
+
+
+def _mirrored(url):
+    """The copy this site holds of this file, or "" where it holds none.
+
+    The map is read once, and its absence is remembered: a site that carries no sample data (the
+    development server, which fetches it instead) must not be asked for it before every download.
+    """
+    global _mirror
+    if _mirror is None:
+        _mirror = {}
+        try:
+            import json
+
+            _mirror = json.loads(bytes(download(_site_base() + "sample-data/mirror.json", mirrored=False)))
+        except Exception:
+            logger.debug("This site holds no copies of sample data", exc_info=True)
+    name = _mirror.get(str(url))
+    return _site_base() + "sample-data/" + name if name else ""
+
+
+def download(url, mirrored=True):
     """Contents of a URL as bytes (synchronous)."""
     global _download
     import js
 
     if _download is None:
         _download = js.eval(_JS_DOWNLOAD)
+    copy = _mirrored(url) if mirrored else ""
+    if copy:
+        try:
+            return bytes(memoryview(_download(copy, "").to_py()))
+        except Exception:
+            # The copy is named in the map but is not there: ask where the file itself is.
+            logger.debug("The copy of %s this site holds could not be read", url, exc_info=True)
     proxyBase = ""
-    try:
-        base = str(js.document.baseURI)
-        proxyBase = base[: base.rfind("/") + 1] + "download?url="
-    except Exception:
-        pass
-    data = _download(url, proxyBase)
+    if _has_proxy():
+        try:
+            proxyBase = _site_base() + "download?url="
+        except Exception:
+            pass
+    data = _download(str(url), proxyBase)
     return bytes(memoryview(data.to_py()))
 
 

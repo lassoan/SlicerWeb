@@ -36,7 +36,11 @@ class Qt:
     RichText, PlainText, AutoText = 1, 0, 2
     TextSelectableByMouse = 1
     ItemIsEnabled, ItemIsSelectable, ItemIsEditable, ItemIsUserCheckable = 32, 1, 2, 16
-    WaitCursor, ArrowCursor, PointingHandCursor = 3, 0, 13
+    # cursor shapes (Qt::CursorShape), with the ones a module is likely to ask for
+    ArrowCursor, UpArrowCursor, CrossCursor, WaitCursor, IBeamCursor = 0, 1, 2, 3, 4
+    SizeVerCursor, SizeHorCursor, SizeBDiagCursor, SizeFDiagCursor, SizeAllCursor = 5, 6, 7, 8, 9
+    BlankCursor, SplitVCursor, SplitHCursor, PointingHandCursor, ForbiddenCursor = 10, 11, 12, 13, 14
+    WhatsThisCursor, BusyCursor, OpenHandCursor, ClosedHandCursor = 15, 16, 17, 18
     WA_DeleteOnClose = 55
     NoFocus, StrongFocus = 0, 11
     red, green, blue, black, white, gray, yellow, cyan, magenta = range(7, 16)
@@ -809,18 +813,62 @@ class QTableWidgetItem:
         pass
 
 
+#: What each Qt cursor shape looks like in a browser.
+_CSS_CURSORS = {
+    Qt.ArrowCursor: "default", Qt.UpArrowCursor: "default", Qt.CrossCursor: "crosshair",
+    Qt.WaitCursor: "wait", Qt.IBeamCursor: "text", Qt.SizeVerCursor: "ns-resize",
+    Qt.SizeHorCursor: "ew-resize", Qt.SizeBDiagCursor: "nesw-resize", Qt.SizeFDiagCursor: "nwse-resize",
+    Qt.SizeAllCursor: "move", Qt.BlankCursor: "none", Qt.SplitVCursor: "row-resize",
+    Qt.SplitHCursor: "col-resize", Qt.PointingHandCursor: "pointer", Qt.ForbiddenCursor: "not-allowed",
+    Qt.WhatsThisCursor: "help", Qt.BusyCursor: "progress", Qt.OpenHandCursor: "grab",
+    Qt.ClosedHandCursor: "grabbing",
+}
+
+
 class QApplication:
+    #: The cursors set over the application, as Qt keeps them: a stack, the last one showing.
+    _overrideCursors = []
+
     @staticmethod
     def processEvents(*args):
         pass
 
     @staticmethod
-    def setOverrideCursor(*args):
-        pass
+    def setOverrideCursor(cursor):
+        """Show this cursor over the whole page until it is restored (qt.Qt.WaitCursor and friends)."""
+        QApplication._overrideCursors.append(cursor if isinstance(cursor, QCursor) else QCursor(cursor))
+        QApplication._showCursor()
 
     @staticmethod
     def restoreOverrideCursor():
-        pass
+        if QApplication._overrideCursors:
+            QApplication._overrideCursors.pop()
+        QApplication._showCursor()
+
+    @staticmethod
+    def changeOverrideCursor(cursor):
+        if QApplication._overrideCursors:
+            QApplication._overrideCursors[-1] = cursor if isinstance(cursor, QCursor) else QCursor(cursor)
+            QApplication._showCursor()
+
+    @staticmethod
+    def overrideCursor():
+        """The cursor now showing over the application, or None.
+
+        slicer.util puts the normal cursor back while a dialog is up by emptying this stack and
+        filling it again afterwards, so the whole of it has to be here, not only the setting.
+        """
+        return QApplication._overrideCursors[-1] if QApplication._overrideCursors else None
+
+    @staticmethod
+    def _showCursor():
+        cursor = QApplication.overrideCursor()
+        try:
+            import js
+
+            js.document.body.style.cursor = _CSS_CURSORS.get(cursor.shape(), "wait") if cursor else ""
+        except Exception:  # pragma: no cover - not in a browser
+            pass
 
     @staticmethod
     def clipboard():
@@ -851,8 +899,14 @@ class _Clipboard:
 
 
 class QCursor:
-    def __init__(self, *args):
-        pass
+    def __init__(self, shape=Qt.ArrowCursor, *args):
+        self._shape = shape if isinstance(shape, int) else Qt.ArrowCursor
+
+    def shape(self):
+        return self._shape
+
+    def setShape(self, shape):
+        self._shape = shape
 
     @staticmethod
     def pos():

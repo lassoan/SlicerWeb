@@ -2,7 +2,7 @@
 
 from . import dom
 from .core import QProp, Signal
-from .types import QColor
+from .types import QColor, QMessageBox
 from .widgets import (
     QAbstractButton,
     QAbstractSlider,
@@ -462,8 +462,61 @@ class ctkVTKSliceView(QWidget):
     pass
 
 
+def _message_line(value):
+    """A line of a message box: what it holds, or what it answers when it is a method (windowTitle)."""
+    text = value() if callable(value) else value
+    return str(text) if text else ""
+
+
 class ctkMessageBox(QWidget):
+    """A message box with a "Don't show again" check box, which Slicer uses for everything it tells
+    the user (slicer.util.messageBox and confirmOkCancelDisplay make one of these). What it is given
+    has to reach the user, so here it is the browser's own dialog, as QMessageBox uses.
+    """
+
+    def __init__(self, parent=None, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.text = ""
+        self.informativeText = ""
+        self.detailedText = ""
+        self.icon = QMessageBox.NoIcon
+        self.standardButtons = QMessageBox.Ok
+        self.dontShowAgain = False
+
+    def setText(self, text):
+        self.text = text
+
+    def setInformativeText(self, text):
+        self.informativeText = text
+
+    def setDetailedText(self, text):
+        self.detailedText = text
+
+    def setIcon(self, icon):
+        self.icon = icon
+
+    def setStandardButtons(self, buttons):
+        self.standardButtons = buttons
+
+    def setDefaultButton(self, button):
+        self._defaultButton = button
+
+    def setDontShowAgainVisible(self, visible):
+        self._dontShowAgainVisible = visible
+
+    def setDontShowAgainSettingsKey(self, key):
+        self._dontShowAgainSettingsKey = key
+
     def exec_(self):
-        return 0
+        message = "\n\n".join(t for t in map(_message_line, (self.windowTitle, self.text, self.informativeText)) if t)
+        # A box that offers a way out is a question, and the browser has one of those too
+        asks = self.standardButtons & (QMessageBox.Cancel | QMessageBox.No)
+        if asks:
+            accepted = QMessageBox._confirm(message)
+            if accepted:
+                return QMessageBox.Yes if self.standardButtons & QMessageBox.Yes else QMessageBox.Ok
+            return QMessageBox.No if self.standardButtons & QMessageBox.No else QMessageBox.Cancel
+        QMessageBox._alert(message)
+        return QMessageBox.Ok
 
     exec = exec_

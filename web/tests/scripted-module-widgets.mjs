@@ -52,6 +52,14 @@ check("and slicer.util can take them off and put them back", (await text(`
 (lambda: [str(__import__("slicer").util._temporaryNormalCursor().__enter__()),
           str(__import__("qt").QApplication.overrideCursor())][1])()`)) === "None");
 
+// A timer says how long it has to go, which modules read to decide whether they may do the work
+// again yet (Virtual Cath Lab renders its X-ray views that way). PythonQt offers Qt's properties,
+// so it is read rather than called.
+check("a timer says how long it has left", (await text(`
+(lambda qt: (lambda t: str([t.remainingTime, (t.start(5000), 4000 < t.remainingTime <= 5000)[1],
+                            (t.stop(), t.remainingTime)[1]]))(qt.QTimer()))(__import__("qt"))`))
+  === "[-1, True, -1]");
+
 // the module that asked for it: its GUI has to build without stopping
 async function openModule(title) {
   if (await page.getByPlaceholder("Search modules").count() === 0) {
@@ -70,6 +78,14 @@ async function openModule(title) {
 await openModule("ValveClip Device Simulator");
 check("a module that needs an extension that is not here says which one",
   dialogs.some((m) => /SlicerIGT/i.test(m)), dialogs.join(" | ").slice(0, 120) || "it said nothing");
+
+// Virtual Cath Lab wants SlicerIGT as well, and reads its timer on the way to saying so
+const saidBefore = dialogs.length;
+await openModule("Virtual Cath Lab");
+check("and so does the other module that needs it",
+  (await page.evaluate(() => window.slicerWeb.store.activeModule)) === "VirtualCathLab"
+  && dialogs.length > saidBefore && /SlicerIGT/i.test(dialogs.at(-1) ?? ""),
+  (dialogs.at(-1) ?? "it said nothing").slice(0, 90));
 
 await openModule("Echo Volume Render");
 check("Echo Volume Render is the module that is open",

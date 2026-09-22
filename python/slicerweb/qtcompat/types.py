@@ -3,6 +3,7 @@
 import logging
 import datetime
 import os
+import time
 
 from . import dom
 from .core import QObject, QProp, Signal
@@ -326,6 +327,7 @@ class QTimer(QObject):
         self._handle = None
         self._proxy = None
         self._active = False
+        self._deadline = None   # when it next fires, to answer remainingTime
 
     @staticmethod
     def singleShot(msec, *args):
@@ -350,23 +352,41 @@ class QTimer(QObject):
     def isActive(self):
         return self._active
 
+    @property
+    def remainingTime(self):
+        """Milliseconds until it next fires, or -1 when it is not running.
+
+        A property rather than a method, as PythonQt offers Qt's properties (modules read
+        ``timer.remainingTime`` to decide whether they may do the work again yet).
+        """
+        if not self._active or self._deadline is None:
+            return -1
+        return max(0, int((self._deadline - time.monotonic()) * 1000))
+
     def start(self, msec=None):
         if msec is not None:
             self._interval = int(msec)
         self.stop()
         self._active = True
+        self._deadline = time.monotonic() + self._interval / 1000.0
         if self._singleShot:
             def fire():
                 if self._active:
                     self._active = False
+                    self._deadline = None
                     self.timeout.emit()
 
             dom.set_timeout(fire, self._interval)
         else:
-            self._handle, self._proxy = dom.set_interval(lambda: self.timeout.emit(), max(1, self._interval))
+            def tick():
+                self._deadline = time.monotonic() + self._interval / 1000.0
+                self.timeout.emit()
+
+            self._handle, self._proxy = dom.set_interval(tick, max(1, self._interval))
 
     def stop(self):
         self._active = False
+        self._deadline = None
         if self._handle:
             dom.clear_interval(self._handle)
             self._handle = None

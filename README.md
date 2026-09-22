@@ -106,8 +106,9 @@ The wheels take hours to compile and no runner could build them, so they travel 
 .\scripts\publish-runtime.ps1 -Publish   # upload them, and rebuild the site
 ```
 
-Set up once: a repository `slicerweb-app` whose Pages source is the `main` branch, and a secret
-`SLICERWEB_APP_TOKEN` in this repository holding a token that may write to it.
+The site repository's Pages source is its `main` branch, and the workflow writes to it with a
+deploy key of that repository, whose private half is the secret `SLICERWEB_APP_KEY` here (a token
+in `SLICERWEB_APP_TOKEN` is used instead where there is one).
 
 ## Tests
 

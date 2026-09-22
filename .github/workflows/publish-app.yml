@@ -14,7 +14,8 @@
 #  - the sample data, copied into the site because a site of static files cannot fetch files from
 #    servers that refuse cross-origin requests (web/scripts/mirror-sample-data.mjs)
 #
-# Needs the secret SLICERWEB_APP_TOKEN: a token that may write to lassoan/slicerweb-app.
+# Needs a way to write to lassoan/slicerweb-app: the secret SLICERWEB_APP_KEY, the private half of
+# a deploy key of that repository, or else SLICERWEB_APP_TOKEN, a token that may write to it.
 
 name: Publish app
 
@@ -118,14 +119,33 @@ jobs:
       - name: Push the site to ${{ env.APP_REPOSITORY }}
         working-directory: web/dist/app
         env:
+          KEY: ${{ secrets.SLICERWEB_APP_KEY }}
           TOKEN: ${{ secrets.SLICERWEB_APP_TOKEN }}
         run: |
-          [ -n "$TOKEN" ] || { echo "The secret SLICERWEB_APP_TOKEN is not set"; exit 1; }
+          if [ -n "$KEY" ]; then
+            mkdir -p ~/.ssh && umask 077 && printf '%s\n' "$KEY" > ~/.ssh/publish
+            export GIT_SSH_COMMAND="ssh -i ~/.ssh/publish -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+            remote="git@github.com:$APP_REPOSITORY.git"
+          elif [ -n "$TOKEN" ]; then
+            remote="https://x-access-token:$TOKEN@github.com/$APP_REPOSITORY.git"
+          else
+            echo "Neither SLICERWEB_APP_KEY nor SLICERWEB_APP_TOKEN is set"; exit 1
+          fi
           touch .nojekyll   # otherwise GitHub Pages hides files whose name starts with an underscore
+          cat > README.md <<'READ'
+          # slicerweb-app
+
+          The published [SlicerWeb](https://github.com/lassoan/SlicerWeb) application:
+          <https://lassoan.github.io/slicerweb-app/>
+
+          Every file here is built, and this repository holds one build and no history - each build
+          replaces the last one. Nothing here is edited by hand; the source is in the SlicerWeb
+          repository, and the build is `.github/workflows/publish-app.yml` there.
+          READ
           git init -q -b main
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin "https://x-access-token:$TOKEN@github.com/$APP_REPOSITORY.git"
+          git remote add origin "$remote"
           # What the site repository already holds, without the files themselves: the commit here
           # has no parent, so it replaces the last build - but knowing what is there already means
           # only the files that changed are uploaded, not the half a gigabyte of sample data again.
@@ -141,6 +161,6 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
             git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
-            git push --force --quiet "https://x-access-token:$TOKEN@github.com/$APP_REPOSITORY.git" main
+            git push --force --quiet "$remote" main
           }
           echo "Published https://${APP_REPOSITORY%%/*}.github.io/${APP_REPOSITORY##*/}/" >> "$GITHUB_STEP_SUMMARY"

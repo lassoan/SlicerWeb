@@ -1,7 +1,8 @@
 /** Application state shared by the OHIF-style shell components. */
 import { reactive } from "vue";
+import { loadSettings, saveSettings, type AppSettings } from "@/core/settings";
 import type { LoadingProgress } from "@/core/runtime";
-import type { SubjectHierarchyItem } from "@/core/bridge";
+import { bridge, type SubjectHierarchyItem } from "@/core/bridge";
 
 export interface ModuleSummary {
   name: string;
@@ -84,8 +85,28 @@ export const store = reactive({
   pythonConsoleOpen: false,
   logWindowOpen: false,
   extensionsManagerOpen: false,
+  settingsDialogOpen: false,
+  /** The application settings (see core/settings.ts); changed through setSetting. */
+  settings: loadSettings(),
   sceneVersion: 0,
 });
+
+/**
+ * Change an application setting: kept in the browser, and told to Python, where a module reads it
+ * as Slicer's own setting. (A change made from Python comes back the other way, see App.vue.)
+ */
+export function setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K], tellPython = true) {
+  if (store.settings[key] === value) return;
+  store.settings = { ...store.settings, [key]: value };
+  saveSettings(store.settings);
+  if (tellPython) {
+    try {
+      bridge().call("setApplicationSettings", [{ [key]: value }]).catch(() => {});
+    } catch {
+      // not started yet: Python gets the settings at startup
+    }
+  }
+}
 
 /** Open a module, remembering where the panel has been (see store.moduleHistory). */
 export function openModule(name: string) {

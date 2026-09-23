@@ -44,6 +44,8 @@ class SlicerWebApplication:
     - ``temp``: temporary directory (default: ``/tmp/Slicer``)
     - ``layout``: initial layout name, e.g. ``"FourUp"`` (default) or a vtkMRMLLayoutNode constant
     - ``modules``: list of module names to load (default: all discovered modules)
+    - ``settings``: application settings kept by the web page, by their Qt key
+      (``{"Developer/DeveloperMode": True}``), applied to :meth:`userSettings`
     """
 
     def __init__(self, config):
@@ -54,6 +56,7 @@ class SlicerWebApplication:
         self._moduleManager = None
         self._ioManager = None
         self._settings = Settings()
+        self._settings.update(self._config.get("settings") or {})
         self._pauseRenderCount = 0
         self._batchProcessing = False
         self._slots = {}  # Qt-style signal name -> [slots] (connect/disconnect)

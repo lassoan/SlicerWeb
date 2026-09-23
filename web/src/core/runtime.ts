@@ -5,6 +5,7 @@
 import type { PyodideAPI } from "pyodide";
 import { PyodideBridge, setBridge } from "./bridge";
 import { jobRunner } from "./jobs";
+import { loadSettings } from "./settings";
 
 export interface RuntimeConfig {
   /** Base URL of Pyodide core files (default: <app>/pyodide/). */
@@ -243,6 +244,8 @@ import json, slicerweb
 from slicerweb import bridge
 slicerweb.initialize(json.loads(${JSON.stringify(JSON.stringify({
       layout: this.config.layout,
+      // The application settings the page keeps (Developer mode, say), as Slicer's own
+      settings: loadSettings(),
       // display properties: markups glyphs and picking tolerance are sized for this screen
       devicePixelRatio: window.devicePixelRatio || 1,
       screenWidth: window.screen?.width ?? 0,

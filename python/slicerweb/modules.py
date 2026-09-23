@@ -610,6 +610,28 @@ class ModuleManager:
             module._widget = widget
 
 
+def _useWebDeveloperSection():
+    """The page's Reload and Test section stands in for the one ScriptedLoadableModuleWidget builds.
+
+    In Developer mode (Developer/DeveloperMode, on by default here), a scripted module's setup()
+    ends with setupDeveloperSection(): a Reload & Test collapsible of Qt widgets, with a menu
+    button, a button to open the source in an editor and one to restart the application. The page
+    shows its own section at the bottom of every scripted module's panel instead
+    (ScriptedModuleHost.vue), with what applies here; a module's own developerMode stays what the
+    setting says, as on the desktop.
+    """
+    from slicer.ScriptedLoadableModule import ScriptedLoadableModuleWidget
+
+    if getattr(ScriptedLoadableModuleWidget.setupDeveloperSection, "_slicerweb", False):
+        return
+
+    def setupDeveloperSection(self):
+        pass
+
+    setupDeveloperSection._slicerweb = True
+    ScriptedLoadableModuleWidget.setupDeveloperSection = setupDeveloperSection
+
+
 def create_scripted_module_widget(moduleName):
     """Create the GUI of a scripted module (ScriptedLoadableModuleWidget.setup() runs unchanged).
 
@@ -620,6 +642,7 @@ def create_scripted_module_widget(moduleName):
 
     from .qtcompat import mrmlwidgets, widgets
 
+    _useWebDeveloperSection()
     manager = slicer.app.moduleManager()
     module = manager.module(moduleName)
     if module is None or module.kind != "scripted":

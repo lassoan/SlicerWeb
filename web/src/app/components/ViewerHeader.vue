@@ -17,6 +17,7 @@ import {
   Spline,
   ScrollText,
   Settings,
+  SlidersHorizontal,
   Terminal,
   Triangle,
   Brush,
@@ -250,6 +251,8 @@ const currentMarkupTool = computed(() =>
           @click="store.pythonConsoleOpen = !store.pythonConsoleOpen"><Terminal :size="16" />Python console</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           data-name="menu:extensions" @click="store.extensionsManagerOpen = true"><Puzzle :size="16" />Extensions manager</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="menu:settings" @click="store.settingsDialogOpen = true"><SlidersHorizontal :size="16" />Application settings</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           data-name="menu:fullscreen" @click="fullScreen"><Maximize :size="16" />Full screen</button>
       </ToolMenu>

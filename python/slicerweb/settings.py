@@ -2,6 +2,11 @@
 
 Values are kept in a JSON file in the Emscripten file system. The web application persists
 the file to IndexedDB (IDBFS) so that settings survive page reloads.
+
+The settings the web page offers in its Application settings dialog (Developer/DeveloperMode,
+say) are the page's: it keeps them in the browser, as it keeps the installed extensions, hands
+them over at startup (see ``update``) and is told of a change made from Python (a
+``settings-changed`` event), so that both sides say the same.
 """
 
 import json
@@ -34,7 +39,23 @@ class Settings:
         return v
 
     def setValue(self, key, value):
-        self._values[self._key(key)] = value
+        from . import host
+
+        key = self._key(key)
+        changed = key not in self._values or self._values[key] != value
+        self._values[key] = value
+        self.sync()
+        if changed:
+            host.emit("settings-changed", {key: value})
+
+    def update(self, values):
+        """Set several values (full keys, "Developer/DeveloperMode"), as the web page hands them over.
+
+        Written once, and without telling the page: they are the page's own.
+        """
+        if not values:
+            return
+        self._values.update(values)
         self.sync()
 
     def contains(self, key):

@@ -67,7 +67,8 @@ onBeforeUnmount(() => {
   <div>
     <div :id="containerId" class="sw-scripted-module flex flex-col gap-1.5" />
     <pre v-if="error" class="mt-2 rounded bg-destructive/40 p-2 text-[12px] whitespace-pre-wrap">{{ error }}</pre>
-    <SwCollapsible text="Reload and Test" collapsed class="mt-2">
+    <!-- What a module developer needs, shown in Developer mode (Application settings), as on the desktop -->
+    <SwCollapsible v-if="store.settings['Developer/DeveloperMode']" text="Reload and Test" collapsed class="mt-2">
       <div class="flex flex-wrap items-center gap-1">
         <SwButton text="Reload" :enabled="!busy" @clicked="reload" />
         <SwButton v-if="hasTest" text="Reload and Test" :enabled="!busy" @clicked="test(true)" />

@@ -447,6 +447,24 @@ def install_scene_observers():
 
 
 @method()
+def applicationSettings():
+    """The application settings (slicer.app.userSettings()), by their Qt key."""
+    import slicer
+
+    settings = slicer.app.userSettings()
+    return {key: settings.value(key) for key in settings.allKeys()}
+
+
+@method()
+def setApplicationSettings(values):
+    """Set application settings by their Qt key, as the Application settings dialog does."""
+    import slicer
+
+    slicer.app.userSettings().update(values)
+    return True
+
+
+@method()
 def interactionMode():
     """What a click in a view does: {mode, placeNodeClassName, persistent}.
 

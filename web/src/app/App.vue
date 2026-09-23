@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef } from "vue";
 import type { SlicerRuntime } from "@/core/runtime";
-import { store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
+import { setSetting, store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
 import { reportGLToApplication } from "../core/glDiagnostics";
 import ViewerHeader from "./components/ViewerHeader.vue";
 import SidePanel from "./components/SidePanel.vue";
@@ -11,6 +11,7 @@ import PythonConsole from "./components/PythonConsole.vue";
 import LogWindow from "./components/LogWindow.vue";
 import ModuleTitleBar from "./components/ModuleTitleBar.vue";
 import ExtensionsManager from "./components/ExtensionsManager.vue";
+import SettingsDialog from "./components/SettingsDialog.vue";
 import DataPanel from "./panels/DataPanel.vue";
 import ModulePanel from "./panels/ModulePanel.vue";
 import { SAMPLE_DATA } from "./sampleData";
@@ -40,6 +41,14 @@ events.on("scene-changed", () => {
 // last asked of it (see slicerweb.bridge.interactionMode).
 events.on<{ mode: string; placeNodeClassName: string }>("interaction-mode", ({ mode, placeNodeClassName }) => {
   store.interactionMode = mode === "Place" && placeNodeClassName ? `Place:${placeNodeClassName}` : mode;
+});
+
+// A setting changed from Python (slicer.app.userSettings().setValue(...)) is kept as one changed
+// in the dialog would be; only the settings the page offers are the page's to keep.
+events.on<Record<string, unknown>>("settings-changed", (values) => {
+  for (const [key, value] of Object.entries(values ?? {})) {
+    if (key in store.settings) setSetting(key as keyof typeof store.settings, value as never, false);
+  }
 });
 
 // A renamed node: the name is put where it belongs rather than the whole tree fetched again,
@@ -198,5 +207,6 @@ onMounted(async () => {
       </SidePanel>
     </div>
     <ExtensionsManager v-if="store.extensionsManagerOpen" @close="store.extensionsManagerOpen = false" />
+    <SettingsDialog v-if="store.settingsDialogOpen" @close="store.settingsDialogOpen = false" />
   </div>
 </template>

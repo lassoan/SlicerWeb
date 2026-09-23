@@ -1,10 +1,25 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store } from "../store";
 
+/** `anchor`: the button that opened the list; the list hangs under it. */
+const props = defineProps<{ anchor?: HTMLElement | null }>();
 const emit = defineEmits<{ close: [] }>();
 const bridge = inject<SlicerBridge>("bridge")!;
+
+// The list is put at the end of the page, as PopupMenu puts its menus: the toolbar scrolls
+// sideways (it is what tells it to fold its buttons into menus), and what scrolls clips what
+// hangs out of it - the list was cut off at the toolbar's edge.
+const width = 256;
+const position = ref({ top: 56, left: 8 });
+function place() {
+  const trigger = props.anchor?.getBoundingClientRect();
+  position.value = {
+    top: Math.round(trigger ? trigger.bottom + 4 : 56),
+    left: Math.round(Math.min(Math.max(8, trigger?.left ?? 8), window.innerWidth - width - 8)),
+  };
+}
 
 // Common Slicer layouts first, then all others
 const common = ["FourUp", "Conventional", "OneUp3D", "OneUpRedSlice", "OneUpYellowSlice", "OneUpGreenSlice",
@@ -37,13 +52,22 @@ async function select(name: string) {
 function onKey(e: KeyboardEvent) {
   if (e.key === "Escape") emit("close");
 }
-onMounted(() => window.addEventListener("keydown", onKey));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
+onMounted(() => {
+  place();
+  window.addEventListener("keydown", onKey);
+  window.addEventListener("resize", place);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onKey);
+  window.removeEventListener("resize", place);
+});
 </script>
 
 <template>
-  <div class="fixed inset-0 z-30" @click="emit('close')" />
-  <div class="absolute top-11 left-0 z-40 max-md:fixed max-md:top-[56px] max-md:left-2 max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-input bg-popover p-1 shadow-xl">
+  <Teleport to="body">
+  <div class="fixed inset-0 z-[55]" @click="emit('close')" />
+  <div class="fixed z-[56] max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-input bg-popover p-1 shadow-xl" data-name="layoutMenu"
+    :style="{ top: position.top + 'px', left: position.left + 'px' }">
     <!-- Where the toolbar is too narrow to hold them, what is done to the views - framing them
          again, the crosshair - is offered at the top, above the arrangements themselves. -->
     <template v-if="$slots.views">
@@ -60,4 +84,5 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
       {{ label(name) }}
     </button>
   </div>
+  </Teleport>
 </template>

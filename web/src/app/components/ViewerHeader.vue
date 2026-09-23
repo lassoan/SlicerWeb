@@ -34,6 +34,7 @@ import LayoutSelector from "./LayoutSelector.vue";
 const bridge = inject<SlicerBridge>("bridge")!;
 const ready = computed(() => store.status === "ready");
 const layoutOpen = ref(false);
+const layoutAnchor = useTemplateRef<HTMLElement>("layoutAnchor");
 
 async function setMode(mode: string) {
   store.interactionMode = mode;
@@ -165,9 +166,9 @@ const currentMarkupTool = computed(() =>
          squeezing them: overflowing is what tells it to fold them into menus (see measure()). -->
     <nav ref="nav" class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&>*]:shrink-0 max-md:mx-2"
       :class="{ 'pointer-events-none opacity-40': !ready }" aria-label="Toolbar">
-      <div class="relative shrink-0">
+      <div ref="layoutAnchor" class="relative shrink-0">
         <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutPanelLeft :size="20" /></ToolButton>
-        <LayoutSelector v-if="layoutOpen" @close="layoutOpen = false">
+        <LayoutSelector v-if="layoutOpen" :anchor="layoutAnchor" @close="layoutOpen = false">
           <!-- Too narrow for them of their own: what is done to the views joins the layouts. -->
           <template v-if="compact" #views="{ close }">
             <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60" @click="resetViews(); close()">

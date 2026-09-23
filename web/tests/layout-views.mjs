@@ -65,6 +65,14 @@ await page.getByRole("button", { name: "Layout" }).first().click();
 await page.waitForTimeout(600);
 const names = (await page.locator("[data-name='layoutItem']").allInnerTexts()).map((t) => t.trim());
 check("the layout menu lists the layouts", names.length > 5, `${names.length} of them`);
+// The list is visible, not clipped by the toolbar it hangs from (the toolbar scrolls sideways,
+// and what scrolls clips what hangs out of it): the last item can be seen and clicked.
+const menuBox = await page.locator("[data-name='layoutMenu']").boundingBox();
+const lastItem = await page.locator("[data-name='layoutItem']").nth(6).boundingBox();
+check("and the list hangs under the toolbar, in view", !!menuBox && menuBox.y > 40 && menuBox.height > 200 && menuBox.y + menuBox.height <= page.viewportSize().height,
+  menuBox ? `top ${Math.round(menuBox.y)} height ${Math.round(menuBox.height)}` : "no menu");
+check("with its items clickable", !!lastItem && (await page.locator("[data-name='layoutItem']").nth(6).isVisible())
+  && (await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.getAttribute("data-name") === "layoutItem", [lastItem.x + 10, lastItem.y + lastItem.height / 2])), true);
 check("named with 3D whole, not split after the digit",
   !names.some((n) => /\d\s+D/.test(n)), names.filter((n) => /3D/.test(n)).join(", "));
 

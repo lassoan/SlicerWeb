@@ -54,6 +54,7 @@ class qMRMLNodeComboBox(_ElementWidget):
         super().__init__(parent)
         self._currentNodeID = None
         self._attributeFilters = {}
+        self._proxyModel = _NodeComboBoxProxyModel(self)
 
     def _onCurrentNodeChanged(self, nodeID=None):
         self._currentNodeID = nodeID or None
@@ -135,10 +136,32 @@ class qMRMLNodeComboBox(_ElementWidget):
         pass
 
     def sortFilterProxyModel(self):
-        return _NullModel()
+        return self._proxyModel
 
 
-class _NullModel:
+class _NodeComboBoxProxyModel:
+    """The node selector's qMRMLSortFilterProxyModel: what of it a module sets.
+
+    hiddenNodeIDs leaves nodes out by their ID (Virtual Cath Lab keeps its own X-ray volumes out
+    of the volume selector). Anything else it is asked to do, it lets pass.
+    """
+
+    def __init__(self, comboBox):
+        self._comboBox = comboBox
+        self._hiddenNodeIDs = []
+
+    @property
+    def hiddenNodeIDs(self):
+        return list(self._hiddenNodeIDs)
+
+    @hiddenNodeIDs.setter
+    def hiddenNodeIDs(self, nodeIDs):
+        self._hiddenNodeIDs = [str(nodeID) for nodeID in (nodeIDs or [])]
+        self._comboBox._setElementProperty("hiddenNodeIDs", list(self._hiddenNodeIDs))
+
+    def setHiddenNodeIDs(self, nodeIDs):
+        self.hiddenNodeIDs = nodeIDs
+
     def __getattr__(self, name):
         return lambda *a, **k: None
 
@@ -591,6 +614,44 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         self._deleteButton.setToolTip("Remove the last control point")
         self._deleteButton.clicked.connect(self.deleteLastPoint)
         layout.addWidget(self._deleteButton)
+        # Named as qSlicerMarkupsPlaceWidget names its children, for the module that reaches in
+        # (VirtualCathLab hides the colour button by findChild("ctkColorPickerButton", "ColorButton"))
+        from .ctkwidgets import ctkColorPickerButton
+
+        self._button.setObjectName("PlaceButton")
+        self._deleteButton.setObjectName("DeleteButton")
+        self._colorButton = ctkColorPickerButton(self)
+        self._colorButton.setObjectName("ColorButton")
+        self._colorButton.setToolTip("Color of the markups")
+        self._colorButton.colorChanged.connect(self._onColorChanged)
+        layout.addWidget(self._colorButton)
+        # The actions of the real widget's "more" menu, by name, so that a module may hide or use
+        # them; here they are kept as actions without a menu to show them in yet.
+        from .types import QAction
+
+        self._actions = {}
+        for name, text in (("ActionDeleteAll", "Delete all points"), ("ActionUnsetAll", "Unset all points"),
+                           ("ActionUnsetLast", "Unset last point"), ("ActionFixedNumberOfControlPoints", "Fixed number of control points"),
+                           ("ActionLocked", "Locked"), ("ActionVisibility", "Visible"), ("ActionPlacePersistentPoint", "Place multiple control points")):
+            action = QAction(self)
+            action.setObjectName(name)
+            action.text = text
+            self._actions[name] = action
+
+    def colorButton(self):
+        return self._colorButton
+
+    def _onColorChanged(self, color):
+        node = getattr(self, "_node", None) or getattr(self, "currentNode", lambda: None)()
+        display = node.GetDisplayNode() if node is not None and hasattr(node, "GetDisplayNode") else None
+        if display is None:
+            return
+        try:
+            rgb = color if isinstance(color, (list, tuple)) else color.getRgbF()[:3]
+            display.SetSelectedColor(*rgb)
+            display.SetColor(*rgb)
+        except Exception:
+            pass
 
     def placeButton(self):
         return self._button
@@ -730,10 +791,261 @@ class qMRMLVolumeThresholdWidget(QWidget):
 
 
 class qMRMLTransformSliders(QWidget):
-    TRANSLATION, ROTATION = 0, 1
+    """Three sliders that move or turn a transform, as qMRMLTransformSliders does.
 
+    A collapsible group (titled as the module titles it) holding a slider for each axis: LR, PA
+    and IS millimetres of translation, or degrees of rotation about those axes. Moving one writes
+    the transform node's matrix; choosing a node sets the sliders from its matrix. Rotation angles
+    are those vtkTransform reads from and writes to a matrix (its orientation, applied as Z, X, Y),
+    so a matrix goes round trip unchanged. The translation is set in the parent's frame whatever
+    the coordinate reference says; the local frame is not told apart yet.
+    """
+    TRANSLATION, ROTATION = 0, 1
+    GLOBAL, LOCAL = 0, 1
+    _AXES = ("LR", "PA", "IS")
+
+    # As qMRMLTransformSliders declares them: values changed by a slider (not by choosing a node),
+    # the range, the decimals
+    valuesChanged = Signal("valuesChanged()")
+    rangeChanged = Signal("rangeChanged(double,double)")
+    decimalsChanged = Signal("decimalsChanged(int)")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from .ctkwidgets import ctkCollapsibleGroupBox, ctkSliderWidget
+        from .widgets import QHBoxLayout, QLabel, QVBoxLayout
+
+        self._node = None
+        self._type = self.TRANSLATION
+        self._coordinateReference = self.GLOBAL
+        self._updating = False
+        self._range = (-200.0, 200.0)
+        self._groupBox = ctkCollapsibleGroupBox("", self)
+        column = QVBoxLayout()
+        self._sliders = []
+        for axis in self._AXES:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(axis))
+            slider = ctkSliderWidget()
+            slider.setRange(*self._range)
+            slider.setValue(0.0)
+            if hasattr(slider, "setDecimals"):
+                slider.setDecimals(2)
+            slider.connect("valueChanged(double)", self._onSliderChanged)
+            row.addWidget(slider)
+            column.addLayout(row) if hasattr(column, "addLayout") else column.addWidget(slider)
+            self._sliders.append(slider)
+        self._groupBox.setLayout(column)
+        layout = QVBoxLayout()
+        layout.addWidget(self._groupBox)
+        self.setLayout(layout)
+
+    # --- what the module sets up
     def setMRMLTransformNode(self, node):
         self._node = node
+        self._readNode()
+
+    def mrmlTransformNode(self):
+        return self._node
+
+    def setTypeOfTransform(self, typeOfTransform):
+        self._type = typeOfTransform
+        self.setRange(*((-200.0, 200.0) if typeOfTransform == self.TRANSLATION else (-180.0, 180.0)))
+        self._readNode()
+
+    def typeOfTransform(self):
+        return self._type
+
+    def setCoordinateReference(self, reference):
+        self._coordinateReference = reference
+
+    def coordinateReference(self):
+        return self._coordinateReference
+
+    def setTitle(self, title):
+        self._groupBox.setTitle(title) if hasattr(self._groupBox, "setTitle") else None
+        self._title = title
+
+    def title(self):
+        return getattr(self, "_title", "")
+
+    def setRange(self, minimum, maximum):
+        self._range = (float(minimum), float(maximum))
+        for slider in self._sliders:
+            slider.setRange(minimum, maximum)
+        self.rangeChanged.emit(float(minimum), float(maximum))
+
+    def setMinMaxVisible(self, visible):
+        self._minMaxVisible = bool(visible)
+
+    def minMaxVisible(self):
+        return getattr(self, "_minMaxVisible", True)
+
+    def setSingleStep(self, step):
+        for slider in self._sliders:
+            if hasattr(slider, "setSingleStep"):
+                slider.setSingleStep(step)
+
+    def setDecimals(self, decimals):
+        for slider in self._sliders:
+            if hasattr(slider, "setDecimals"):
+                slider.setDecimals(decimals)
+        self.decimalsChanged.emit(int(decimals))
+
+    def reset(self):
+        for slider in self._sliders:
+            slider.setValue(0.0)
+
+    # --- the matrix, both ways
+    def _transform(self):
+        import vtk
+
+        matrix = vtk.vtkMatrix4x4()
+        if self._node is not None:
+            self._node.GetMatrixTransformToParent(matrix)
+        transform = vtk.vtkTransform()
+        transform.SetMatrix(matrix)
+        return transform
+
+    def _readNode(self):
+        if self._node is None:
+            return
+        transform = self._transform()
+        values = transform.GetPosition() if self._type == self.TRANSLATION else transform.GetOrientation()
+        self._updating = True
+        try:
+            for slider, value in zip(self._sliders, values):
+                slider.setValue(float(value))
+        finally:
+            self._updating = False
+
+    def _onSliderChanged(self, *_):
+        if self._updating or self._node is None:
+            return
+        import vtk
+
+        current = self._transform()
+        position = list(current.GetPosition())
+        orientation = list(current.GetOrientation())
+        values = [float(slider.value) if not callable(slider.value) else float(slider.value()) for slider in self._sliders]
+        if self._type == self.TRANSLATION:
+            position = values
+        else:
+            orientation = values
+        transform = vtk.vtkTransform()
+        transform.Translate(*position)
+        transform.RotateZ(orientation[2])
+        transform.RotateX(orientation[0])
+        transform.RotateY(orientation[1])
+        self._node.SetMatrixTransformToParent(transform.GetMatrix())
+        self.valuesChanged.emit()
+
+
+class qSlicerVolumeRenderingPresetComboBox(QWidget):
+    """Placeholder for the volume rendering preset chooser: its named parts, and its signal.
+
+    The real widget holds a "Presets" label and a preset combo box, which a module may hide by
+    name (VirtualCathLab does, and offers presets of its own), and says when the preset's offset
+    is changed. The chooser itself is not drawn yet; the parts are there to be found.
+    """
+    presetOffsetChanged = Signal("presetOffsetChanged(double,double,bool)")
+    currentNodeChanged = Signal("currentNodeChanged(vtkMRMLNode*)")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from .widgets import QComboBox, QHBoxLayout, QLabel
+
+        layout = QHBoxLayout()
+        self._label = QLabel("Presets", self)
+        self._label.setObjectName("PresetsLabel")
+        layout.addWidget(self._label)
+        self._combo = QComboBox(self)
+        self._combo.setObjectName("PresetComboBox")
+        layout.addWidget(self._combo)
+        self.setLayout(layout)
+        self._node = None
+
+    def setMRMLScene(self, scene):
+        self._scene = scene
+
+    def setCurrentNode(self, node):
+        self._node = node
+        self.currentNodeChanged.emit(node)
+
+    def currentNode(self):
+        return self._node
+
+    # The chooser applies a preset to a volume property node; which node is set here.
+    def setMRMLVolumePropertyNode(self, node):
+        self._volumePropertyNode = node
+
+    def mrmlVolumePropertyNode(self):
+        return getattr(self, "_volumePropertyNode", None)
+
+    def setShowIcons(self, show):
+        self._showIcons = bool(show)
+
+    def updateWidgetToMRML(self):
+        pass
+
+
+class qMRMLVolumePropertyNodeWidget(QWidget):
+    """Placeholder for the transfer function editor: keeps the volume property node it is given.
+
+    Editing the transfer functions is not offered here yet; the Volume Rendering module's own
+    panel is where a volume's rendering is set up.
+    """
+    volumePropertyNodeChanged = Signal("volumePropertyNodeChanged()")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._node = None
+
+    def setMRMLVolumePropertyNode(self, node):
+        self._node = node
+        self.volumePropertyNodeChanged.emit()
+
+    def mrmlVolumePropertyNode(self):
+        return self._node
+
+    def setMRMLScene(self, scene):
+        self._scene = scene
+
+    def setThresholdEnabled(self, enabled):
+        self._thresholdEnabled = bool(enabled)
+
+    def moveAllPoints(self, x, y=0.0, dontMoveFirstAndLast=False):
+        """Shift the transfer function's points, as a preset's offset slider does.
+
+        The node's scalar opacity and colour functions are moved by *x* along the scalar axis,
+        which is what the real widget does with its points; the editor is not drawn here.
+        """
+        node = self._node
+        if node is None or not x:
+            return
+        import vtk
+
+        for getter in ("GetScalarOpacity", "GetColor"):
+            function = getattr(node, getter, lambda: None)()
+            if function is None:
+                continue
+            size = function.GetSize()
+            values = 6 if isinstance(function, vtk.vtkColorTransferFunction) else 4
+            points = []
+            for i in range(size):
+                point = [0.0] * values
+                function.GetNodeValue(i, point)
+                points.append(point)
+            for i, point in enumerate(points):
+                if dontMoveFirstAndLast and i in (0, size - 1):
+                    continue
+                point[0] += x
+            function.RemoveAllPoints()
+            for point in points:
+                if values == 6:
+                    function.AddRGBPoint(point[0], point[1], point[2], point[3], point[4], point[5])
+                else:
+                    function.AddPoint(point[0], point[1], point[2], point[3])
 
 
 class qMRMLColorTableComboBox(qMRMLNodeComboBox):
@@ -742,8 +1054,33 @@ class qMRMLColorTableComboBox(qMRMLNodeComboBox):
         self.nodeTypes = ["vtkMRMLColorTableNode"]
 
 
+class _SubjectHierarchyModel:
+    """The columns of qMRMLSubjectHierarchyModel, by name, for a module that hides some of them."""
+    nameColumn, idColumn, visibilityColumn, colorColumn, transformColumn, descriptionColumn = 0, 1, 2, 3, 4, 5
+
+    def columnCount(self, *args):
+        return 6
+
+
 class qMRMLSubjectHierarchyTreeView(QWidget):
+    """Placeholder for the subject hierarchy tree of a module: keeps what it is told, draws nothing.
+
+    The data panel's tree is the application's; a tree inside a module (CardiacDeviceSimulator
+    lists its measurements in one) is not drawn yet. What a module sets on it at setup - which
+    columns are hidden, the root item, the scene - is kept, so that the module gets past its setup.
+    """
     currentItemChanged = Signal("currentItemChanged(vtkIdType)")
+    currentItemsChanged = Signal("currentItemsChanged(QList<vtkIdType>)")
+    editMenuActionVisible = QProp(True)
+    selectRoleSubMenuVisible = QProp(True)
+    multiSelection = QProp(False)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._model = _SubjectHierarchyModel()
+        self._hiddenColumns = set()
+        self._rootItem = 0
+        self._nodeTypes = []
 
     def setCurrentItem(self, item):
         self._item = item
@@ -751,7 +1088,43 @@ class qMRMLSubjectHierarchyTreeView(QWidget):
     def currentItem(self):
         return getattr(self, "_item", 0)
 
+    def currentItems(self):
+        return [self.currentItem()] if self.currentItem() else []
+
     def setMRMLScene(self, scene):
+        self._scene = scene
+
+    def mrmlScene(self):
+        return getattr(self, "_scene", None)
+
+    def model(self):
+        return self._model
+
+    def sortFilterProxyModel(self):
+        return self._model
+
+    def setColumnHidden(self, column, hidden):
+        (self._hiddenColumns.add if hidden else self._hiddenColumns.discard)(column)
+
+    def isColumnHidden(self, column):
+        return column in self._hiddenColumns
+
+    def setRootItem(self, item):
+        self._rootItem = item
+
+    def rootItem(self):
+        return self._rootItem
+
+    def setNodeTypes(self, types):
+        self._nodeTypes = list(types)
+
+    def nodeTypes(self):
+        return list(self._nodeTypes)
+
+    def expandToDepth(self, depth):
+        pass
+
+    def resetColumnSizesToDefault(self):
         pass
 
 

@@ -724,6 +724,16 @@ class QComboBox(_ElementWidget):
     _classes = ""
     _events = {"currentIndexChanged": "_onIndexChanged"}
 
+    # QComboBox::SizeAdjustPolicy: how the box sizes itself to its contents. The web widget is
+    # sized by its row, so the policy is accepted and kept, and changes nothing.
+    AdjustToContents, AdjustToContentsOnFirstShow, AdjustToMinimumContentsLength, AdjustToMinimumContentsLengthWithIcon = 0, 1, 2, 3
+
+    def setSizeAdjustPolicy(self, policy):
+        self._sizeAdjustPolicy = policy
+
+    def sizeAdjustPolicy(self):
+        return getattr(self, "_sizeAdjustPolicy", QComboBox.AdjustToContentsOnFirstShow)
+
     currentIndexChanged = Signal("currentIndexChanged(int)")
     currentTextChanged = Signal("currentTextChanged(QString)")
     activated = Signal("activated(int)")

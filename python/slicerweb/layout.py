@@ -18,7 +18,7 @@ import xml.etree.ElementTree as ET
 import vtk
 
 from . import host
-from .qtcompat.core import property_value
+from .qtcompat.core import QObject, Signal, property_value
 
 logger = logging.getLogger("slicerweb.layout")
 
@@ -41,10 +41,14 @@ def _rgb_to_hex(rgb):
     return "#%02x%02x%02x" % tuple(int(max(0.0, min(1.0, c)) * 255 + 0.5) for c in rgb[:3])
 
 
-class LayoutManager:
+class LayoutManager(QObject):
+    """Announces its layout like qSlicerLayoutManager: connect('layoutChanged(int)', slot)."""
+    layoutChanged = Signal("layoutChanged(int)")
+
     def __init__(self, app):
         import slicer
 
+        super().__init__()
         self._app = app
         self._scene = app.mrmlScene()
         self._layoutLogic = slicer.vtkMRMLLayoutLogic()
@@ -62,6 +66,8 @@ class LayoutManager:
         self._lastLayoutJson = None
         self._viewsToDetach = set()
         self._detachTimer = None
+        self._pendingLayoutChanged = None   # (layout, names of views still to be attached)
+        self._layoutChangedTimer = None
 
     # ------------------------------------------------------------------ layout selection
     def setLayout(self, layout):
@@ -166,7 +172,10 @@ class LayoutManager:
                 if not children:
                     continue
                 child = self._convertLayoutElement(children[0], viewNodes)
-                child["size"] = float(item.get("splitSize", "0") or 0)
+                # A size of 0 is a collapsed pane (a QSplitter pane of that size), which a layout
+                # uses for a view it renders off-screen; no size means an equal share.
+                if item.get("splitSize") is not None:
+                    child["size"] = float(item.get("splitSize") or 0)
                 if item.get("row") is not None:
                     child["row"] = int(item.get("row"))
                     child["column"] = int(item.get("column", "0"))
@@ -258,10 +267,71 @@ class LayoutManager:
         # (the layout node is reset while the scene is closed or imported, and the layout is empty
         # for a moment, so destroying is delayed and cancelled if the view is shown again)
         visible = set(self._visibleLayoutNames(desc))
+        self._markMappedViewNodes(visible)
         self._viewsToDetach = {name for name in self._views if name not in visible}
         if self._viewsToDetach:
             self._scheduleDetach()
         host.emit("layout-changed", payload)
+        # qMRMLLayoutManager's layoutChanged is emitted once the views of the layout exist (a
+        # script's slot may well ask for a slice widget of the new layout). Here the page makes
+        # the canvases first, and the views follow (attachView), so the signal waits for the views
+        # that are still to come - or, should the page never make them, a moment.
+        pending = {v["layoutName"] for v in self._visibleViews(desc) if v.get("kind") in ("slice", "threeD")} - set(self._views)
+        self._pendingLayoutChanged = (int(self.layout()), pending) if pending else None
+        if pending:
+            self._scheduleLayoutChanged()
+        else:
+            self.layoutChanged.emit(int(self.layout()))
+
+    def _scheduleLayoutChanged(self, delayMs=2000):
+        from .qtcompat.types import QTimer
+
+        if self._layoutChangedTimer is None:
+            self._layoutChangedTimer = QTimer()
+            self._layoutChangedTimer.setSingleShot(True)
+            self._layoutChangedTimer.timeout.connect(self._emitPendingLayoutChanged)
+        self._layoutChangedTimer.start(delayMs)
+
+    def _emitPendingLayoutChanged(self):
+        pending = self._pendingLayoutChanged
+        self._pendingLayoutChanged = None
+        if self._layoutChangedTimer is not None:
+            self._layoutChangedTimer.stop()
+        if pending is not None:
+            self.layoutChanged.emit(pending[0])
+
+    def _viewAttached(self, layoutName):
+        pending = self._pendingLayoutChanged
+        if pending is None:
+            return
+        pending[1].discard(layoutName)
+        if not pending[1]:
+            self._emitPendingLayoutChanged()
+
+    def _markMappedViewNodes(self, visible):
+        """Tell the view nodes whether they are in the layout, and give the 3D ones a camera.
+
+        qMRMLLayoutViewFactory marks the view nodes as mapped in the layout (what
+        IsViewVisibleInLayout() reports), and its views are made at once, so a script finds a 3D
+        view's camera node right after setting the layout. Here the views are made once the page
+        has their canvases, so the camera node of a 3D view in the layout is made here as the camera
+        displayable manager would (and does, for one that already exists).
+        """
+        import slicer
+
+        if self._scene.IsClosing() or self._scene.IsImporting() or self._scene.IsBatchProcessing():
+            return
+        for (_cls, name), node in self._viewNodesByTag().items():
+            mapped = name in visible
+            if bool(node.IsMappedInLayout()) != mapped:
+                node.SetMappedInLayout(mapped)
+            if mapped and node.IsA("vtkMRMLViewNode") and slicer.vtkMRMLViewLogic.GetCameraNode(self._scene, name) is None:
+                camera = self._scene.CreateNodeByClass("vtkMRMLCameraNode")
+                camera.UnRegister(None)
+                camera.SetName(self._scene.GetUniqueNameByString(camera.GetNodeTagName()))
+                camera.SetDescription("Default Scene Camera")
+                camera.SetLayoutName(name)
+                self._scene.AddNode(camera)
 
     def _scheduleDetach(self, delayMs=1000):
         from .qtcompat.types import QTimer
@@ -282,14 +352,17 @@ class LayoutManager:
                 self.detachView(name)
 
     def _visibleLayoutNames(self, desc):
+        return (v["layoutName"] for v in self._visibleViews(desc))
+
+    def _visibleViews(self, desc):
         if desc.get("type") == "view":
-            yield desc.get("layoutName")
+            yield desc
             return
         children = desc.get("children", [])
         if desc.get("type") == "tab":
             children = children[:1]  # only the first tab is visible initially
         for child in children:
-            yield from self._visibleLayoutNames(child)
+            yield from self._visibleViews(child)
 
     # ------------------------------------------------------------------ views
     def attachView(self, layoutName, canvasSelector, width=0, height=0, className=None):
@@ -345,6 +418,7 @@ class LayoutManager:
 
             self._volumeQuality[layoutName] = AdaptiveVolumeQuality(view)
         host.emit("view-attached", {"layoutName": layoutName, "nodeID": viewNode.GetID()})
+        self._viewAttached(layoutName)
         if viewNode.IsA("vtkMRMLViewNode") and len([v for v in self._views.values() if v.IsA("vtkSlicerWebThreeDView")]) == 1:
             view.ResetCamera(-1)
         return True
@@ -555,6 +629,9 @@ class SliceWidget:
     def fitSliceToBackground(self):
         self.sliceLogic().FitSliceToAll()
 
+    def resize(self, width, height=None):
+        self._manager.resizeView(self._name, *((width.width(), width.height()) if height is None else (width, height)))
+
     def objectName(self):
         return f"qMRMLSliceWidget{self._name}"
 
@@ -605,6 +682,9 @@ class ThreeDWidget:
 
     def threeDController(self):
         return None
+
+    def resize(self, width, height=None):
+        self._manager.resizeView(self._name, *((width.width(), width.height()) if height is None else (width, height)))
 
     def objectName(self):
         return f"ThreeDWidget{self._name}"

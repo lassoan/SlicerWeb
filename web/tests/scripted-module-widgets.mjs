@@ -71,21 +71,19 @@ async function openModule(title) {
   await page.keyboard.press("Enter");
   await page.waitForTimeout(3000);
 }
-// A module that needs an extension which is not installed says so through slicer.util.messageBox,
-// which shows the normal cursor while it waits - so the message itself died on the missing cursor
-// API, and the module looked broken for the wrong reason. ValveClip Device Simulator wants
-// SlicerIGT, which this application does not carry.
+// SlicerIGT, which ValveClip Device Simulator and Virtual Cath Lab need, comes with SlicerHeart
+// (its dependency), so both build without a word about a missing extension. (A module that needs
+// an extension which is not there says so through slicer.util.messageBox, which shows the normal
+// cursor while it waits; the message once died on the missing cursor API.)
 await openModule("ValveClip Device Simulator");
-check("a module that needs an extension that is not here says which one",
-  dialogs.some((m) => /SlicerIGT/i.test(m)), dialogs.join(" | ").slice(0, 120) || "it said nothing");
-
-// Virtual Cath Lab wants SlicerIGT as well, and reads its timer on the way to saying so
-const saidBefore = dialogs.length;
+check("a module that needs SlicerIGT builds, SlicerIGT being there",
+  (await page.evaluate(() => window.slicerWeb.store.activeModule)) === "ValveClipDeviceSimulator" && !dialogs.some((m) => /SlicerIGT/i.test(m)),
+  dialogs.join(" | ").slice(0, 120) || "no dialog");
 await openModule("Virtual Cath Lab");
+const cathLab = (await page.locator(".sw-panel-scroll").last().innerText()).replace(/\s+/g, " ");
 check("and so does the other module that needs it",
-  (await page.evaluate(() => window.slicerWeb.store.activeModule)) === "VirtualCathLab"
-  && dialogs.length > saidBefore && /SlicerIGT/i.test(dialogs.at(-1) ?? ""),
-  (dialogs.at(-1) ?? "it said nothing").slice(0, 90));
+  (await page.evaluate(() => window.slicerWeb.store.activeModule)) === "VirtualCathLab" && /Device selection/i.test(cathLab) && !dialogs.some((m) => /SlicerIGT/i.test(m)),
+  cathLab.slice(0, 90));
 
 await openModule("Echo Volume Render");
 check("Echo Volume Render is the module that is open",

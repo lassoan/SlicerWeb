@@ -17,6 +17,8 @@ const props = withDefaults(
     showHidden?: boolean;
     /** Only list nodes with these attributes (qMRMLNodeComboBox::addAttribute). */
     nodeAttributes?: Record<string, string | null>;
+    /** Nodes left out by their ID (qMRMLSortFilterProxyModel::hiddenNodeIDs). */
+    hiddenNodeIDs?: string[];
     baseName?: string;
     noneDisplay?: string;
     enabled?: boolean;
@@ -61,7 +63,8 @@ async function refresh() {
   }
   if (token !== refreshing) return;   // a newer refresh is on its way with a newer list
   const seen = new Set<string>();
-  nodes.value = all.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)));
+  const hidden = new Set(props.hiddenNodeIDs ?? []);
+  nodes.value = all.filter((n) => !hidden.has(n.id) && (seen.has(n.id) ? false : (seen.add(n.id), true)));
   // The list is fetched asynchronously, so the module may have chosen a node in the meantime (it
   // does so while a scene is loaded or a test runs): that choice wins, and is never reported back
   // as a change of the selection, which would overwrite it with what this list happens to hold.
@@ -106,6 +109,7 @@ onMounted(() => {
   off = bridge().events.on("scene-changed", refresh);
 });
 watch(() => props.nodeAttributes, refresh, { deep: true });
+watch(() => props.hiddenNodeIDs, refresh, { deep: true });
 onBeforeUnmount(() => off?.());
 </script>
 

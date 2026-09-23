@@ -9,7 +9,12 @@ const props = defineProps<{ node: LayoutTreeNode }>();
 const activeTab = ref(0);
 const children = computed(() => props.node.children ?? []);
 
+/** A pane's share of the row or column: its split size; equal shares where none is given. A size
+ * of 0 is a collapsed pane, as in the desktop application's splitter, which a layout uses for a
+ * view rendered off-screen (the fluoroscopy views of Virtual Cath Lab): the view is made, but
+ * takes no room. */
 function flexOf(child: LayoutTreeNode) {
+  if (child.size === 0) return "0 0 0";
   return child.size && child.size > 0 ? `${child.size} 1 0` : "1 1 0";
 }
 
@@ -37,7 +42,7 @@ const gridStyle = computed(() => {
   <div v-else-if="node.type === 'horizontal' || node.type === 'vertical'" class="flex min-h-0 min-w-0 gap-[2px]"
     :class="node.type === 'horizontal' ? 'flex-row' : 'flex-col'">
     <LayoutNode v-for="(child, i) in children" :key="keyOf(child, i)" :node="child" class="min-h-0 min-w-0"
-      :style="{ flex: flexOf(child) }" />
+      :class="{ 'overflow-hidden': child.size === 0 }" :style="{ flex: flexOf(child) }" />
   </div>
   <div v-else-if="node.type === 'grid'" :style="gridStyle">
     <LayoutNode v-for="(child, i) in children" :key="keyOf(child, i)" :node="child" class="min-h-0 min-w-0"

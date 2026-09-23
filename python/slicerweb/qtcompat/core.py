@@ -282,16 +282,34 @@ class QObject:
         return None
 
     def findChildren(self, cls=None, name=""):
+        """Children of a class, by the class or by its name as PythonQt allows
+        (findChild("ctkColorPickerButton", "ColorButton")), and optionally by object name."""
+        def matches(child):
+            if cls is None:
+                return True
+            if isinstance(cls, str):
+                return any(base.__name__ == cls for base in type(child).__mro__)
+            return isinstance(child, cls)
+
         result = []
         stack = list(self._children)
         while stack:
             c = stack.pop(0)
-            if (cls is None or isinstance(c, cls)) and (not name or c._objectName == name):
+            if matches(c) and (not name or c._objectName == name):
                 result.append(c)
             stack.extend(c._children)
         return result
 
     # --- names and properties
+    @property
+    def name(self):
+        """PythonQt's alias of objectName (child.name == "PresetComboBox")."""
+        return self._objectName
+
+    @name.setter
+    def name(self, value):
+        self.objectName = value
+
     @property
     def objectName(self):
         return self._objectName
@@ -340,14 +358,24 @@ class QObject:
 
     # --- signals
     def connect(self, *args):
-        """PythonQt connect: obj.connect("signal(args)", slot) or obj.connect(sender, "signal()", slot)."""
+        """PythonQt connect, in its three forms:
+
+        obj.connect("signal(args)", slot), obj.connect(sender, "signal()", slot), and
+        obj.connect("signal(args)", receiver, "slot(args)") - a signal wired to a slot of another
+        object by name, as selector.connect('currentNodeChanged(bool)', button, 'setEnabled(bool)').
+        """
         if len(args) == 2:
             signal, slot = args
             return self._signal(signal).connect(slot, argumentCount=_signature_argument_count(signal))
         if len(args) >= 3:
+            if isinstance(args[0], str):
+                signal, receiver, slot = args[:3]
+                if isinstance(slot, str):
+                    slot = getattr(receiver, slot.split("(")[0].strip())
+                return self._signal(signal).connect(slot, argumentCount=_signature_argument_count(signal))
             sender, signal, slot = args[:3]
             return sender._signal(signal).connect(slot, argumentCount=_signature_argument_count(signal))
-        raise TypeError("connect() expects (signal, slot) or (sender, signal, slot)")
+        raise TypeError("connect() expects (signal, slot), (sender, signal, slot) or (signal, receiver, slot)")
 
     def disconnect(self, *args):
         if not args:

@@ -152,6 +152,9 @@ class QUiLoader:
                 else:
                     rows.setdefault(row, {})[column] = (content, int(item.get("colspan", "1")))
             elif isinstance(layout, QGridLayout):
+                # A spacer in a grid is an empty cell: there is nothing to place.
+                if isinstance(content, str):
+                    continue
                 layout._place(content, max(0, row), column, int(item.get("rowspan", "1")), int(item.get("colspan", "1")))
             else:
                 if content == "stretch":

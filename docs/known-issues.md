@@ -161,3 +161,15 @@ image). Until that is found, closing a scene does not free the memory of what it
 **Untouched by any of this:** the 297 MB wasm heap of an empty scene is data - CPython, the
 statics of VTK and ITK, the registered factories - not files, and none of it is released by
 Emscripten once taken.
+
+## SlicerRT is built without Plastimatch and without DICOM
+
+Neither Plastimatch nor DCMTK is built for WebAssembly, so the SlicerRT wheel holds the modules that
+need neither: SlicerRtCommon, Isodose, DoseAccumulation, DoseVolumeHistogram, DvhComparison,
+PlanarImage, the VFF and DOSXYZnrc dose readers, and BatchProcessing. Every module that needs
+Plastimatch steps aside when it is not found (Beams, DoseComparison, SegmentComparison,
+ExternalBeamPlanning, PlmProtonDoseEngine, RoomsEyeView, DrrImageComputation, PlastimatchPy and the
+Plm modules), and the two DICOM RT modules are left out with DCMTK; `patches/SlicerRT` guards the
+places that did not step aside on their own. PlmRegister, a scripted module that drives the
+Plastimatch executable, is in the wheel but cannot run. Plastimatch itself compiled to WebAssembly
+would bring the rest, and is a separate, sizeable effort.

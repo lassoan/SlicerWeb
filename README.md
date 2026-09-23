@@ -25,7 +25,8 @@ left behind is Qt: the widgets are Vue components that talk to the same objects.
   it. Either way the GUI is built from the module's XML, and the work runs in a worker so the views
   keep drawing.
 - **Extensions**: built as wheels and installed from an index at runtime — SlicerVMTK, SlicerHeart,
-  MarkupsToModel and SlicerSimVascular are built by this repository.
+  MarkupsToModel, SlicerSimVascular, SlicerIGSIO, SlicerIGT and SlicerRT (without Plastimatch and
+  DICOM) are built by this repository.
 - **Python**: the console is the one from the desktop, `slicer.util` works, and packages are
   installed on demand from the Pyodide distribution or PyPI.
 

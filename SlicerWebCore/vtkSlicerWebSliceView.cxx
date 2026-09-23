@@ -8,10 +8,12 @@
 
 // MRML includes
 #include <vtkMRMLApplicationLogic.h>
+#include <vtkMRMLCrosshairDisplayableManager.h>
 #include "vtkSlicerWebSegmentEditorDisplayableManager.h"
 
 #include <vtkMRMLDisplayableManagerGroup.h>
 #include <vtkMRMLScene.h>
+#include <vtkMRMLSliceIntersectionWidget.h>
 #include <vtkMRMLSliceLogic.h>
 #include <vtkMRMLSliceNode.h>
 #include <vtkMRMLSliceViewDisplayableManagerFactory.h>
@@ -157,6 +159,17 @@ bool vtkSlicerWebSliceView::InitializeView(vtkMRMLApplicationLogic* appLogic, vt
   // from its class name through a VTK object factory that only generated module libraries have.
   vtkNew<vtkSlicerWebSegmentEditorDisplayableManager> segmentEditorManager;
   group->AddDisplayableManager(segmentEditorManager);
+  // Two fingers on a slice view zoom and pan it; they turn a little with every pinch, and turning
+  // the slice is rarely what is meant, so the slice only turns once they have turned well past
+  // that (Slicer's own threshold, 10 degrees, is for a desktop touch screen).
+  if (auto* crosshairManager = vtkMRMLCrosshairDisplayableManager::SafeDownCast(
+        group->GetDisplayableManagerByClassName("vtkMRMLCrosshairDisplayableManager")))
+  {
+    if (vtkMRMLSliceIntersectionWidget* sliceWidget = crosshairManager->GetSliceIntersectionWidget())
+    {
+      sliceWidget->SetTouchRotationThreshold(30.0);
+    }
+  }
   this->SetDisplayableManagerGroupInternal(group);
   this->SetViewNode(sliceNode);
 

@@ -5,6 +5,7 @@
 ==============================================================================*/
 
 #include "vtkSlicerWebView.h"
+#include "vtkSlicerWebRenderWindowInteractor.h"
 
 // MRML includes
 #include <vtkMRMLAbstractViewNode.h>
@@ -131,7 +132,7 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
 
   vtkInternal* d = this->Internal;
   d->RenderWindow = vtkSmartPointer<vtkRenderWindow>::New();
-  d->Interactor = vtkSmartPointer<vtkRenderWindowInteractor>::New();
+  d->Interactor.TakeReference(vtkSlicerWebRenderWindowInteractor::New());
   d->Renderer = vtkSmartPointer<vtkRenderer>::New();
 
 #ifdef __EMSCRIPTEN__
@@ -511,8 +512,10 @@ void vtkSlicerWebView::OnGestureEvent(vtkObject* caller, unsigned long eid, void
   }
   if (eid == vtkCommand::StartPanEvent)
   {
-    d->PanTranslation[0] = 0.0;
-    d->PanTranslation[1] = 0.0;
+    // The gesture's translation so far (vtkSlicerWebRenderWindowInteractor starts a gesture from
+    // where the fingers are, not from where they touched)
+    d->PanTranslation[0] = interactor->GetTranslation()[0];
+    d->PanTranslation[1] = interactor->GetTranslation()[1];
     return;
   }
   const double* total = interactor->GetTranslation();

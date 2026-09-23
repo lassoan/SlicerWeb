@@ -16,8 +16,13 @@ set(SlicerWebCore_SRCS
   vtkSlicerWebCLIModule.cxx
   )
 
+# Not Python-wrapped: the interactor is the views' own (its base class is not wrapped either)
+set(SlicerWebCore_NOWRAP_SRCS
+  vtkSlicerWebRenderWindowInteractor.cxx
+  )
+
 set(lib_name SlicerWebCore)
-add_library(${lib_name} ${SlicerWebCore_SRCS})
+add_library(${lib_name} ${SlicerWebCore_SRCS} ${SlicerWebCore_NOWRAP_SRCS})
 target_include_directories(${lib_name} PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}
   ${CMAKE_CURRENT_BINARY_DIR}

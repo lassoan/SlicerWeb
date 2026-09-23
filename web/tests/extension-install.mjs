@@ -18,7 +18,9 @@ await page.evaluate(() => localStorage.removeItem("slicerweb.extensions"));
 await page.reload();
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 180000 });
 console.log(`${stamp()} app ready`);
-await page.getByRole("button", { name: /extensions/i }).first().click();
+// The Extensions Manager is in the application menu, behind the cogwheel at the end of the toolbar
+await page.getByLabel("Application menu").click();
+await page.locator("[role=menuitem]", { hasText: /extensions manager/i }).first().click();
 const card = page.locator("div.mb-2", { hasText: name }).first();
 await card.getByRole("button", { name: /install/i }).click();
 await page.waitForFunction((n) => new RegExp(`${n} installed|failed`).test(document.body.innerText), name, { timeout: 600000 });

@@ -254,7 +254,53 @@ bridge.call
     this.bridge.missingModuleHandler = (name) => this.ensurePythonPackage(name);
     await this.loadExtensionPackages();
     await this.loadModulesWithPackages();
+    this.started = true;
+    await this.dropLoadedLibraryFiles();
     this.progress("ready", "Ready", 1);
+  }
+
+  /**
+   * Drop the files of the shared libraries that are loaded.
+   *
+   * A wheel is unpacked into the virtual file system, and each library in it is read from there
+   * and compiled when it is loaded. The compiled library is what runs; the file's bytes are then
+   * only in the way, and they are not few: 194 MB of a JS heap of 365 MB, in a tab that a phone
+   * will reclaim as soon as another application is in front. A library that is loaded is never
+   * read from its file again - the loader answers from what it holds - so the files go.
+   *
+   * Not every loaded library, though. Installing a wheel loads all of its libraries at once, but
+   * a Python extension module among them is not imported until something imports it, and the
+   * importer finds a module by its file: without the file, the import fails. So an extension
+   * module's file goes only once Python has imported it; a plain library - VTK's kits, the Slicer
+   * libraries - is never looked for by the importer, and goes as soon as it is loaded.
+   */
+  async dropLoadedLibraryFiles(): Promise<number> {
+    const module = (this.pyodide as unknown as { _module?: { LDSO?: { loadedLibsByName?: Record<string, unknown> }; FS?: any } })?._module;
+    const loaded = module?.LDSO?.loadedLibsByName;
+    if (!loaded || !module?.FS) return 0;
+    // Asked of Python directly: this also runs while the wheels are still being installed, before
+    // the application (and with it the bridge) exists.
+    const imported = new Set<string>(JSON.parse(this.pyodide!.runPython(
+      'import sys, json; json.dumps([m.__file__ for m in list(sys.modules.values()) if getattr(m, "__file__", None) and m.__file__.endswith(".so")])')));
+    let bytes = 0;
+    for (const path of Object.keys(loaded)) {
+      if (!path.startsWith("/") || !path.endsWith(".so")) continue;
+      const extensionModule = /\.cpython-[^/]*\.so$/.test(path);
+      if (extensionModule && !imported.has(path)) continue;
+      // A library loaded later names what it needs by file name alone, and the loader looks
+      // that up among what is loaded before it searches the file system. Loaded libraries are
+      // recorded by their path, so each is recorded by its name as well: a wheel installed after
+      // this - an extension - then finds the kits it needs without their files.
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      if (!(name in loaded)) loaded[name] = loaded[path];
+      try {
+        bytes += module.FS.stat(path).size;
+        module.FS.unlink(path);
+      } catch {
+        // already gone
+      }
+    }
+    return bytes;
   }
 
   private unavailablePackages = new Set<string>();
@@ -286,6 +332,7 @@ bridge.call
       } finally {
         micropip.destroy?.();
       }
+      if (this.started) await this.dropLoadedLibraryFiles();
       return importable();
     } catch (e) {
       console.warn(`Python package ${name} is not available`, e);
@@ -341,6 +388,10 @@ bridge.call
     } finally {
       micropip.destroy?.();
     }
+    // A wheel installed once the application runs - an extension - is unpacked into the file
+    // system like the others; what it loaded is dropped the same way. During the start the wheels
+    // are dropped together, once everything is loaded (see start()).
+    if (this.started) await this.dropLoadedLibraryFiles();
   }
 
   /** URL of a SlicerWeb wheel by distribution name (e.g. "slicerweb-itk-extra"), from the wheel index. */
@@ -382,6 +433,8 @@ bridge.call
     await new Promise<void>((resolve) => FS.syncfs(true, () => resolve()));
   }
 
+  /** Set once the start is complete: wheels installed after that are extensions. */
+  private started = false;
   private persistTimer: number | undefined;
   persistFileSystem() {
     window.clearTimeout(this.persistTimer);

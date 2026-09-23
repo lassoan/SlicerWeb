@@ -124,3 +124,40 @@ covers the independent-component and label-map paths. Both are covered by
 - The extension libraries (SlicerVMTK's `vtkvmtkITK` and `vtkvmtkSegmentation`) also compile ITK
   templates of their own and have not been given the hidden-template treatment; if a filter of
   theirs fails the way the vtkITK ones did, that is where to look.
+
+## Memory: what a tab holds, and what still grows
+
+Measured on the built application in Chrome (`performance.memory` after forcing collection, and
+the wasm heap's length), because a phone reclaims a tab of this size as soon as another
+application is in front of it.
+
+| state | wasm heap | JS heap |
+|---|---|---|
+| empty scene, before the library files were dropped | 297 MB | 365 MB |
+| empty scene, now | 297 MB | ~155 MB |
+| CT-chest loaded (512×512×139 int, 139 MB) | 515 MB | ~155 MB |
+
+**Dropped: the library files (fixed).** A wheel is unpacked into the virtual file system, which is
+the JS heap, and each of the 351 shared libraries was read from there and compiled when loaded -
+after which its bytes, 194 MB of them, were only in the way. `SlicerRuntime.dropLoadedLibraryFiles`
+removes them once the start is complete: every plain C++ library, and every Python extension module
+that Python has imported (an unimported one still needs its file to be found by the importer). A
+library loaded later names what it needs by file name and the loader looks among what is loaded
+before it searches the file system, so each loaded library is also recorded under its bare name;
+an extension installed afterwards then loads without the kits' files. Left where they are: the two
+HDF5 libraries of h5py, and 35 extension modules nothing has imported.
+
+**Not fixed: a volume costs more than its size, and closing the scene gives nothing back.**
+Reading CT-chest grows the wasm heap by 218 MB for a 139 MB image (the ITK read and the VTK copy
+of it are both alive at the peak, and the heap never shrinks). Worse, closing the scene and loading
+the same file again grows it by a further 100-150 MB *every time* - 298 → 515 → 618 → 742 →
+890 MB over four rounds - with no volume node left in the scene and no Python reference to the
+image. The volume node itself goes from 17 references while in the scene to **103 after the scene
+is closed**, none of them from Python; the event broker is synchronous with an empty queue, and
+the undo stack is empty. Something in C++ takes 86 references to a node as it is removed and does
+not let go; the image's reslice inputs stay set as well (`vtkMRMLSliceLayerLogic` keeps the last
+image). Until that is found, closing a scene does not free the memory of what it held.
+
+**Untouched by any of this:** the 297 MB wasm heap of an empty scene is data - CPython, the
+statics of VTK and ITK, the registered factories - not files, and none of it is released by
+Emscripten once taken.

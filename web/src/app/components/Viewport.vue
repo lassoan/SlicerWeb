@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
 import { Eye, EyeOff, Link2, Link2Off, Pin, ScanSearch, Maximize2, Minimize2 } from "@lucide/vue";
 import PopupMenu from "./PopupMenu.vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
@@ -65,6 +65,46 @@ async function attach() {
   await refreshSliceState();
   await refreshLinked();
   await refreshVolumes();
+}
+
+/**
+ * The view's WebGL context, lost and made good again.
+ *
+ * A phone's browser lets go of the GPU while the page is in the background, and the canvases come
+ * back with their contexts dead: Chrome draws a sad face in the corner and nothing else. Everything
+ * the view showed is still in the scene, so the view is simply made again - the old canvas goes,
+ * a new one takes its place, and the render window is attached to it as at the start.
+ *
+ * The loss is answered in two ways, because browsers differ in what they say: by the canvas's own
+ * events, and by asking the context whether it is lost when the page becomes visible again.
+ */
+const canvasKey = ref(0);
+let remaking = false;
+
+function onContextLost(event: Event) {
+  event.preventDefault(); // otherwise the browser will not offer a restored context at all
+}
+
+async function remakeView() {
+  if (remaking) return;
+  remaking = true;
+  try {
+    if (attached) {
+      attached = false;
+      await bridge.call("detachView", [props.view.layoutName]).catch(() => {});
+    }
+    canvasKey.value++;
+    await nextTick();
+    await attach();
+  } finally {
+    remaking = false;
+  }
+}
+
+function onVisible() {
+  if (document.visibilityState !== "visible" || !attached) return;
+  const gl = viewCanvas.value?.getContext("webgl2") ?? viewCanvas.value?.getContext("webgl");
+  if (gl?.isContextLost()) void remakeView();
 }
 
 // Magnifier: a fingertip covers the point it touches, so while control points are placed or moved,
@@ -210,6 +250,7 @@ async function refreshVolumes() {
 onMounted(async () => {
   resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(container.value!);
+  document.addEventListener("visibilitychange", onVisible);
   container.value!.addEventListener("touchstart", onTouchStart, { passive: true });
   container.value!.addEventListener("touchmove", onTouchMove, { passive: true });
   container.value!.addEventListener("touchend", onTouchEnd);
@@ -237,6 +278,7 @@ onBeforeUnmount(async () => {
   container.value?.removeEventListener("touchmove", onTouchMove);
   container.value?.removeEventListener("touchend", onTouchEnd);
   resizeObserver?.disconnect();
+  document.removeEventListener("visibilitychange", onVisible);
   offs.forEach((off) => off());
   if (attached) await bridge.call("detachView", [props.view.layoutName]);
 });
@@ -351,9 +393,9 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       <Pin v-if="false" :size="13" />
     </div>
     <div ref="container" class="relative min-h-0 flex-1 overflow-hidden">
-      <canvas v-if="isSlice || isThreeD" :id="canvasId" class="sw-view-canvas" tabindex="-1"
+      <canvas v-if="isSlice || isThreeD" :id="canvasId" :key="canvasKey" ref="viewCanvas" class="sw-view-canvas" tabindex="-1"
         @contextmenu.prevent @pointerdown="onCanvasPointerDown" @pointerup="onCanvasPointerUp"
-        @pointercancel="onCanvasPointerUp" />
+        @pointercancel="onCanvasPointerUp" @webglcontextlost="onContextLost" @webglcontextrestored="remakeView" />
       <TableView v-else-if="isTable" :layout-name="view.layoutName ?? ''" />
       <PlotView v-else-if="isPlot" :layout-name="view.layoutName ?? ''" />
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">

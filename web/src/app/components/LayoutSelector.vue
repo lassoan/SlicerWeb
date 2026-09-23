@@ -51,5 +51,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
       @click="select(name)">
       {{ label(name) }}
     </button>
+    <!-- Where the toolbar is too narrow to hold them, what is done to the views - framing them
+         again, the crosshair - is offered here, beneath what the views are arranged like. -->
+    <template v-if="$slots.views">
+      <div class="mt-1 border-t border-input pt-1">
+        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Views</div>
+        <slot name="views" :close="() => emit('close')" />
+      </div>
+    </template>
   </div>
 </template>

@@ -112,7 +112,7 @@ onMounted(loadIndex);
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="emit('close')">
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60" @click.self="emit('close')">
     <div class="flex h-[80vh] w-[860px] max-w-[95vw] flex-col rounded-lg border border-input bg-bkg-med shadow-2xl">
       <div class="flex items-center justify-between border-b border-input px-4 py-3">
         <div class="text-[16px] font-medium">Extensions Manager</div>

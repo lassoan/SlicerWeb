@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, ref } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from "vue";
 import {
   Crosshair,
   Box,
@@ -9,7 +9,6 @@ import {
   Hand,
   LayoutPanelLeft,
   Maximize,
-  MoreHorizontal,
   Move3d,
   Puzzle,
   ScanSearch,
@@ -80,6 +79,57 @@ const markupTools = [
   { cls: "vtkMRMLMarkupsROINode", label: "ROI", icon: RoiBoxIcon },
 ];
 
+/**
+ * Whether the toolbar is too narrow for all of its buttons.
+ *
+ * Rather than guess from the width of the window, the toolbar is measured: if it does not fit, the
+ * width it wanted is remembered, and the buttons fold into menus until there is that much room
+ * again. Remembering it is what keeps the toolbar from flickering between the two - folded, it
+ * would fit, and would unfold, and would not fit.
+ */
+const nav = useTemplateRef<HTMLElement>("nav");
+const compact = ref(false);
+const wanted = ref(0);
+
+function measure() {
+  const element = nav.value;
+  if (!element) return;
+  if (!compact.value) {
+    if (element.scrollWidth > element.clientWidth + 1) {
+      wanted.value = element.scrollWidth;
+      compact.value = true;
+    }
+  } else if (wanted.value && element.clientWidth >= wanted.value + 8) {
+    compact.value = false;
+  }
+}
+
+onMounted(() => {
+  const observer = new ResizeObserver(() => measure());
+  if (nav.value) observer.observe(nav.value);
+  onBeforeUnmount(() => observer.disconnect());
+  measure();
+});
+// A button appears or goes as the application becomes ready, so measure again when it does.
+watch(ready, () => nextTick(measure));
+
+/** The mouse modes, for the single button they fold into: what a click in a view does. */
+const mouseModes = computed(() => [
+  { mode: "ViewTransform", label: "Rotate / Pan / Zoom", icon: Hand },
+  { mode: "AdjustWindowLevel", label: "Window / Level", icon: Contrast },
+]);
+const currentMouseMode = computed(() =>
+  mouseModes.value.find((m) => m.mode === store.interactionMode)
+  ?? (store.interactionMode.startsWith("Place:") ? { icon: currentMarkupTool.value.icon } : mouseModes.value[0]));
+
+/** The modules the toolbar offers, for the single button they fold into. */
+const favouriteModules = [
+  { name: "SegmentEditor", label: "Segment Editor", icon: Brush },
+  { name: "VolumeRendering", label: "Volume Rendering", icon: Box },
+  { name: "Transforms", label: "Transforms", icon: Move3d },
+  { name: "SceneViews", label: "Scene Views", icon: Camera },
+];
+
 /** The markup kind the menu button shows: the one being placed, else the one placed last. */
 const lastMarkupTool = ref("vtkMRMLMarkupsFiducialNode");
 const currentMarkupTool = computed(() =>
@@ -90,7 +140,7 @@ const currentMarkupTool = computed(() =>
 </script>
 
 <template>
-  <header class="relative z-20 flex h-[52px] shrink-0 items-center justify-between bg-background px-3">
+  <header class="relative z-50 flex h-[52px] shrink-0 items-center justify-between bg-background px-3">
     <div class="flex shrink-0 items-center gap-3 md:min-w-[240px]">
       <img :src="iconUrl" alt="" class="h-7 w-7 shrink-0" />
       <div class="leading-tight max-md:hidden">
@@ -99,53 +149,79 @@ const currentMarkupTool = computed(() =>
       </div>
     </div>
 
-    <nav class="flex min-w-0 items-center gap-1 max-md:mx-2 max-md:overflow-x-auto max-md:[scrollbar-width:none]" :class="{ 'pointer-events-none opacity-40': !ready }" aria-label="Toolbar">
-      <div class="relative">
+    <!-- [&>*]:shrink-0 so that the buttons keep their size and the toolbar overflows instead of
+         squeezing them: overflowing is what tells it to fold them into menus (see measure()). -->
+    <nav ref="nav" class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&>*]:shrink-0 max-md:mx-2"
+      :class="{ 'pointer-events-none opacity-40': !ready }" aria-label="Toolbar">
+      <div class="relative shrink-0">
         <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutPanelLeft :size="20" /></ToolButton>
-        <LayoutSelector v-if="layoutOpen" @close="layoutOpen = false" />
+        <LayoutSelector v-if="layoutOpen" @close="layoutOpen = false">
+          <!-- Too narrow for them of their own: what is done to the views joins the layouts. -->
+          <template v-if="compact" #views="{ close }">
+            <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60" @click="resetViews(); close()">
+              <ScanSearch :size="16" />Reset views
+            </button>
+            <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60" @click="toggleCrosshair(); close()">
+              <Crosshair :size="16" />Crosshair
+            </button>
+          </template>
+        </LayoutSelector>
       </div>
-      <ToolButton label="Reset views" @click="resetViews"><ScanSearch :size="20" /></ToolButton>
-      <ToolButton label="Crosshair" class="max-sm:hidden" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
-      <div class="mx-1 h-6 w-px bg-input max-sm:hidden" />
-      <ToolButton label="Rotate / Pan / Zoom" :active="store.interactionMode === 'ViewTransform'" @click="setMode('ViewTransform')">
-        <Hand :size="20" />
-      </ToolButton>
-      <ToolButton label="Window / Level" class="max-sm:hidden" :active="store.interactionMode === 'AdjustWindowLevel'" @click="setMode('AdjustWindowLevel')">
-        <Contrast :size="20" />
-      </ToolButton>
-      <div class="mx-1 h-6 w-px bg-input max-sm:hidden" />
-      <!-- The markup tools are a menu: seven buttons of their own leave a phone's toolbar with no
-           room for anything else. The button shows the last kind placed, so that it can be started
-           again with one tap. -->
-      <ToolMenu label="Place markup" :active="store.interactionMode.startsWith('Place:')">
-        <template #button><component :is="currentMarkupTool.icon" :size="20" /></template>
-        <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
-          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-          :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
-          @click="place(t.cls)">
-          <component :is="t.icon" :size="16" />{{ t.label }}
-        </button>
-      </ToolMenu>
-      <div class="mx-1 h-6 w-px bg-input max-sm:hidden" />
-      <ToolButton label="Segment Editor" @click="openModule('SegmentEditor')"><Brush :size="20" /></ToolButton>
-      <ToolButton label="Volume Rendering" class="max-sm:hidden" @click="openModule('VolumeRendering')"><Box :size="20" /></ToolButton>
-      <ToolButton label="Transforms" class="max-sm:hidden" @click="openModule('Transforms')"><Move3d :size="20" /></ToolButton>
-      <ToolButton label="Scene Views" class="max-sm:hidden" @click="openModule('SceneViews')"><Camera :size="20" /></ToolButton>
-      <!-- What does not fit on a narrow screen is in a menu instead -->
-      <ToolMenu label="More" class="sm:hidden">
-        <template #button><MoreHorizontal :size="20" /></template>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          @click="openModule('VolumeRendering')"><Box :size="16" />Volume Rendering</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          @click="openModule('Transforms')"><Move3d :size="16" />Transforms</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          @click="openModule('SceneViews')"><Camera :size="16" />Scene Views</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          :class="store.interactionMode === 'AdjustWindowLevel' ? 'text-highlight' : ''"
-          @click="setMode('AdjustWindowLevel')"><Contrast :size="16" />Window / Level</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          @click="toggleCrosshair"><Crosshair :size="16" />Crosshair</button>
-      </ToolMenu>
+
+      <!-- With room for everything, every button is its own -->
+      <template v-if="!compact">
+        <ToolButton label="Reset views" @click="resetViews"><ScanSearch :size="20" /></ToolButton>
+        <ToolButton label="Crosshair" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
+        <div class="mx-1 h-6 w-px shrink-0 bg-input" />
+        <ToolButton v-for="m in mouseModes" :key="m.mode" :label="m.label" :active="store.interactionMode === m.mode"
+          @click="setMode(m.mode)">
+          <component :is="m.icon" :size="20" />
+        </ToolButton>
+        <div class="mx-1 h-6 w-px shrink-0 bg-input" />
+        <!-- The markup tools are a menu: seven buttons of their own leave a phone's toolbar with no
+             room for anything else. The button shows the last kind placed, so that it can be started
+             again with one tap. -->
+        <ToolMenu label="Place markup" :active="store.interactionMode.startsWith('Place:')">
+          <template #button><component :is="currentMarkupTool.icon" :size="20" /></template>
+          <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
+            class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
+            :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+            @click="place(t.cls)">
+            <component :is="t.icon" :size="16" />{{ t.label }}
+          </button>
+        </ToolMenu>
+        <div class="mx-1 h-6 w-px shrink-0 bg-input" />
+        <ToolButton v-for="m in favouriteModules" :key="m.name" :label="m.label" @click="openModule(m.name)">
+          <component :is="m.icon" :size="20" />
+        </ToolButton>
+      </template>
+
+      <!-- Too narrow: what a click does in a view is one menu, and the modules are another -->
+      <template v-else>
+        <ToolMenu label="Mouse mode" :active="store.interactionMode !== 'ViewTransform'">
+          <template #button><component :is="currentMouseMode.icon" :size="20" /></template>
+          <button v-for="m in mouseModes" :key="m.mode" type="button" role="menuitem"
+            class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
+            :class="store.interactionMode === m.mode ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+            @click="setMode(m.mode)">
+            <component :is="m.icon" :size="16" />{{ m.label }}
+          </button>
+          <div class="my-1 border-t border-input" />
+          <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
+            class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
+            :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+            @click="place(t.cls)">
+            <component :is="t.icon" :size="16" />{{ t.label }}
+          </button>
+        </ToolMenu>
+        <ToolMenu label="Modules">
+          <template #button><Brush :size="20" /></template>
+          <button v-for="m in favouriteModules" :key="m.name" type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+            @click="openModule(m.name)">
+            <component :is="m.icon" :size="16" />{{ m.label }}
+          </button>
+        </ToolMenu>
+      </template>
     </nav>
 
     <!-- The tools that are not about the views: in a menu of their own, at the end of the bar -->

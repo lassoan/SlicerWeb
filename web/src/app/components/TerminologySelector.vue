@@ -95,7 +95,7 @@ async function apply() {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" @click.self="emit('close')">
+  <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" @click.self="emit('close')">
     <div class="flex max-h-[80vh] w-full max-w-3xl flex-col rounded-lg border border-input bg-popover shadow-2xl"
       data-name="terminologySelector">
       <div class="flex items-center gap-2 border-b border-input px-3 py-2">

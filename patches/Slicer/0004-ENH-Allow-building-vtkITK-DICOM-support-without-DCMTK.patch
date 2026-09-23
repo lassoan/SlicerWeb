@@ -1,0 +1,156 @@
+From fc88bbee687a291da2feb4fcf8ac1d090cd745b5 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@localhost>
+Date: Wed, 23 Sep 2026 13:52:41 -0400
+Subject: [PATCH] ENH: Allow building vtkITK DICOM support without DCMTK
+
+vtkITK reads DICOM with ITK's GDCM image IO and offers DCMTK's as an alternative, selected
+by DICOMImageIOApproach. Both were guarded by VTKITK_BUILD_DICOM_SUPPORT alone, so a build
+that has GDCM but not DCMTK had to turn DICOM support off altogether and lost the GDCM
+reader with it: the archetype reader then no longer detects that its archetype is DICOM,
+does not group a series by UID, orientation or echo number, and does not select a DICOM
+image IO.
+
+GDCM is part of ITK and DCMTK is not, so the two are separated. The new
+VTKITK_BUILD_DICOM_SUPPORT_DCMTK guards the DCMTK include and the branch that constructs
+a DCMTKImageIO, and defaults to VTKITK_BUILD_DICOM_SUPPORT so that existing builds are
+unchanged. With it off, GDCM remains the only DICOM image IO approach.
+
+In the scalar reader the branch is inside a line-continued macro, where a preprocessor
+conditional cannot be placed, so it is factored into a macro of its own that is empty when
+DCMTK is not built.
+---
+ Libs/vtkITK/CMakeLists.txt                     |  8 ++++++++
+ .../vtkITKArchetypeImageSeriesReader.cxx       |  6 +++++-
+ .../vtkITKArchetypeImageSeriesScalarReader.cxx | 18 +++++++++++++-----
+ ...KArchetypeImageSeriesVectorReaderSeries.cxx |  6 +++++-
+ Libs/vtkITK/vtkITKConfigure.h.in               |  1 +
+ 5 files changed, 32 insertions(+), 7 deletions(-)
+
+diff --git a/Libs/vtkITK/CMakeLists.txt b/Libs/vtkITK/CMakeLists.txt
+index b49293c..e2ad3be 100644
+--- a/Libs/vtkITK/CMakeLists.txt
++++ b/Libs/vtkITK/CMakeLists.txt
+@@ -15,6 +15,14 @@ if(NOT DEFINED VTKITK_BUILD_DICOM_SUPPORT)
+   option(VTKITK_BUILD_DICOM_SUPPORT "Build with DICOM support" ON)
+ endif()
+ 
++# DICOM support reads with ITK's GDCM image IO and, where DCMTK is available, offers the DCMTK
++# image IO as an alternative. A build may have GDCM (part of ITK) without having DCMTK, so the
++# two are separate: turning this off leaves GDCM as the only DICOM image IO approach.
++if(NOT DEFINED VTKITK_BUILD_DICOM_SUPPORT_DCMTK)
++  option(VTKITK_BUILD_DICOM_SUPPORT_DCMTK "Build DICOM support with the DCMTK image IO"
++    ${VTKITK_BUILD_DICOM_SUPPORT})
++endif()
++
+ # --------------------------------------------------------------------------
+ # Dependencies
+ # --------------------------------------------------------------------------
+diff --git a/Libs/vtkITK/vtkITKArchetypeImageSeriesReader.cxx b/Libs/vtkITK/vtkITKArchetypeImageSeriesReader.cxx
+index 39f7ce6..f0abaaf 100644
+--- a/Libs/vtkITK/vtkITKArchetypeImageSeriesReader.cxx
++++ b/Libs/vtkITK/vtkITKArchetypeImageSeriesReader.cxx
+@@ -46,7 +46,9 @@
+ #include "itkOrientImageFilter.h"
+ #include "itkImageSeriesReader.h"
+ #ifdef VTKITK_BUILD_DICOM_SUPPORT
+-# include "itkDCMTKImageIO.h"
++# ifdef VTKITK_BUILD_DICOM_SUPPORT_DCMTK
++#  include "itkDCMTKImageIO.h"
++# endif
+ # include "itkGDCMSeriesFileNames.h"
+ # include "itkGDCMImageIO.h"
+ #endif
+@@ -238,11 +240,13 @@ itk::ImageIOBase::Pointer vtkITKArchetypeImageSeriesReader::GetImageIO(const cha
+   {
+     // Some file types require special processing
+ #ifdef VTKITK_BUILD_DICOM_SUPPORT
++# ifdef VTKITK_BUILD_DICOM_SUPPORT_DCMTK
+     if (this->GetDICOMImageIOApproach() == vtkITKArchetypeImageSeriesReader::DCMTK)
+     {
+       dicomIO = itk::DCMTKImageIO::New();
+     }
+     else
++# endif
+     {
+       dicomIO = itk::GDCMImageIO::New();
+     }
+diff --git a/Libs/vtkITK/vtkITKArchetypeImageSeriesScalarReader.cxx b/Libs/vtkITK/vtkITKArchetypeImageSeriesScalarReader.cxx
+index c98201f..d63a75d 100644
+--- a/Libs/vtkITK/vtkITKArchetypeImageSeriesScalarReader.cxx
++++ b/Libs/vtkITK/vtkITKArchetypeImageSeriesScalarReader.cxx
+@@ -31,7 +31,9 @@
+ #include <itkOrientImageFilter.h>
+ #include <itkImageSeriesReader.h>
+ #ifdef VTKITK_BUILD_DICOM_SUPPORT
+-# include <itkDCMTKImageIO.h>
++# ifdef VTKITK_BUILD_DICOM_SUPPORT_DCMTK
++#  include <itkDCMTKImageIO.h>
++# endif
+ # include <itkGDCMImageIO.h>
+ #endif
+ 
+@@ -86,6 +88,15 @@ int vtkITKArchetypeImageSeriesScalarReader::RequestData(vtkInformation* vtkNotUs
+   this->SetMetaDataScalarRangeToPointDataInfo(data);
+ 
+ #ifdef VTKITK_BUILD_DICOM_SUPPORT
++# ifdef VTKITK_BUILD_DICOM_SUPPORT_DCMTK
++#  define vtkITKExecuteDataDeclareDICOMImageIODCMTK                                                                          \
++    else if (this->DICOMImageIOApproach == vtkITKArchetypeImageSeriesReader::DCMTK)                                          \
++    {                                                                                                                        \
++      imageIO = itk::DCMTKImageIO::New();                                                                                    \
++    }
++# else
++#  define vtkITKExecuteDataDeclareDICOMImageIODCMTK
++# endif
+ # define vtkITKExecuteDataDeclareDICOMImageIO                                                                                \
+    typedef itk::ImageIOBase ImageIOType;                                                                                     \
+    ImageIOType::Pointer imageIO;                                                                                             \
+@@ -93,10 +104,7 @@ int vtkITKArchetypeImageSeriesScalarReader::RequestData(vtkInformation* vtkNotUs
+    {                                                                                                                         \
+      imageIO = itk::GDCMImageIO::New();                                                                                      \
+    }                                                                                                                         \
+-   else if (this->DICOMImageIOApproach == vtkITKArchetypeImageSeriesReader::DCMTK)                                           \
+-   {                                                                                                                         \
+-     imageIO = itk::DCMTKImageIO::New();                                                                                     \
+-   }                                                                                                                         \
++   vtkITKExecuteDataDeclareDICOMImageIODCMTK                                                                                 \
+    else                                                                                                                      \
+    {                                                                                                                         \
+      vtkErrorMacro(<< "vtkITKExecuteDataFromSeries: Unsupported DICOMImageIOApproach: " << this->GetDICOMImageIOApproach()); \
+diff --git a/Libs/vtkITK/vtkITKArchetypeImageSeriesVectorReaderSeries.cxx b/Libs/vtkITK/vtkITKArchetypeImageSeriesVectorReaderSeries.cxx
+index 5b13b73..ef3ec8d 100644
+--- a/Libs/vtkITK/vtkITKArchetypeImageSeriesVectorReaderSeries.cxx
++++ b/Libs/vtkITK/vtkITKArchetypeImageSeriesVectorReaderSeries.cxx
+@@ -25,7 +25,9 @@
+ #include <itkImageSeriesReader.h>
+ #include <itkOrientImageFilter.h>
+ #ifdef VTKITK_BUILD_DICOM_SUPPORT
+-# include <itkDCMTKImageIO.h>
++# ifdef VTKITK_BUILD_DICOM_SUPPORT_DCMTK
++#  include <itkDCMTKImageIO.h>
++# endif
+ # include <itkGDCMImageIO.h>
+ 
+ // GDCM includes
+@@ -81,10 +83,12 @@ void vtkITKExecuteDataFromSeriesVector(vtkITKArchetypeImageSeriesVectorReaderSer
+   {
+     imageIO = itk::GDCMImageIO::New();
+   }
++# ifdef VTKITK_BUILD_DICOM_SUPPORT_DCMTK
+   else if (self->GetDICOMImageIOApproach() == vtkITKArchetypeImageSeriesReader::DCMTK)
+   {
+     imageIO = itk::DCMTKImageIO::New();
+   }
++# endif
+   else
+ #endif
+   {
+diff --git a/Libs/vtkITK/vtkITKConfigure.h.in b/Libs/vtkITK/vtkITKConfigure.h.in
+index d556e18..e3b3b21 100644
+--- a/Libs/vtkITK/vtkITKConfigure.h.in
++++ b/Libs/vtkITK/vtkITKConfigure.h.in
+@@ -4,3 +4,4 @@
+  */
+ 
+ #cmakedefine VTKITK_BUILD_DICOM_SUPPORT
++#cmakedefine VTKITK_BUILD_DICOM_SUPPORT_DCMTK

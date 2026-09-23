@@ -10,6 +10,7 @@ import {
   LayoutPanelLeft,
   Maximize,
   Move3d,
+  MousePointerClick,
   Puzzle,
   ScanSearch,
   Ruler,
@@ -117,10 +118,19 @@ watch(ready, () => nextTick(measure));
 const mouseModes = computed(() => [
   { mode: "ViewTransform", label: "Rotate / Pan / Zoom", icon: Hand },
   { mode: "AdjustWindowLevel", label: "Window / Level", icon: Contrast },
+  // Placing is a mode like the others, and the only one a click in a view adds something in. It
+  // places the kind of markup made last; which kind that is belongs to the New markup button.
+  { mode: "Place", label: "Place points", icon: MousePointerClick },
 ]);
+const placing = computed(() => store.interactionMode.startsWith("Place:"));
 const currentMouseMode = computed(() =>
   mouseModes.value.find((m) => m.mode === store.interactionMode)
-  ?? (store.interactionMode.startsWith("Place:") ? { icon: currentMarkupTool.value.icon } : mouseModes.value[0]));
+  ?? (placing.value ? mouseModes.value[2] : mouseModes.value[0]));
+
+/** Enter a mouse mode; placing means placing the kind of markup made last. */
+function chooseMode(mode: string) {
+  return mode === "Place" ? place(lastMarkupTool.value) : setMode(mode);
+}
 
 /** The modules the toolbar offers, for the single button they fold into. */
 const favouriteModules = [
@@ -173,8 +183,8 @@ const currentMarkupTool = computed(() =>
         <ToolButton label="Reset views" @click="resetViews"><ScanSearch :size="20" /></ToolButton>
         <ToolButton label="Crosshair" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
-        <ToolButton v-for="m in mouseModes" :key="m.mode" :label="m.label" :active="store.interactionMode === m.mode"
-          @click="setMode(m.mode)">
+        <ToolButton v-for="m in mouseModes" :key="m.mode" :label="m.label"
+          :active="m.mode === 'Place' ? placing : store.interactionMode === m.mode" @click="chooseMode(m.mode)">
           <component :is="m.icon" :size="20" />
         </ToolButton>
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
@@ -188,26 +198,20 @@ const currentMarkupTool = computed(() =>
           <template #button><component :is="currentMouseMode.icon" :size="20" /></template>
           <button v-for="m in mouseModes" :key="m.mode" type="button" role="menuitem"
             class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-            :class="store.interactionMode === m.mode ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
-            @click="setMode(m.mode)">
+            :class="(m.mode === 'Place' ? placing : store.interactionMode === m.mode) ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+            @click="chooseMode(m.mode)">
             <component :is="m.icon" :size="16" />{{ m.label }}
-          </button>
-          <button type="button" role="menuitem"
-            class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-            :class="store.interactionMode.startsWith('Place:') ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
-            @click="place(lastMarkupTool)">
-            <component :is="currentMarkupTool.icon" :size="16" />Place {{ currentMarkupTool.label.toLowerCase() }}
           </button>
         </ToolMenu>
       </template>
 
-      <!-- What is placed, in both toolbars: seven buttons of their own would leave a narrow one no
-           room for anything else. The button shows the kind placed last, to start it again in one tap. -->
-      <ToolMenu label="Place markup" :active="store.interactionMode.startsWith('Place:')">
+      <!-- A new markup, of whichever kind. Not a state to be in but something done, so the button
+           holds nothing to switch off; that a click in a view now places points is said by the
+           mouse mode. The icon is the kind made last, to make another in one tap. -->
+      <ToolMenu label="New markup">
         <template #button><component :is="currentMarkupTool.icon" :size="20" /></template>
         <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
-          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-          :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           @click="place(t.cls)">
           <component :is="t.icon" :size="16" />{{ t.label }}
         </button>

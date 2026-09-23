@@ -27,25 +27,37 @@ const py = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, 
 const resize = async (width) => { await page.setViewportSize({ width, height: 900 }); await page.waitForTimeout(900); };
 
 check("every button is its own where there is room", await buttons(), [
-  "Layout", "Reset views", "Crosshair", "Rotate / Pan / Zoom", "Window / Level", "Place markup",
-  "Segment Editor", "Volume Rendering", "Transforms", "Scene Views"]);
+  "Layout", "Reset views", "Crosshair", "Rotate / Pan / Zoom", "Window / Level", "Place points",
+  "New markup", "Segment Editor", "Volume Rendering", "Transforms", "Scene Views"]);
+
+// Making a markup is something done, not a state: the button holds nothing to switch off, and that
+// a click in a view now places points is said by the mouse mode instead.
+await page.getByLabel("New markup").click();
+await page.waitForTimeout(400);
+await page.locator("[role=menuitem]", { hasText: "Line" }).first().click();
+await page.waitForTimeout(900);
+check("placing is what the mouse mode says", await page.getByLabel("Place points").getAttribute("aria-pressed"), "true");
+check("and the New markup button stays unpressed", await page.getByLabel("New markup").getAttribute("aria-pressed"), "false");
+await page.getByLabel("Rotate / Pan / Zoom").click();
+await page.waitForTimeout(600);
+check("leaving the mode releases it", await page.getByLabel("Place points").getAttribute("aria-pressed"), "false");
 
 await resize(390);
-check("a narrow toolbar holds four buttons", await buttons(), ["Layout", "Mouse mode", "Place markup", "Modules"]);
+check("a narrow toolbar holds four buttons", await buttons(), ["Layout", "Mouse mode", "New markup", "Modules"]);
 check("and nothing of it is out of reach", await fits(), true);
 
 // The mouse modes, in one menu
 await page.getByLabel("Mouse mode").click();
 await page.waitForTimeout(400);
 const modeItems = await page.locator("[role=menuitem]").allInnerTexts();
-check("what a click can do is in it, placing included", modeItems.length, 3);
-check("and placing says what would be placed", /^Place /.test(modeItems[2]), true);
+check("what a click can do is in it, placing included", modeItems,
+      ["Rotate / Pan / Zoom", "Window / Level", "Place points"]);
 await page.locator("[role=menuitem]", { hasText: "Window / Level" }).first().click();
 await page.waitForTimeout(600);
 check("choosing one sets the mode", await page.evaluate(() => window.slicerWeb.store.interactionMode), "AdjustWindowLevel");
 
 // The markup kinds, in a button of their own
-await page.getByLabel("Place markup").click();
+await page.getByLabel("New markup").click();
 await page.waitForTimeout(400);
 check("the markup kinds are in the button beside it", await page.locator("[role=menuitem]").allInnerTexts(),
       ["Point list", "Line", "Angle", "Open curve", "Closed curve", "Plane", "ROI"]);
@@ -75,7 +87,7 @@ check("and framing the views again", await page.locator("[role=menuitem]", { has
 await page.keyboard.press("Escape");
 
 await resize(1500);
-check("room again brings every button back", (await buttons()).length, 10);
+check("room again brings every button back", (await buttons()).length, 11);
 
 await browser.close();
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");

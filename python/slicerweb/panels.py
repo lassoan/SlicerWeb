@@ -322,6 +322,117 @@ def setSegmentationDisplay(nodeID, properties):
     return True
 
 
+# The representations a segmentation may hold, in the order the desktop lists them
+_REPRESENTATION_NAMES = ("Binary labelmap", "Closed surface", "Fractional labelmap", "Planar contour")
+
+
+def _containedRepresentations(segmentation):
+    names = []
+    segmentation.GetContainedRepresentationNames(names)
+    return list(names)
+
+
+def _conversionPaths(segmentation, representationName):
+    import slicer
+
+    paths = slicer.vtkSegmentationConversionPaths()
+    segmentation.GetPossibleConversions(representationName, paths)
+    return [paths.GetPath(i) for i in range(paths.GetNumberOfPaths())]
+
+
+def _pathDescription(path):
+    """"Binary labelmap -> Closed surface", as the desktop's conversion dialog puts a path."""
+    steps = []
+    for i in range(path.GetNumberOfRules()):
+        rule = path.GetRule(i)
+        if i == 0:
+            steps.append(rule.GetSourceRepresentationName())
+        steps.append(rule.GetTargetRepresentationName())
+    return " -> ".join(steps)
+
+
+@method()
+def segmentationRepresentations(nodeID):
+    """What qMRMLSegmentationRepresentationsListView shows: each representation the segmentation
+    can hold, whether it is there, whether it is the source, and the ways of making it (the
+    conversion paths, cheapest first) with the parameters of each."""
+    import slicer
+
+    segmentation = _node(nodeID).GetSegmentation()
+    source = segmentation.GetSourceRepresentationName()
+    contained = _containedRepresentations(segmentation)
+    names = list(_REPRESENTATION_NAMES) + [n for n in contained if n not in _REPRESENTATION_NAMES]
+    representations = []
+    for name in names:
+        paths = []
+        if name != source:
+            for path in _conversionPaths(segmentation, name):
+                parameters = slicer.vtkSegmentationConversionParameters()
+                segmentation.GetConversionParametersForPath(parameters, path)
+                paths.append({
+                    "cost": int(path.GetCost()),
+                    "description": _pathDescription(path),
+                    "parameters": [{"name": parameters.GetName(i), "value": parameters.GetValue(i),
+                                    "description": parameters.GetDescription(i)} for i in range(parameters.GetNumberOfParameters())],
+                })
+        representations.append({"name": name, "present": name in contained, "isSource": name == source, "paths": paths})
+    return {"source": source, "segmentCount": segmentation.GetNumberOfSegments(), "representations": representations}
+
+
+@method()
+def convertSegmentationRepresentation(nodeID, representationName, pathIndex=None, parameters=None):
+    """Create or update a representation: by the default (cheapest) path, or by the path chosen
+    with the parameters given (the desktop's "Advanced create" / "Update"). Parameters set here
+    are kept by the segmentation for later conversions, as on the desktop."""
+    import slicer
+
+    node = _node(nodeID)
+    segmentation = node.GetSegmentation()
+    wasModified = node.StartModify()
+    try:
+        for name, value in (parameters or {}).items():
+            segmentation.SetConversionParameter(str(name), str(value))
+        if pathIndex is None:
+            ok = segmentation.CreateRepresentation(representationName, True)
+        else:
+            paths = _conversionPaths(segmentation, representationName)
+            if not 0 <= int(pathIndex) < len(paths):
+                raise ValueError(f"No conversion path {pathIndex} to {representationName}")
+            conversionParameters = slicer.vtkSegmentationConversionParameters()
+            segmentation.GetConversionParametersForPath(conversionParameters, paths[int(pathIndex)])
+            ok = segmentation.CreateRepresentation(paths[int(pathIndex)], conversionParameters)
+    finally:
+        node.EndModify(wasModified)
+    if not ok:
+        raise RuntimeError(f"Failed to convert {node.GetName()} to {representationName}: there may be no valid "
+                           f"conversion path from {segmentation.GetSourceRepresentationName()} to {representationName}")
+    return True
+
+
+@method()
+def removeSegmentationRepresentation(nodeID, representationName):
+    node = _node(nodeID)
+    wasModified = node.StartModify()
+    try:
+        node.GetSegmentation().RemoveRepresentation(representationName)
+    finally:
+        node.EndModify(wasModified)
+    return True
+
+
+@method()
+def setSegmentationSourceRepresentation(nodeID, representationName):
+    """Make a representation the source: the one saved to disk and converted from; the others go.
+    (The page asks first, as the desktop does.)"""
+    node = _node(nodeID)
+    wasModified = node.StartModify()
+    try:
+        node.GetSegmentation().SetSourceRepresentationName(representationName)
+    finally:
+        node.EndModify(wasModified)
+    return True
+
+
 @method()
 def removeSegment(nodeID, segmentID):
     _node(nodeID).GetSegmentation().RemoveSegment(segmentID)

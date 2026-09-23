@@ -451,7 +451,6 @@ def transformInfo(nodeID):
         "name": node.GetName(),
         "isLinear": bool(linear),
         "matrix": [[matrix.GetElement(r, c) for c in range(4)] for r in range(4)],
-        "transformInfo": node.GetTransformInfo() if hasattr(node, "GetTransformInfo") else "",
     }
 
 

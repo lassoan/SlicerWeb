@@ -16,6 +16,7 @@ import TablesPanel from "./TablesPanel.vue";
 import PlotsPanel from "./PlotsPanel.vue";
 import SequencesPanel from "./SequencesPanel.vue";
 import CropVolumePanel from "./CropVolumePanel.vue";
+import ViewControllersPanel from "./ViewControllersPanel.vue";
 // Web GUIs of loadable modules of extensions (their desktop GUIs are Qt C++ widgets)
 import MarkupsToModelPanel from "./MarkupsToModelPanel.vue";
 
@@ -48,6 +49,8 @@ export const modulePanels: Record<string, Component> = {
   sequences: SequencesPanel,
   CropVolume: CropVolumePanel,
   cropvolume: CropVolumePanel,
+  ViewControllers: ViewControllersPanel,
+  viewcontrollers: ViewControllersPanel,
   MarkupsToModel: MarkupsToModelPanel,
   markupstomodel: MarkupsToModelPanel,
 };

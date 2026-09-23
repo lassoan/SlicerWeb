@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { SwButton, SwCollapsible, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { SwButton, SwCheckBox, SwCollapsible, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
 import { useSelectedNode } from "./useSelectedNode";
@@ -13,7 +13,6 @@ interface TransformInfo {
 
 const nodeID = useSelectedNode("Transform");
 const { state, bridge } = useNodeState<TransformInfo>("transformInfo", nodeID);
-const targetID = ref<string | null>(null);
 
 function setElement(r: number, c: number, v: number) {
   if (!state.value || !nodeID.value) return;
@@ -26,6 +25,46 @@ function identity() {
   if (nodeID.value) bridge.call("setTransformMatrix", [nodeID.value, [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]]);
 }
 const axes = ["LR", "PA", "IS"];
+
+/**
+ * The interaction handles of the transform (vtkMRMLTransformDisplayNode's editor), and the nodes
+ * it is applied to. Both are the transform's own, so they follow the chosen transform.
+ */
+interface DisplayInfo { visible: boolean; handlesVisible: boolean; handlesIn3D: boolean; handlesInSlices: boolean; translation: boolean; rotation: boolean; scaling: boolean }
+interface Transformable { id: string; name: string; className: string; transformed: boolean }
+const display = ref<DisplayInfo | null>(null);
+const transformables = ref<Transformable[]>([]);
+
+async function refreshTransform() {
+  if (!nodeID.value) {
+    display.value = null;
+    transformables.value = [];
+    return;
+  }
+  [display.value, transformables.value] = await Promise.all([
+    bridge.call<DisplayInfo | null>("transformDisplayInfo", [nodeID.value]).catch(() => null),
+    bridge.call<Transformable[]>("transformableNodes", [nodeID.value]).catch(() => []),
+  ]);
+}
+
+async function setDisplay(props: Record<string, boolean>) {
+  if (!nodeID.value) return;
+  await bridge.call("setTransformDisplay", [nodeID.value, props]);
+  await refreshTransform();
+}
+
+async function transformNode(node: Transformable, apply: boolean) {
+  await bridge.call("applyTransformToNode", [node.id, apply ? nodeID.value : null]);
+  await refreshTransform();
+}
+
+const offs: (() => void)[] = [];
+watch(nodeID, refreshTransform);
+onMounted(() => {
+  refreshTransform();
+  offs.push(bridge.events.on("scene-changed", refreshTransform));
+});
+onBeforeUnmount(() => offs.forEach((off) => off()));
 </script>
 
 <template>
@@ -54,14 +93,28 @@ const axes = ["LR", "PA", "IS"];
         </SwCollapsible>
       </template>
       <div v-else class="text-[12px] text-muted-foreground">Non-linear transform (displayed with the transform visualization in the views).</div>
+      <SwCollapsible v-if="display" text="Display">
+        <SwCheckBox text="Show interaction handles" :checked="display.handlesVisible" data-name="handlesVisible"
+          @toggled="setDisplay({ handlesVisible: $event })" />
+        <div class="ml-5 flex flex-col gap-1" :class="{ 'pointer-events-none opacity-40': !display.handlesVisible }">
+          <SwCheckBox text="In 3D views" :checked="display.handlesIn3D" @toggled="setDisplay({ handlesIn3D: $event })" />
+          <SwCheckBox text="In slice views" :checked="display.handlesInSlices" @toggled="setDisplay({ handlesInSlices: $event })" />
+          <SwCheckBox text="Translation" :checked="display.translation" @toggled="setDisplay({ translation: $event })" />
+          <SwCheckBox text="Rotation" :checked="display.rotation" @toggled="setDisplay({ rotation: $event })" />
+          <SwCheckBox text="Scaling" :checked="display.scaling" @toggled="setDisplay({ scaling: $event })" />
+        </div>
+        <SwCheckBox text="Show transform (glyphs, grid or contours)" :checked="display.visible" @toggled="setDisplay({ visible: $event })" />
+      </SwCollapsible>
+      <!-- The nodes this transform is applied to, and the ones it could be: one list, ticked where
+           it applies, rather than the two lists and arrows of the desktop. -->
       <SwCollapsible text="Apply transform">
-        <SwFormRow label="Node">
-          <SwNodeSelector :node-types="['vtkMRMLTransformableNode']" none-enabled :current-node-id="targetID" @current-node-changed="targetID = $event" />
-        </SwFormRow>
-        <div class="flex gap-1">
-          <SwButton text="Apply" @clicked="targetID && bridge.call('applyTransformToNode', [targetID, nodeID])" />
-          <SwButton text="Remove" @clicked="targetID && bridge.call('applyTransformToNode', [targetID, null])" />
-          <SwButton text="Harden" @clicked="targetID && bridge.call('applyTransformToNode', [targetID, nodeID, true])" />
+        <div v-if="!transformables.length" class="text-[12px] text-muted-foreground">Nothing in the scene can be transformed yet.</div>
+        <div v-for="node in transformables" :key="node.id" class="flex items-center gap-2">
+          <SwCheckBox :text="node.name" :checked="node.transformed" :data-name="'transform:' + node.id" @toggled="transformNode(node, $event)" />
+          <span class="flex-1 truncate text-[11px] text-muted-foreground">{{ node.className.replace(/^vtkMRML|Node$/g, "") }}</span>
+        </div>
+        <div class="mt-1 flex gap-1">
+          <SwButton text="Harden on transformed nodes" @clicked="transformables.filter((n) => n.transformed).forEach((n) => bridge.call('applyTransformToNode', [n.id, nodeID, true]))" />
         </div>
       </SwCollapsible>
     </template>

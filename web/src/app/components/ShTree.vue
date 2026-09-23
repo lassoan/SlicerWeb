@@ -85,7 +85,7 @@ async function save(item: SubjectHierarchyItem) {
 <template>
   <ul class="text-[13px]">
     <li v-for="item in items" :key="item.id">
-      <div class="group flex h-7 items-center gap-1 rounded pr-1 hover:bg-accent/60"
+      <div class="sw-row group flex h-7 items-center gap-1 rounded pr-1 hover:bg-accent/60"
         :class="{ 'bg-accent': store.selectedNodeID && store.selectedNodeID === item.nodeID }"
         :style="{ paddingLeft: depth * 14 + 4 + 'px' }" @click="select(item)" @dblclick="rename(item)">
         <button v-if="item.children.length" type="button" class="text-muted-foreground" @click.stop="toggle(item)">
@@ -94,8 +94,10 @@ async function save(item: SubjectHierarchyItem) {
         <span v-else class="w-[14px]" />
         <component :is="icon(item)" :size="14" class="shrink-0 text-muted-foreground" />
         <span class="min-w-0 flex-1 truncate" :title="item.name">{{ item.name }}</span>
-        <button v-if="item.nodeID" type="button" class="hidden text-muted-foreground group-hover:inline hover:text-highlight" title="Save to file" @click.stop="save(item)"><Download :size="14" /></button>
-        <button v-if="item.nodeID" type="button" class="hidden text-muted-foreground group-hover:inline hover:text-red-400" title="Delete" @click.stop="remove(item)"><X :size="14" /></button>
+        <!-- .sw-row-action: under the mouse where there is one, always there where a finger is the
+             pointer - a finger cannot hover, and this is the only way to reach them (see main.css). -->
+        <button v-if="item.nodeID" type="button" class="sw-row-action text-muted-foreground hover:text-highlight" title="Save to file" @click.stop="save(item)"><Download :size="14" /></button>
+        <button v-if="item.nodeID" type="button" class="sw-row-action text-muted-foreground hover:text-red-400" title="Delete" @click.stop="remove(item)"><X :size="14" /></button>
         <button type="button" class="text-muted-foreground hover:text-highlight" :title="item.visible ? 'Hide' : 'Show'" @click.stop="setVisible(item)">
           <Eye v-if="item.visible" :size="14" /><EyeOff v-else :size="14" class="opacity-60" />
         </button>

@@ -60,7 +60,7 @@ check("choosing one sets the mode", await page.evaluate(() => window.slicerWeb.s
 await page.getByLabel("New markup").click();
 await page.waitForTimeout(400);
 check("the markup kinds are in the button beside it", await page.locator("[role=menuitem]").allInnerTexts(),
-      ["Point list", "Line", "Angle", "Open curve", "Closed curve", "Plane", "ROI"]);
+      ["Line", "Point list", "Angle", "Open curve", "Closed curve", "Plane", "ROI"]);
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
 

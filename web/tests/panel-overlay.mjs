@@ -40,6 +40,13 @@ for (let i = 0; i < 40 && Number(await py('len(slicer.util.getNodesByClass("vtkM
 await phone.waitForTimeout(4000);
 const fieldOfView = () => py('repr([round(v) for v in slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetSliceNode().GetFieldOfView()])');
 const loadedWith = await fieldOfView();
+
+// A finger cannot hover, so what a row of the data tree offers has to be there to be tapped.
+check("the row of a node offers saving without hovering", await phone.locator("[title='Save to file']").first().isVisible(), true);
+check("and deleting", await phone.locator("[title='Delete']").first().isVisible(), true);
+const target = await phone.locator("[title='Save to file']").first().boundingBox();
+check("with something a finger can hit", target.width >= 24 && target.height >= 24, true);
+
 await phone.mouse.click(380, 500); // tapping the views puts the panel away
 await phone.waitForTimeout(1500);
 check("tapping the views closes the panel", await phone.evaluate(() => window.slicerWeb.store.leftPanelOpen), false);

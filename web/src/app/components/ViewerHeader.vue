@@ -70,9 +70,10 @@ function openModule(name: string) {
   store.rightPanelOpen = true;
 }
 
+// A line first, and offered first: measuring a distance is what a markup is wanted for most often.
 const markupTools = [
-  { cls: "vtkMRMLMarkupsFiducialNode", label: "Point list", icon: CircleDot },
   { cls: "vtkMRMLMarkupsLineNode", label: "Line", icon: Ruler },
+  { cls: "vtkMRMLMarkupsFiducialNode", label: "Point list", icon: CircleDot },
   { cls: "vtkMRMLMarkupsAngleNode", label: "Angle", icon: Triangle },
   { cls: "vtkMRMLMarkupsCurveNode", label: "Open curve", icon: Spline },
   { cls: "vtkMRMLMarkupsClosedCurveNode", label: "Closed curve", icon: ClosedCurveIcon },
@@ -141,7 +142,7 @@ const favouriteModules = [
 ];
 
 /** The markup kind the menu button shows: the one being placed, else the one placed last. */
-const lastMarkupTool = ref("vtkMRMLMarkupsFiducialNode");
+const lastMarkupTool = ref("vtkMRMLMarkupsLineNode");
 const currentMarkupTool = computed(() =>
   markupTools.find((t) => t.cls === (store.interactionMode.startsWith("Place:") ? store.interactionMode.slice("Place:".length) : lastMarkupTool.value))
   ?? markupTools[0]);

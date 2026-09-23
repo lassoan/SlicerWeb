@@ -70,6 +70,27 @@ body,
   scrollbar-color: var(--color-input) transparent;
 }
 
+/* What a row of the data tree offers: saving and deleting appear under the mouse, and are simply
+   there where nothing can hover. A finger also needs more than a 14 px icon to aim at, so the row
+   and the buttons grow where the pointer is a finger. */
+.sw-row-action {
+  display: none;
+  padding: 0 2px;
+}
+.group:hover .sw-row-action {
+  display: inline-flex;
+}
+@media (hover: none) {
+  .sw-row-action {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px;
+  }
+  .sw-row {
+    height: 2.25rem;
+  }
+}
+
 .sw-panel-scroll {
   overflow-y: auto;
   overflow-x: hidden;

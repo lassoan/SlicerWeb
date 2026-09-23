@@ -35,6 +35,14 @@ events.on("scene-changed", () => {
   shTimer = window.setTimeout(refreshSubjectHierarchy, 50);
 });
 
+// A renamed node: the name is put where it belongs rather than the whole tree fetched again,
+// because renaming is often a person typing and the tree would be rebuilt at every letter.
+events.on<{ itemID: number; name: string }>("item-renamed", ({ itemID, name }) => {
+  const rename = (items: typeof store.subjectHierarchy): boolean =>
+    items.some((item) => (item.id === itemID ? ((item.name = name), true) : rename(item.children ?? [])));
+  if (!rename(store.subjectHierarchy)) refreshSubjectHierarchy();
+});
+
 async function refreshSubjectHierarchy() {
   if (store.status !== "ready") return;
   store.subjectHierarchy = await runtime.bridge.call("getSubjectHierarchy");

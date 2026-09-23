@@ -77,7 +77,7 @@ defineExpose({ focus });
   <div class="flex max-h-[80vh] flex-col overflow-hidden rounded-lg border border-input bg-popover shadow-xl">
     <div class="flex items-center gap-1 border-b border-input p-1.5">
       <Search :size="14" class="ml-1 shrink-0 text-muted-foreground" />
-      <input ref="searchBox" v-model="filter" placeholder="Search modules" aria-label="Search modules"
+      <input ref="searchBox" :value="filter" @input="filter = ($event.target as HTMLInputElement).value" placeholder="Search modules" aria-label="Search modules"
         class="h-7 min-w-0 flex-1 rounded border border-transparent bg-background px-2 text-[13px] outline-none focus:border-primary"
         @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)"
         @keydown.page-down.prevent="move(PAGE)" @keydown.page-up.prevent="move(-PAGE)"

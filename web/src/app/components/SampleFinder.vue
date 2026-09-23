@@ -79,7 +79,7 @@ function load(sample?: SampleEntry) {
     @keydown.enter.prevent="load()">
     <div class="relative border-b border-input p-1">
       <Search :size="14" class="pointer-events-none absolute top-3 left-3 text-muted-foreground" />
-      <input ref="searchBox" v-model="filter" type="search" placeholder="Search sample data" data-name="sampleSearch"
+      <input ref="searchBox" :value="filter" @input="filter = ($event.target as HTMLInputElement).value" type="search" placeholder="Search sample data" data-name="sampleSearch"
         class="h-8 w-full rounded-md bg-background pr-2 pl-7 text-[13px] text-foreground outline-none" />
     </div>
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto p-1">

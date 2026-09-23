@@ -44,6 +44,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 <template>
   <div class="fixed inset-0 z-30" @click="emit('close')" />
   <div class="absolute top-11 left-0 z-40 max-md:fixed max-md:top-[56px] max-md:left-2 max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-input bg-popover p-1 shadow-xl">
+    <!-- Where the toolbar is too narrow to hold them, what is done to the views - framing them
+         again, the crosshair - is offered at the top, above the arrangements themselves. -->
+    <template v-if="$slots.views">
+      <div class="mb-1 border-b border-input pb-1">
+        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Views</div>
+        <slot name="views" :close="() => emit('close')" />
+      </div>
+    </template>
     <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Layouts</div>
     <button v-for="name in layouts" :key="name" type="button" data-name="layoutItem"
       class="block w-full rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent"
@@ -51,13 +59,5 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
       @click="select(name)">
       {{ label(name) }}
     </button>
-    <!-- Where the toolbar is too narrow to hold them, what is done to the views - framing them
-         again, the crosshair - is offered here, beneath what the views are arranged like. -->
-    <template v-if="$slots.views">
-      <div class="mt-1 border-t border-input pt-1">
-        <div class="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Views</div>
-        <slot name="views" :close="() => emit('close')" />
-      </div>
-    </template>
   </div>
 </template>

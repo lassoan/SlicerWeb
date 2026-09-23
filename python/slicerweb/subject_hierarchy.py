@@ -60,7 +60,38 @@ class SubjectHierarchyPluginLogic:
             scene.AddObserver(slicer.vtkMRMLScene.EndCloseEvent, self._onSceneCloseEnded),
         ]
         slicer.vtkMRMLSubjectHierarchyNode.ResolveSubjectHierarchy(scene)
+        self._itemNames = {}
+        self._shTag = None
+        self._watchNames()
         self.addSupportedDataNodesToSubjectHierarchy()
+
+    def _watchNames(self):
+        """Tell the page when an item is renamed, so that the trees showing it follow.
+
+        A renamed data node makes the subject hierarchy say its item changed - but so does every
+        other change to that node, a control point dragged as much as a name typed. Only the name
+        is of interest here, so what each item is called is remembered and the word goes out when
+        it differs.
+        """
+        import slicer
+
+        shNode = self._shNode()
+        if shNode is None or self._shTag is not None:
+            return
+        self._shTag = shNode.AddObserver(
+            slicer.vtkMRMLSubjectHierarchyNode.SubjectHierarchyItemModifiedEvent, self._onItemModified)
+
+    @vtk.calldata_type(vtk.VTK_LONG)
+    def _onItemModified(self, caller, event, itemID):
+        from . import host
+
+        if not itemID:
+            return
+        name = caller.GetItemName(itemID)
+        if self._itemNames.get(itemID) == name:
+            return
+        self._itemNames[itemID] = name
+        host.emit("item-renamed", {"itemID": int(itemID), "name": name})
 
     def _shNode(self):
         import slicer
@@ -123,16 +154,24 @@ class SubjectHierarchyPluginLogic:
         if children.GetNumberOfIds() == 0:
             shNode.RemoveItem(itemID, False, False)
 
+    def _forgetNames(self):
+        self._itemNames = {}
+        self._shTag = None
+        self._watchNames()
+
     def _onSceneImportEnded(self, caller, event):
         import slicer
 
         slicer.vtkMRMLSubjectHierarchyNode.ResolveSubjectHierarchy(self._scene)
+        self._forgetNames()
         self.addSupportedDataNodesToSubjectHierarchy()
 
     def _onSceneCloseEnded(self, caller, event):
         import slicer
 
         slicer.vtkMRMLSubjectHierarchyNode.ResolveSubjectHierarchy(self._scene)
+        # A closed scene takes its subject hierarchy node with it, and the next one is watched anew.
+        self._forgetNames()
 
 
 # ---------------------------------------------------------------------------- scripted plugins

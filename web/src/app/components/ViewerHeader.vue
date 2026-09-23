@@ -178,26 +178,12 @@ const currentMarkupTool = computed(() =>
           <component :is="m.icon" :size="20" />
         </ToolButton>
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
-        <!-- The markup tools are a menu: seven buttons of their own leave a phone's toolbar with no
-             room for anything else. The button shows the last kind placed, so that it can be started
-             again with one tap. -->
-        <ToolMenu label="Place markup" :active="store.interactionMode.startsWith('Place:')">
-          <template #button><component :is="currentMarkupTool.icon" :size="20" /></template>
-          <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
-            class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-            :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
-            @click="place(t.cls)">
-            <component :is="t.icon" :size="16" />{{ t.label }}
-          </button>
-        </ToolMenu>
-        <div class="mx-1 h-6 w-px shrink-0 bg-input" />
-        <ToolButton v-for="m in favouriteModules" :key="m.name" :label="m.label" @click="openModule(m.name)">
-          <component :is="m.icon" :size="20" />
-        </ToolButton>
       </template>
 
-      <!-- Too narrow: what a click does in a view is one menu, and the modules are another -->
-      <template v-else>
+      <!-- Too narrow for a button each: what a click in a view does becomes one menu -->
+      <template v-if="compact">
+        <!-- What a click in a view does. Placing is one of the three, and places the kind of
+             markup chosen last; which kind that is belongs to the button beside this one. -->
         <ToolMenu label="Mouse mode" :active="store.interactionMode !== 'ViewTransform'">
           <template #button><component :is="currentMouseMode.icon" :size="20" /></template>
           <button v-for="m in mouseModes" :key="m.mode" type="button" role="menuitem"
@@ -206,14 +192,36 @@ const currentMarkupTool = computed(() =>
             @click="setMode(m.mode)">
             <component :is="m.icon" :size="16" />{{ m.label }}
           </button>
-          <div class="my-1 border-t border-input" />
-          <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
+          <button type="button" role="menuitem"
             class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-            :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
-            @click="place(t.cls)">
-            <component :is="t.icon" :size="16" />{{ t.label }}
+            :class="store.interactionMode.startsWith('Place:') ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+            @click="place(lastMarkupTool)">
+            <component :is="currentMarkupTool.icon" :size="16" />Place {{ currentMarkupTool.label.toLowerCase() }}
           </button>
         </ToolMenu>
+      </template>
+
+      <!-- What is placed, in both toolbars: seven buttons of their own would leave a narrow one no
+           room for anything else. The button shows the kind placed last, to start it again in one tap. -->
+      <ToolMenu label="Place markup" :active="store.interactionMode.startsWith('Place:')">
+        <template #button><component :is="currentMarkupTool.icon" :size="20" /></template>
+        <button v-for="t in markupTools" :key="t.cls" type="button" role="menuitem"
+          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
+          :class="store.interactionMode === 'Place:' + t.cls ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+          @click="place(t.cls)">
+          <component :is="t.icon" :size="16" />{{ t.label }}
+        </button>
+      </ToolMenu>
+
+      <template v-if="!compact">
+        <div class="mx-1 h-6 w-px shrink-0 bg-input" />
+        <ToolButton v-for="m in favouriteModules" :key="m.name" :label="m.label" @click="openModule(m.name)">
+          <component :is="m.icon" :size="20" />
+        </ToolButton>
+      </template>
+
+      <!-- ... and the modules of the toolbar another -->
+      <template v-if="compact">
         <ToolMenu label="Modules">
           <template #button><Brush :size="20" /></template>
           <button v-for="m in favouriteModules" :key="m.name" type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
@@ -222,6 +230,7 @@ const currentMarkupTool = computed(() =>
           </button>
         </ToolMenu>
       </template>
+
     </nav>
 
     <!-- The tools that are not about the views: in a menu of their own, at the end of the bar -->

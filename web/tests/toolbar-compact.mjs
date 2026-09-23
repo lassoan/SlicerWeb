@@ -31,17 +31,26 @@ check("every button is its own where there is room", await buttons(), [
   "Segment Editor", "Volume Rendering", "Transforms", "Scene Views"]);
 
 await resize(390);
-check("a narrow toolbar holds three buttons", await buttons(), ["Layout", "Mouse mode", "Modules"]);
+check("a narrow toolbar holds four buttons", await buttons(), ["Layout", "Mouse mode", "Place markup", "Modules"]);
 check("and nothing of it is out of reach", await fits(), true);
 
 // The mouse modes, in one menu
 await page.getByLabel("Mouse mode").click();
 await page.waitForTimeout(400);
 const modeItems = await page.locator("[role=menuitem]").allInnerTexts();
-check("the mouse modes and the markup kinds are in it", modeItems.length, 9);
+check("what a click can do is in it, placing included", modeItems.length, 3);
+check("and placing says what would be placed", /^Place /.test(modeItems[2]), true);
 await page.locator("[role=menuitem]", { hasText: "Window / Level" }).first().click();
 await page.waitForTimeout(600);
 check("choosing one sets the mode", await page.evaluate(() => window.slicerWeb.store.interactionMode), "AdjustWindowLevel");
+
+// The markup kinds, in a button of their own
+await page.getByLabel("Place markup").click();
+await page.waitForTimeout(400);
+check("the markup kinds are in the button beside it", await page.locator("[role=menuitem]").allInnerTexts(),
+      ["Point list", "Line", "Angle", "Open curve", "Closed curve", "Plane", "ROI"]);
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
 
 // The modules, in another
 await page.getByLabel("Modules").click();

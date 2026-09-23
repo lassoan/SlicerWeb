@@ -31,6 +31,7 @@ What the application reads when it starts:
 | `?layout=<name>` | the layout to start in: `FourUp`, `OneUpRedSlice`, `Dual3D`, … (default `FourUp`) |
 | `?sample=<name>` | a sample data set to load; **`?sample=` with nothing after it loads nothing**, which is what an embedded application usually wants |
 | `?volumeRendering=1` | with `?sample=`: also volume render the volume it loads, with the preset that suits it; `?volumeRendering=<preset name>` (`CT-Chest-Contrast-Enhanced`, `MR-Default`, …) for a given preset |
+| `?extensions=<names>` | extensions to make sure are installed, by their names in the extension index (`SlicerHeart,SlicerIGT`), or wheel URLs; installed with what they depend on, and remembered as an installation from the Extensions Manager is |
 | `localStorage["slicerweb.extensions"]` | a JSON list of extension wheel URLs to install at startup |
 
 Serving it from your own origin is worth the copy: a frame on the same origin can be driven

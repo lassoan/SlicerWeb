@@ -1,4 +1,5 @@
 import { createApp, watch } from "vue";
+import { extensionsFromAddress } from "./core/extensions";
 import "./styles/main.css";
 import App from "./app/App.vue";
 import { store } from "./app/store";
@@ -17,6 +18,8 @@ const params = new URLSearchParams(location.search);
 export const runtime = new SlicerRuntime({
   layout: params.get("layout") ?? "FourUp",
   extensionWheels: JSON.parse(localStorage.getItem("slicerweb.extensions") ?? "[]"),
+  // ?extensions=SlicerHeart,SlicerIGT: installed at this start if they are not yet
+  extensions: extensionsFromAddress(),
 });
 
 createApp(App).provide("runtime", runtime).mount("#app");

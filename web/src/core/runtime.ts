@@ -5,6 +5,7 @@
 import type { PyodideAPI } from "pyodide";
 import { PyodideBridge, setBridge } from "./bridge";
 import { jobRunner } from "./jobs";
+import { EXTENSIONS_KEY, extensionIndexUrl, loadExtensionIndex, resolveExtensionWheels } from "./extensions";
 import { loadSettings } from "./settings";
 
 export interface RuntimeConfig {
@@ -18,6 +19,8 @@ export interface RuntimeConfig {
   startupPackages?: string[];
   /** Additional wheel URLs (installed extensions). */
   extensionWheels?: string[];
+  /** Extensions to make sure are installed, by their name in the extension index (or wheel URL). */
+  extensions?: string[];
   /** Initial layout name, e.g. "FourUp". */
   layout?: string;
   /** Python packages from the Pyodide distribution to load. */
@@ -122,6 +125,7 @@ export class SlicerRuntime {
       wheelsURL: config.wheelsURL ?? base + "wheels/",
       startupPackages: config.startupPackages ?? DEFAULT_STARTUP_PACKAGES,
       extensionWheels: config.extensionWheels ?? [],
+      extensions: config.extensions ?? [],
       layout: config.layout ?? "FourUp",
       pyodidePackages: config.pyodidePackages ?? ["numpy", "micropip", "packaging"],
     };
@@ -138,6 +142,7 @@ export class SlicerRuntime {
   }
 
   async start(): Promise<void> {
+    await this.ensureExtensions();
     this.progress("pyodide", "Loading Python runtime", 0.02);
     const { loadPyodide } = await import(/* @vite-ignore */ this.config.pyodideURL + "pyodide.mjs");
     const pyodide: PyodideAPI = await loadPyodide({
@@ -404,6 +409,32 @@ bridge.call
     const index: WheelIndex = await response.json();
     const entry = index.packages.find((p) => p.name === name);
     return entry ? new URL(this.config.wheelsURL + entry.file, document.baseURI).href : null;
+  }
+
+  /**
+   * The extensions asked for by name (config.extensions, from `?extensions=` on the address) join
+   * the installed ones: their wheels, with what they depend on, are installed at this start and
+   * remembered as the Extensions Manager remembers an installation, so that they stay installed.
+   */
+  private async ensureExtensions() {
+    if (!this.config.extensions.length) return;
+    this.progress("extensions", "Resolving extensions", 0.01);
+    try {
+      const indexUrl = extensionIndexUrl();
+      const index = await loadExtensionIndex(indexUrl);
+      const { wheels, unknown } = await resolveExtensionWheels(this.config.extensions, index, indexUrl, (name) => this.baseWheelUrl(name));
+      if (unknown.length) console.warn(`Extensions not in ${indexUrl}: ${unknown.join(", ")}`);
+      const missing = wheels.filter((url) => !this.config.extensionWheels.includes(url));
+      if (!missing.length) return;
+      this.config.extensionWheels = [...this.config.extensionWheels, ...missing];
+      try {
+        localStorage.setItem(EXTENSIONS_KEY, JSON.stringify(this.config.extensionWheels));
+      } catch {
+        // a private window, say: installed for this page
+      }
+    } catch (e) {
+      console.warn("The extensions asked for could not be resolved", e);
+    }
   }
 
   private async resolveWheels(): Promise<{ name: string; url: string }[]> {

@@ -42,6 +42,19 @@ await page.getByLabel("Rotate / Pan / Zoom").click();
 await page.waitForTimeout(600);
 check("leaving the mode releases it", await page.getByLabel("Place points").getAttribute("aria-pressed"), "false");
 
+// The mode is the scene's to say: set from anywhere, the toolbar follows.
+const setMode = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, "exec"), code);
+await setMode('slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.AdjustWindowLevel)');
+await page.waitForTimeout(700);
+check("a mode set from Python presses its button", await page.getByLabel("Window / Level").getAttribute("aria-pressed"), "true");
+await setMode('slicer.modules.markups.logic().StartPlaceMode(0)');
+await page.waitForTimeout(700);
+check("a module starting place mode presses Place points", await page.getByLabel("Place points").getAttribute("aria-pressed"), "true");
+check("and releases the one before it", await page.getByLabel("Window / Level").getAttribute("aria-pressed"), "false");
+await setMode('slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.ViewTransform)');
+await page.waitForTimeout(700);
+check("and place mode ending releases it again", await page.getByLabel("Place points").getAttribute("aria-pressed"), "false");
+
 await resize(390);
 check("a narrow toolbar holds four buttons", await buttons(), ["Layout", "Mouse mode", "New markup", "Modules"]);
 check("and nothing of it is out of reach", await fits(), true);

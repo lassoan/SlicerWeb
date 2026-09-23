@@ -284,10 +284,6 @@ async function resetView() {
   }
 }
 
-async function rotateTo(direction: number) {
-  await bridge.evalPython(`slicer.app.layoutManager().view(${JSON.stringify(props.view.layoutName)}).ResetCamera(${direction})`);
-}
-
 const maximized = computed(() => store.layout.maximized === props.view.layoutName);
 
 /** Show this view alone; when it is already maximized, restore the layout. */
@@ -296,15 +292,6 @@ async function maximize() {
 }
 
 const orientations = ["Axial", "Sagittal", "Coronal", "Reformat"];
-// vtkMRMLCameraNode::Direction: Left=0, Right, Posterior, Anterior, Inferior, Superior
-const directions = [
-  ["L", 0],
-  ["R", 1],
-  ["P", 2],
-  ["A", 3],
-  ["I", 4],
-  ["S", 5],
-] as const;
 const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.toFixed(2)} mm` : ""));
 </script>
 
@@ -356,9 +343,6 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       </template>
       <template v-else-if="isThreeD">
         <div class="flex-1" />
-        <button v-for="[l, d] in directions" :key="l" type="button"
-          class="h-5 w-5 rounded text-[11px] text-muted-foreground hover:bg-accent hover:text-highlight" :title="`View from ${l}`"
-          @click="rotateTo(d)">{{ l }}</button>
       </template>
       <div v-else class="flex-1" />
       <button type="button" class="text-muted-foreground hover:text-highlight" title="Reset view" @click="resetView"><ScanSearch :size="13" /></button>

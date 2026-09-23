@@ -436,6 +436,42 @@ def install_scene_observers():
                         (slicer.vtkMRMLScene.EndBatchProcessEvent, "batch")):
         _scene_observers.append(scene.AddObserver(event, lambda c, e, kind=kind: host.emit("scene-changed", {"event": kind})))
 
+    # What a click in a view does is the scene's to say, not the toolbar's: it is also set by
+    # modules and by Python, and it ends by itself once a markup that is not placed for ever has
+    # been placed. The toolbar follows what the interaction node says rather than what it asked for.
+    interaction = slicer.app.applicationLogic().GetInteractionNode()
+    if interaction is not None:
+        for event in (slicer.vtkMRMLInteractionNode.InteractionModeChangedEvent,
+                      slicer.vtkMRMLInteractionNode.EndPlacementEvent):
+            _scene_observers.append(interaction.AddObserver(event, lambda c, e: host.emit("interaction-mode", interactionMode())))
+
+
+@method()
+def interactionMode():
+    """What a click in a view does: {mode, placeNodeClassName, persistent}.
+
+    *mode* is what vtkMRMLInteractionNode calls it ("ViewTransform", "Place", "AdjustWindowLevel"),
+    and while placing, *placeNodeClassName* is the kind of markup that a click would add to.
+    """
+    import slicer
+
+    appLogic = slicer.app.applicationLogic()
+    interaction = appLogic.GetInteractionNode()
+    selection = appLogic.GetSelectionNode()
+    if interaction is None:
+        return {"mode": "ViewTransform", "placeNodeClassName": "", "persistent": False}
+    # Named here rather than with GetInteractionModeAsString, which answers "(unknown)" for
+    # AdjustWindowLevel in this build; the class constants are right whatever they are numbered.
+    names = {slicer.vtkMRMLInteractionNode.Place: "Place",
+             slicer.vtkMRMLInteractionNode.ViewTransform: "ViewTransform",
+             slicer.vtkMRMLInteractionNode.AdjustWindowLevel: "AdjustWindowLevel"}
+    mode = interaction.GetCurrentInteractionMode()
+    return {
+        "mode": names.get(mode, interaction.GetInteractionModeAsString(mode)),
+        "placeNodeClassName": selection.GetActivePlaceNodeClassName() if selection is not None else "",
+        "persistent": bool(interaction.GetPlaceModePersistence()),
+    }
+
 
 # --------------------------------------------------------------------------- subject hierarchy
 @method()

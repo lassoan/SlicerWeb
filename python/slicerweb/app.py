@@ -97,7 +97,7 @@ class SlicerWebApplication:
         self._registerFileHandlers()
         self._installLogging()
 
-        from . import bridge, panels, panels_cli, panels_markupstomodel, panels_more, panels_views, sample_data, segment_editor, session, terminology, views_data  # noqa: F401  (register module GUI bridge methods)
+        from . import bridge, panels, panels_cli, panels_dvh, panels_markupstomodel, panels_more, panels_views, sample_data, segment_editor, session, terminology, views_data  # noqa: F401  (register module GUI bridge methods)
         from . import qtcompat
 
         qtcompat.install_slicer_widgets()

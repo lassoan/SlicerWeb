@@ -19,6 +19,7 @@ import CropVolumePanel from "./CropVolumePanel.vue";
 import ViewControllersPanel from "./ViewControllersPanel.vue";
 // Web GUIs of loadable modules of extensions (their desktop GUIs are Qt C++ widgets)
 import MarkupsToModelPanel from "./MarkupsToModelPanel.vue";
+import DoseVolumeHistogramPanel from "./DoseVolumeHistogramPanel.vue";
 
 export const modulePanels: Record<string, Component> = {
   Volumes: VolumesPanel,
@@ -53,4 +54,6 @@ export const modulePanels: Record<string, Component> = {
   viewcontrollers: ViewControllersPanel,
   MarkupsToModel: MarkupsToModelPanel,
   markupstomodel: MarkupsToModelPanel,
+  DoseVolumeHistogram: DoseVolumeHistogramPanel,
+  dosevolumehistogram: DoseVolumeHistogramPanel,
 };

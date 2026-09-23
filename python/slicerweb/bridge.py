@@ -468,8 +468,8 @@ def setApplicationSettings(values):
 def interactionMode():
     """What a click in a view does: {mode, placeNodeClassName, persistent}.
 
-    *mode* is what vtkMRMLInteractionNode calls it ("ViewTransform", "Place", "AdjustWindowLevel"),
-    and while placing, *placeNodeClassName* is the kind of markup that a click would add to.
+    *mode* is what vtkMRMLInteractionNode calls it ("ViewTransform", "Place", "AdjustWindowLevel",
+    "Scroll"), and while placing, *placeNodeClassName* is the kind of markup that a click would add to.
     """
     import slicer
 
@@ -483,6 +483,9 @@ def interactionMode():
     names = {slicer.vtkMRMLInteractionNode.Place: "Place",
              slicer.vtkMRMLInteractionNode.ViewTransform: "ViewTransform",
              slicer.vtkMRMLInteractionNode.AdjustWindowLevel: "AdjustWindowLevel"}
+    # Scroll (browse the slices by dragging) is newer than some builds of the interaction node
+    if hasattr(slicer.vtkMRMLInteractionNode, "Scroll"):
+        names[slicer.vtkMRMLInteractionNode.Scroll] = "Scroll"
     mode = interaction.GetCurrentInteractionMode()
     return {
         "mode": names.get(mode, interaction.GetInteractionModeAsString(mode)),
@@ -791,7 +794,7 @@ def resetThreeDViews():
 
 @method()
 def setInteractionMode(mode, placeNodeClassName=None, persistent=False):
-    """Mouse mode: "ViewTransform", "Place", "AdjustWindowLevel" (toolbar)."""
+    """Mouse mode: "ViewTransform", "Place", "AdjustWindowLevel", "Scroll" (toolbar)."""
     import slicer
 
     appLogic = slicer.app.applicationLogic()

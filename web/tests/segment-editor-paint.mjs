@@ -28,22 +28,22 @@ def painted():
     nodes = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")
     if not nodes:
         return -1
-    segmentation = nodes[0].GetSegmentation()
+    # Whatever segmentation was painted into: the editor makes one of its own on entry
     total = 0
-    for segmentID in segmentation.GetSegmentIDs():
-        labelmap = segmentation.GetSegment(segmentID).GetRepresentation("Binary labelmap")
-        scalars = labelmap.GetPointData().GetScalars() if labelmap else None
-        if scalars is not None:
-            total += int((numpy_support.vtk_to_numpy(scalars) > 0).sum())
+    for node in nodes:
+        segmentation = node.GetSegmentation()
+        for segmentID in segmentation.GetSegmentIDs():
+            labelmap = segmentation.GetSegment(segmentID).GetRepresentation("Binary labelmap")
+            scalars = labelmap.GetPointData().GetScalars() if labelmap else None
+            if scalars is not None:
+                total += int((numpy_support.vtk_to_numpy(scalars) > 0).sum())
     return total
 `);
 
-// the module, a segmentation of its own and a segment to paint into
+// the module (which makes a segmentation of its own on entry) and a segment to paint into
 await page.getByRole("button", { name: "Segment Editor" }).first().click();
 await page.waitForTimeout(2500);
 const panel = page.locator(".sw-panel-scroll").last();
-await panel.locator("select.sw-node-selector").first().selectOption("__create__");
-await page.waitForTimeout(2000);
 await panel.locator("button", { hasText: /^Add$/ }).first().click();
 await page.waitForTimeout(1500);
 

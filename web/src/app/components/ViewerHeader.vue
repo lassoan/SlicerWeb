@@ -29,6 +29,7 @@ import ToolButton from "./ToolButton.vue";
 import ToolMenu from "./ToolMenu.vue";
 import ClosedCurveIcon from "./icons/ClosedCurveIcon.vue";
 import RoiBoxIcon from "./icons/RoiBoxIcon.vue";
+import ScrollSlicesIcon from "./icons/ScrollSlicesIcon.vue";
 import LayoutSelector from "./LayoutSelector.vue";
 
 const bridge = inject<SlicerBridge>("bridge")!;
@@ -121,6 +122,8 @@ watch(ready, () => nextTick(measure));
 const mouseModes = computed(() => [
   { mode: "ViewTransform", label: "Rotate / Pan / Zoom", icon: Hand },
   { mode: "AdjustWindowLevel", label: "Window / Level", icon: Contrast },
+  // Browsing the slices by dragging up and down in a slice view, as radiology viewers offer
+  { mode: "Scroll", label: "Scroll slices", icon: ScrollSlicesIcon },
   // Placing is a mode like the others, and the only one a click in a view adds something in. It
   // places the kind of markup made last; which kind that is belongs to the New markup button.
   { mode: "Place", label: "Place points", icon: MousePointerClick },
@@ -128,7 +131,7 @@ const mouseModes = computed(() => [
 const placing = computed(() => store.interactionMode.startsWith("Place:"));
 const currentMouseMode = computed(() =>
   mouseModes.value.find((m) => m.mode === store.interactionMode)
-  ?? (placing.value ? mouseModes.value[2] : mouseModes.value[0]));
+  ?? (placing.value ? mouseModes.value.find((m) => m.mode === "Place")! : mouseModes.value[0]));
 
 /** Enter a mouse mode; placing means placing the kind of markup made last. */
 function chooseMode(mode: string) {

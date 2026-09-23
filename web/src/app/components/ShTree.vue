@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // Subject hierarchy tree (qMRMLSubjectHierarchyTreeView subset).
 import { inject, ref } from "vue";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Box, Layers, Image, MapPin, Shapes, Move3d, Table, Folder, User, FileText, Download, X } from "@lucide/vue";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Box, Layers, Image, MapPin, Shapes, Move3d, Table, Folder, User, FileText, Download, MoreHorizontal, Pencil, Trash2 } from "@lucide/vue";
+import PopupMenu from "./PopupMenu.vue";
 import type { SlicerBridge, SubjectHierarchyItem } from "@/core/bridge";
 import type { SlicerRuntime } from "@/core/runtime";
 import { openModule, store } from "../store";
@@ -80,24 +81,76 @@ async function save(item: SubjectHierarchyItem) {
   await bridge.evalPython(`import os; os.makedirs("/data/save", exist_ok=True)`);
   if (await bridge.call<boolean>("saveNode", [item.nodeID, path])) runtime.saveFileToDisk(path);
 }
+
+/**
+ * The menu of a row, which is opened three ways: by the button at its end, by a right click, and
+ * by a press held on it - a mouse has the first two out of habit, a finger the first and the last.
+ *
+ * The menus are kept by item so that a row can open its own; the menu appears under the button
+ * either way, which is where a menu belonging to that row is looked for.
+ */
+const menus = ref(new Map<number, { show: () => void } | null>());
+let pressTimer: number | undefined;
+let pressed = false;
+
+function openMenu(item: SubjectHierarchyItem) {
+  menus.value.get(item.id)?.show();
+}
+
+function holdStart(item: SubjectHierarchyItem, event: PointerEvent) {
+  if (event.pointerType === "mouse") return;   // a mouse has the right button for this
+  pressed = false;
+  window.clearTimeout(pressTimer);
+  pressTimer = window.setTimeout(() => {
+    pressed = true;
+    openMenu(item);
+  }, 500);
+}
+
+function holdEnd() {
+  window.clearTimeout(pressTimer);
+}
+
+/** A press that opened the menu must not also count as a click on the row. */
+function clicked(item: SubjectHierarchyItem) {
+  if (pressed) {
+    pressed = false;
+    return;
+  }
+  select(item);
+}
 </script>
 
 <template>
   <ul class="text-[13px]">
     <li v-for="item in items" :key="item.id">
-      <div class="sw-row group flex h-7 items-center gap-1 rounded pr-1 hover:bg-accent/60"
+      <div class="sw-row group flex h-7 items-center gap-1 rounded pr-1 hover:bg-accent/60 [@media(hover:none)]:h-9"
         :class="{ 'bg-accent': store.selectedNodeID && store.selectedNodeID === item.nodeID }"
-        :style="{ paddingLeft: depth * 14 + 4 + 'px' }" @click="select(item)" @dblclick="rename(item)">
+        :style="{ paddingLeft: depth * 14 + 4 + 'px' }" @click="clicked(item)" @dblclick="rename(item)"
+        @contextmenu.prevent="openMenu(item)" @pointerdown="holdStart(item, $event)"
+        @pointerup="holdEnd" @pointercancel="holdEnd" @pointermove="holdEnd">
         <button v-if="item.children.length" type="button" class="text-muted-foreground" @click.stop="toggle(item)">
           <ChevronRight v-if="collapsed.has(item.id)" :size="14" /><ChevronDown v-else :size="14" />
         </button>
         <span v-else class="w-[14px]" />
         <component :is="icon(item)" :size="14" class="shrink-0 text-muted-foreground" />
         <span class="min-w-0 flex-1 truncate" :title="item.name">{{ item.name }}</span>
-        <!-- .sw-row-action: under the mouse where there is one, always there where a finger is the
-             pointer - a finger cannot hover, and this is the only way to reach them (see main.css). -->
-        <button v-if="item.nodeID" type="button" class="sw-row-action text-muted-foreground hover:text-highlight" title="Save to file" @click.stop="save(item)"><Download :size="14" /></button>
-        <button v-if="item.nodeID" type="button" class="sw-row-action text-muted-foreground hover:text-red-400" title="Delete" @click.stop="remove(item)"><X :size="14" /></button>
+        <!-- What else can be done with this node, behind one button rather than beside the name:
+             a row holding every action is a cluttered row, and the two that matter most - deleting
+             among them - are better a deliberate tap away. -->
+        <PopupMenu v-if="item.nodeID" :ref="(el: any) => menus.set(item.id, el)" align="right">
+          <template #trigger="{ open, toggle }">
+            <button type="button" class="sw-row-action text-muted-foreground hover:text-highlight"
+              :class="open ? 'text-highlight' : ''" :title="`More for ${item.name}`"
+              @click.stop="toggle()"><MoreHorizontal :size="14" /></button>
+          </template>
+          <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+            @click="save(item)"><Download :size="14" />Save to file</button>
+          <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+            @click="rename(item)"><Pencil :size="14" />Rename</button>
+          <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-red-300 hover:bg-accent/60"
+            @click="remove(item)"><Trash2 :size="14" />Delete</button>
+        </PopupMenu>
         <button type="button" class="text-muted-foreground hover:text-highlight" :title="item.visible ? 'Hide' : 'Show'" @click.stop="setVisible(item)">
           <Eye v-if="item.visible" :size="14" /><EyeOff v-else :size="14" class="opacity-60" />
         </button>

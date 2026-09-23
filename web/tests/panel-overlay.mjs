@@ -41,11 +41,26 @@ await phone.waitForTimeout(4000);
 const fieldOfView = () => py('repr([round(v) for v in slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetSliceNode().GetFieldOfView()])');
 const loadedWith = await fieldOfView();
 
-// A finger cannot hover, so what a row of the data tree offers has to be there to be tapped.
-check("the row of a node offers saving without hovering", await phone.locator("[title='Save to file']").first().isVisible(), true);
-check("and deleting", await phone.locator("[title='Delete']").first().isVisible(), true);
-const target = await phone.locator("[title='Save to file']").first().boundingBox();
+// A finger cannot hover, so what a row of the data tree offers has to be there to be tapped: one
+// button per row, and the same menu under a press held on the row.
+const more = phone.locator("[title^='More for']").first();
+check("the row of a node offers its menu without hovering", await more.isVisible(), true);
+const target = await more.boundingBox();
 check("with something a finger can hit", target.width >= 24 && target.height >= 24, true);
+await more.click();
+await phone.waitForTimeout(500);
+check("the menu holds what can be done with the node",
+      (await phone.locator("[role=menuitem]").allInnerTexts()).join(", "), "Save to file, Rename, Delete");
+await phone.keyboard.press("Escape");
+await phone.waitForTimeout(300);
+const row = await phone.locator(".sw-row").first().boundingBox();
+await phone.evaluate(([x, y]) => document.elementFromPoint(x, y).dispatchEvent(
+  new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", clientX: x, clientY: y })),
+  [row.x + 40, row.y + row.height / 2]);
+await phone.waitForTimeout(800);
+check("and a press held on the row opens the same menu", await phone.locator("[role=menuitem]").count(), 3);
+await phone.keyboard.press("Escape");
+await phone.waitForTimeout(300);
 
 await phone.mouse.click(380, 500); // tapping the views puts the panel away
 await phone.waitForTimeout(1500);

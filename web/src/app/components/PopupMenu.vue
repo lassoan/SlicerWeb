@@ -50,7 +50,15 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", place);
 });
 
-defineExpose({ close: () => (open.value = false) });
+// Opening it is also for whoever holds this menu: a row of the data tree opens its own by a right
+// click or a long press, and the menu appears where its button is, wherever the press was.
+defineExpose({
+  close: () => (open.value = false),
+  toggle,
+  show: () => {
+    if (!open.value) toggle();
+  },
+});
 </script>
 
 <template>

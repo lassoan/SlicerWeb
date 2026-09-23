@@ -57,6 +57,57 @@ async function refreshSubjectHierarchy() {
 }
 
 /**
+ * The scene of the last session, offered back.
+ *
+ * A phone reclaims a tab of this size as soon as another application is in front, and starts the
+ * page from nothing on return. The scene is kept as the page goes into the background (below), and
+ * asked about here, before anything else is loaded: what was there is usually what is wanted.
+ */
+async function offerLastSession(): Promise<boolean> {
+  const info = await runtime.bridge.call<{ savedAt: number; bytes: number; nodes: string[]; count: number } | null>("sessionInfo").catch(() => null);
+  if (!info) return false;
+  const when = new Date(info.savedAt * 1000);
+  const age = Date.now() - when.getTime();
+  const saved = age < 24 * 3600 * 1000
+    ? `at ${when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    : `on ${when.toLocaleDateString()}`;
+  const what = info.nodes.slice(0, 4).join(", ") + (info.count > 4 ? ` and ${info.count - 4} more` : "");
+  if (!window.confirm(`Restore the scene from your last session?\n\n${what}\nSaved ${saved}, ${(info.bytes / 1048576).toFixed(0)} MB`)) {
+    await runtime.bridge.call("forgetSession").catch(() => {});
+    return false;
+  }
+  store.progress = { stage: "session", message: "Restoring the last session", fraction: 0.9 };
+  try {
+    await runtime.bridge.call("restoreSession");
+    return true;
+  } catch (e: any) {
+    alert(`The last session could not be restored: ${e.message ?? e}`);
+    await runtime.bridge.call("forgetSession").catch(() => {});
+    return false;
+  }
+}
+
+/**
+ * Keep the scene as the page goes into the background.
+ *
+ * That is the moment before a phone reclaims the tab, and the last one this code runs; the
+ * page is hidden, so a moment's pause to write the scene is not felt. What is written goes to
+ * IndexedDB right away rather than on the usual short delay, since there may be no later.
+ */
+function keepSessionWhenHidden() {
+  let keeping: Promise<unknown> | null = null;
+  const keep = () => {
+    if (keeping || store.status !== "ready") return;
+    keeping = runtime.bridge.call<{ saved: boolean }>("saveSession")
+      .then((result) => (result.saved ? runtime.flushPersistentStorage() : undefined))
+      .catch((e) => console.warn("The session could not be kept", e))
+      .finally(() => (keeping = null));
+  };
+  document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && keep());
+  window.addEventListener("pagehide", keep);
+}
+
+/**
  * Sample data set loaded at startup: `?sample=<name>` URL parameter, else the VITE_DEFAULT_SAMPLE build
  * setting (`?sample=` with an empty value disables it).
  */
@@ -116,7 +167,8 @@ onMounted(async () => {
     store.status = "ready";
     reportGLToApplication(runtime.bridge);
     await refreshSubjectHierarchy();
-    await loadStartupSample();
+    if (!(await offerLastSession())) await loadStartupSample();
+    keepSessionWhenHidden();
   } catch (e: any) {
     console.error(e);
     store.status = "error";

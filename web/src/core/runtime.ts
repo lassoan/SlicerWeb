@@ -388,6 +388,12 @@ bridge.call
     this.persistTimer = window.setTimeout(() => this.pyodide?.FS.syncfs(false, () => {}), 500);
   }
 
+  /** Write what is pending to IndexedDB now, for the moments when there may be no later. */
+  flushPersistentStorage(): Promise<void> {
+    window.clearTimeout(this.persistTimer);
+    return new Promise((resolve) => (this.pyodide ? this.pyodide.FS.syncfs(false, () => resolve()) : resolve()));
+  }
+
   // ------------------------------------------------------------------ files
   /** Copy browser files (file picker, drag and drop) into the virtual file system. */
   async writeFiles(files: File[], directory = "/data"): Promise<string[]> {

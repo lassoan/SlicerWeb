@@ -12,6 +12,19 @@ That is enough for one series in one directory and wrong for everything else - t
 folder become one volume, nothing is indexed, nothing can be browsed, and nothing survives a
 reload.
 
+## Where this stands
+
+Done, and not yet compiled: the reader described under "Reading the pixels" below.
+`patches/Slicer/0004-ENH-Allow-building-vtkITK-DICOM-support-without-DCMTK.patch` is in the tree
+and applies, and the two options are set in `CMakeLists.txt`. What was checked is that the patch
+applies to Slicer, that the scalar reader's macro expands correctly in all three configurations
+when put through a preprocessor, and that `ITKIOGDCM` is among the ITK components vtkITK asks
+`find_package` for - so the link resolves. What was not checked is that any of it builds: stages
+`50-slicer` and `60-wheels` have not been run. That is the next thing to do, and nothing further
+should be stacked on this until it has been.
+
+Not started: the database, the port of `DICOMLib` and the plugins, the panel, and DICOMweb.
+
 ## What is already built
 
 The reading of DICOM pixels is done. `cmake/itk/wasm.cmake` turns on `ITKGDCM` and `ITKIOGDCM`,
@@ -54,7 +67,26 @@ builds a `DCMTKImageIO`, touching `Libs/vtkITK/vtkITKConfigure.h.in`, `Libs/vtkI
 `VTKITK_BUILD_DICOM_SUPPORT` goes `ON` in `CMakeLists.txt:175` and the new one stays `OFF`.
 
 This is the only C++ change the module needs, it is a few lines, and it is the kind of patch
-`patches/` exists for - a build that has GDCM but not DCMTK is not peculiar to WebAssembly.
+`patches/` exists for - a build that has GDCM but not DCMTK is not peculiar to WebAssembly. It is
+`patches/Slicer/0004-ENH-Allow-building-vtkITK-DICOM-support-without-DCMTK.patch`, thirty-two
+lines added across five files, and the new option defaults to `VTKITK_BUILD_DICOM_SUPPORT` so that
+a build which has DCMTK is unchanged by it.
+
+Two things about it are worth knowing before touching it again. In
+`vtkITKArchetypeImageSeriesScalarReader.cxx` the DCMTK branch is inside a line-continued macro,
+where a preprocessor conditional cannot go, so it is factored into a macro of its own that is empty
+when DCMTK is not built; the three configurations expand to what they should, which is worth
+re-checking through `cc -E` if the macro is edited. And nothing was missing from the link in the
+first place: `ITKIOGDCM` is already in the list of ITK components `Libs/vtkITK/CMakeLists.txt`
+passes to `find_package`, unconditionally, and `ITKIODCMTK` was never in it.
+
+A caution for any patch against Slicer, found while making this one: the revision `sources.env`
+pins is not reachable in the repository it names. `SLICER_REV` is not a commit of `Slicer/Slicer`
+as published, which fits the `/mirror/Slicer` the same file points at carrying commits that were
+never pushed. A patch therefore cannot be generated against the pinned tree from a clone of the
+public repository, and this one was made against `main` instead - the five files it touches are
+identical between the two but for a `cmake_minimum_required` line far from any hunk. Patch context
+is worth confirming on the machine that has the mirror.
 
 `Slicer_BUILD_DICOM_SUPPORT` (`CMakeLists.txt:82`) stays `OFF`. Turning it on would pull in the
 CTK and Qt half of Slicer's DICOM support, which is the thing being replaced.

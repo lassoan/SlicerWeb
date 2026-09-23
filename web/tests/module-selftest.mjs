@@ -3,7 +3,7 @@ import { chromium } from "playwright-core";
 
 const base = process.argv[2] ?? "http://localhost:5173/";
 const extName = process.argv[3] ?? "SlicerVMTK";
-const title = process.argv[4] ?? "Extract centerline";
+const title = process.argv[4] ?? "Extract Centerline";
 const shot = process.argv.find((a) => a.endsWith(".png"));
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
 const page = await (await browser.newContext({ viewport: { width: 1500, height: 1000 } })).newPage();

@@ -293,13 +293,17 @@ bridge.call
     let bytes = 0;
     for (const path of Object.keys(loaded)) {
       if (!path.startsWith("/") || !path.endsWith(".so")) continue;
-      const extensionModule = /\.cpython-[^/]*\.so$/.test(path);
+      // An extension module is tagged (vtkCommonCore.cpython-314-wasm32-emscripten.so) or is a
+      // wrapped kit of Slicer's or an extension's (MRMLCorePython.so, vtkvmtkMiscPython.so): what
+      // a library is not, a library being lib-something (libMRMLCore.so). Some kits are imported
+      // late - VMTK's by Extract Centerline, when it first runs - so their files must stay.
+      const name = path.slice(path.lastIndexOf("/") + 1);
+      const extensionModule = /\.cpython-[^/]*\.so$/.test(name) || !name.startsWith("lib");
       if (extensionModule && !imported.has(path)) continue;
       // A library loaded later names what it needs by file name alone, and the loader looks
       // that up among what is loaded before it searches the file system. Loaded libraries are
       // recorded by their path, so each is recorded by its name as well: a wheel installed after
       // this - an extension - then finds the kits it needs without their files.
-      const name = path.slice(path.lastIndexOf("/") + 1);
       if (!(name in loaded)) loaded[name] = loaded[path];
       try {
         bytes += module.FS.stat(path).size;

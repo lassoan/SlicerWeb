@@ -19,7 +19,7 @@ console.log(`toolbar: ${fits.scrollWidth} px of buttons in ${fits.clientWidth} p
 console.log("buttons shown:", await nav.locator("button").count());
 
 // the menus must work with a tap (they used to be cut off by the scrolling toolbar)
-await page.getByRole("button", { name: /place markup/i }).tap();
+await page.getByRole("button", { name: /new markup/i }).tap();
 await page.waitForTimeout(300);
 const items = await page.locator("[role='menuitem']").allInnerTexts();
 console.log("markup menu:", items.join(", "));
@@ -29,11 +29,21 @@ await page.waitForTimeout(600);
 console.log("interaction mode after choosing Line:", await page.evaluate(() => window.slicerWeb.store.interactionMode));
 console.log("menu closed:", await page.locator("[role='menuitem']").count() === 0);
 
-// the overflow menu holds what was dropped from the bar
-await page.getByRole("button", { name: /^more$/i }).tap();
-await page.waitForTimeout(300);
-console.log("more menu:", (await page.locator("[role='menuitem']").allInnerTexts()).join(", "));
+// the menus hold what was dropped from the bar: the mouse modes, the favourite modules
+for (const name of [/mouse mode/i, /^modules$/i]) {
+  await page.getByRole("button", { name }).tap();
+  await page.waitForTimeout(300);
+  console.log(`${name} menu:`, (await page.locator("[role='menuitem']").allInnerTexts()).join(", "));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+}
+// the layout list, hung under its button, in view
+await page.getByRole("button", { name: "Layout" }).first().tap();
+await page.waitForTimeout(400);
+const layoutMenu = await page.locator("[data-name='layoutMenu']").boundingBox();
+console.log("layout list in view:", !!layoutMenu && layoutMenu.x >= 0 && layoutMenu.x + layoutMenu.width <= 390 && layoutMenu.height > 200);
 await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
 
 // the application menu at the end of the bar
 await page.getByRole("button", { name: /application menu/i }).tap();

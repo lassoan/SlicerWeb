@@ -1,5 +1,2 @@
-* text=auto eol=lf
-*.ps1 text eol=crlf
-*.png binary
-*.ico binary
-*.woff2 binary
+# A patch matches the bytes of the files it changes, line endings included (SlicerRT commits CRLF)
+*.patch -text

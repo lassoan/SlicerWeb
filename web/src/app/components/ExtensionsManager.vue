@@ -30,7 +30,10 @@ const filter = ref("");
 
 const shown = computed(() => {
   const f = filter.value.toLowerCase();
-  return extensions.value.filter((e) => !f || e.name.toLowerCase().includes(f) || e.description.toLowerCase().includes(f) || e.category.toLowerCase().includes(f));
+  // An extension need not say everything about itself (SimVascular names no category), and a
+  // field that is not there must not end the dialog: matching what it says is enough.
+  const says = (text: string | undefined) => (text ?? "").toLowerCase().includes(f);
+  return extensions.value.filter((e) => !f || says(e.name) || says(e.description) || says(e.category));
 });
 
 function resolve(path: string) {
@@ -119,7 +122,9 @@ onMounted(loadIndex);
         <button type="button" class="text-muted-foreground hover:text-highlight" @click="emit('close')"><X :size="18" /></button>
       </div>
       <div class="flex flex-wrap gap-2 px-4 py-2">
-        <input v-model="filter" placeholder="Search extensions" class="h-8 flex-1 rounded-md border border-input bg-background px-2 text-[13px] outline-none focus:border-primary" />
+        <!-- Bound by hand rather than with v-model, which holds its value back while a phone keyboard
+             composes a word: the list follows every keystroke. -->
+        <input :value="filter" placeholder="Search extensions" @input="filter = ($event.target as HTMLInputElement).value" class="h-8 flex-1 rounded-md border border-input bg-background px-2 text-[13px] outline-none focus:border-primary" />
         <input v-model="indexUrl" title="Extension index URL" class="h-8 w-80 max-md:hidden rounded-md border border-input bg-background px-2 text-[12px] text-muted-foreground outline-none" @change="loadIndex" />
         <button type="button" class="h-8 rounded-md bg-secondary/60 px-3 text-[13px] hover:bg-secondary" @click="installFromUrl">Install from URL</button>
       </div>

@@ -326,8 +326,12 @@ def extension_metadata(source_dir):
     import re
 
     text = open(os.path.join(source_dir, "CMakeLists.txt"), encoding="utf8").read()
-    project = re.search(r"^\s*project\(\s*([A-Za-z0-9_]+)", text, re.M).group(1)
-    meta = {"name": project}
+    # project(Name), or project(${EXTENSION_NAME}) with the name set above it (SlicerIGSIO does
+    # that); failing both, the directory is named after the extension.
+    project = re.search(r"^\s*project\(\s*([A-Za-z0-9_]+)", text, re.M)
+    if project is None:
+        project = re.search(r"^\s*set\(\s*EXTENSION_NAME\s+([A-Za-z0-9_]+)", text, re.M)
+    meta = {"name": project.group(1) if project else os.path.basename(source_dir)}
     for field in EXTENSION_FIELDS:
         m = re.search(r"set\(\s*EXTENSION_%s\s+(.*?)\)\s*(#.*)?$" % field, text, re.M | re.S)
         if not m:

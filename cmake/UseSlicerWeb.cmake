@@ -79,15 +79,27 @@ include(SlicerMacroBuildModuleVTKLibrary)
 include(SlicerMacroPythonWrapModuleVTKLibrary)
 include(SlicerMacroBuildModuleLogic)
 include(SlicerMacroBuildModuleMRML)
+# A displayable manager's object factory, as Slicer's own use file includes it (Watchdog of SlicerIGT)
+include(SlicerConfigureDisplayableManagerObjectFactory)
 
 #-----------------------------------------------------------------------------
 # Loadable module: Qt module class replaced by a module description
 function(slicerMacroBuildLoadableModule)
   cmake_parse_arguments(MY "WITH_GENERIC_TESTS;NO_INSTALL;NO_TITLE" "NAME;TITLE;EXPORT_DIRECTIVE;FOLDER"
     "SRCS;MOC_SRCS;UI_SRCS;INCLUDE_DIRECTORIES;TARGET_LIBRARIES;RESOURCES" ${ARGN})
+  # The logic class: what the Qt module's createLogic() makes, read from its source, since the
+  # class is not always named after the module (SlicerRT: vtkSlicerIsodoseModuleLogic); failing
+  # that, the usual name.
   set(_logic_class "")
   if(TARGET vtkSlicer${MY_NAME}ModuleLogic)
     set(_logic_class "vtkSlicer${MY_NAME}Logic")
+    set(_module_cxx "${CMAKE_CURRENT_SOURCE_DIR}/qSlicer${MY_NAME}Module.cxx")
+    if(EXISTS "${_module_cxx}")
+      file(READ "${_module_cxx}" _src)
+      if(_src MATCHES "::createLogic\\(\\)[^}]*return[ \t\r\n]+(vtk[A-Za-z0-9_]+)::New")
+        set(_logic_class "${CMAKE_MATCH_1}")
+      endif()
+    endif()
   endif()
   set(_title "${MY_TITLE}")
   if(NOT _title)
@@ -126,6 +138,12 @@ endfunction()
 function(SlicerMacroBuildBaseQtLibrary)
   cmake_parse_arguments(MY "" "NAME" "" ${ARGN})
   message(STATUS "SlicerWeb: Qt library ${MY_NAME} is not built")
+endfunction()
+# A Qt Designer plugin of a module's widgets (VolumeResliceDriver of SlicerIGT has one) is for
+# Qt Designer on the desktop, and is not built
+function(ctkMacroBuildQtDesignerPlugin)
+  cmake_parse_arguments(MY "" "NAME" "" ${ARGN})
+  message(STATUS "SlicerWeb: Qt Designer plugin ${MY_NAME} is not built")
 endfunction()
 
 # CLI modules are not built

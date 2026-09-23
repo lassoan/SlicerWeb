@@ -106,6 +106,10 @@ class LoadableModuleDescriptor(ModuleBase):
         self._app = app
         if self.logicClass:
             cls = getattr(slicer, self.logicClass, None)
+            if cls is None and self.logicClass.endswith("Logic"):
+                # A module's logic is usually vtkSlicer<Name>Logic, but not always
+                # (vtkSlicerIsodoseModuleLogic): the other spelling, before giving up.
+                cls = getattr(slicer, self.logicClass[:-len("Logic")] + "ModuleLogic", None)
             if cls is None:
                 raise RuntimeError(f"Logic class {self.logicClass} of module {self.name} is not available")
             logic = cls()

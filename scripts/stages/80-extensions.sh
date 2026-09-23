@@ -18,12 +18,14 @@ COMMON_ARGS=(-Wno-dev "${SW_CMAKE_SIDE_ARGS[@]}" "${SW_OPENGL_ARGS[@]}" "${ZLIB_
   "-DCMAKE_EXE_LINKER_FLAGS=-fwasm-exceptions -sSUPPORT_LONGJMP=wasm -sMAIN_MODULE=2"
   -DBUILD_TESTING=OFF -DSlicer_DIR="$SW_BUILD/slicer" "${WRAP_ARGS[@]}")
 
-# Install the components used in the browser: libraries, Python modules, resources. Not "Runtime"
-# (executables: CLI modules and tools, which cannot run in the page) and not "Development".
+# Install the components used in the browser: libraries, Python modules, resources - and "Runtime",
+# which on the desktop holds the executables (CLI modules, tools) but here holds what modules put
+# there beside them, such as Isodose's colour table: the SDK builds no executables at all. Not
+# "Development" (headers, CMake files).
 install_components() { # build-dir
   local comps c
   comps=$(grep -rhoP 'CMAKE_INSTALL_COMPONENT STREQUAL "\K[^"]+' "$1" --include=cmake_install.cmake | sort -u \
-    | grep -vxE 'Runtime|Development')
+    | grep -vxE 'Development')
   for c in $comps; do
     cmake --install "$1" --component "$c"
   done
@@ -59,6 +61,40 @@ fi
 
 if want SlicerHeart; then
   build_extension SlicerHeart -DSlicerHeart_BUILD_ITK_FILTERS=OFF
+fi
+
+# SlicerIGSIO and SlicerIGT both build on the IGSIO library (SlicerIGSIO's superbuild makes it; here
+# it is made once, into SlicerIGSIO's own tree, which is what SlicerIGT says it depends on). Its
+# libraries go where the loadable modules go, which is where the page looks for them. Built as
+# SlicerIGSIO's superbuild builds it, on Slicer's vtkAddon (its codec library wants vtkAddon even
+# with the codecs off). No codecs: MKV and VP9 are for recording video, and bring libraries of
+# their own.
+if want SlicerIGSIO || want SlicerIGT; then
+  log "IGSIO"
+  LOADABLE=lib/$SLICER_VERSION_DIR/qt-loadable-modules
+  rm -rf "$EXT_INSTALL/SlicerIGSIO"
+  cmake -S "$SW_SRC/IGSIO" -B "$EXT_BUILD/IGSIO" "${COMMON_ARGS[@]}"     -DCMAKE_INSTALL_PREFIX="$EXT_INSTALL/SlicerIGSIO"     -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF -DIGSIO_SUPERBUILD=OFF -DIGSIO_USE_3DSlicer=ON -DvtkAddon_DIR="$SW_BUILD/slicer/Libs/vtkAddon"     -DVTK_DIR="$SW_INSTALL/vtk/lib/cmake/vtk" -DITK_DIR="$SW_INSTALL/itk/lib/cmake/ITK-5.4"     -DIGSIO_USE_SYSTEM_ZLIB=ON     -DIGSIO_BUILD_SEQUENCEIO=ON -DIGSIO_BUILD_VOLUMERECONSTRUCTION=ON     -DIGSIO_SEQUENCEIO_ENABLE_MKV=OFF -DIGSIO_USE_VP9=OFF -DIGSIO_BUILD_CODECS=OFF     -DIGSIO_INSTALL_LIB_DIR=$LOADABLE -DIGSIO_INSTALL_BIN_DIR=$LOADABLE
+  cmake --build "$EXT_BUILD/IGSIO" -j "$SW_JOBS"
+  cmake --install "$EXT_BUILD/IGSIO"
+fi
+
+if want SlicerIGSIO; then
+  log "extension SlicerIGSIO"
+  cmake -S "$SW_SRC/SlicerIGSIO" -B "$EXT_BUILD/SlicerIGSIO" "${COMMON_ARGS[@]}"     -DSlicerIGSIO_SUPERBUILD=OFF -DCMAKE_INSTALL_PREFIX="$EXT_INSTALL/SlicerIGSIO"     -DIGSIO_DIR="$EXT_BUILD/IGSIO" -DSlicerIGSIO_USE_VP9=OFF
+  cmake --build "$EXT_BUILD/SlicerIGSIO" -j "$SW_JOBS"
+  install_components "$EXT_BUILD/SlicerIGSIO"
+fi
+
+if want SlicerIGT; then
+  # Slicer_EXTENSION_SOURCE_DIRS set makes SlicerIGT take the IGSIO library directly, as it does
+  # when bundled with SlicerIGSIO, rather than look for a SlicerIGSIO build tree.
+  build_extension SlicerIGT -DIGSIO_DIR="$EXT_BUILD/IGSIO" -DSlicer_EXTENSION_SOURCE_DIRS=bundled     -DvtkAddon_DIR="$SW_BUILD/slicer/Libs/vtkAddon"
+fi
+
+if want SlicerRT; then
+  # Without Plastimatch and DICOM: neither is built for WebAssembly, and the modules that need
+  # them step aside when they are not found (see patches/SlicerRT).
+  build_extension SlicerRT -DSlicer_BUILD_DICOM_SUPPORT=OFF
 fi
 
 if want SlicerVMTK; then

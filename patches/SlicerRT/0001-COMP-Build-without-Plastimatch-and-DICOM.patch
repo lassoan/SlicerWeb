@@ -1,0 +1,75 @@
+From: SlicerWeb <noreply@slicer.org>
+Subject: [PATCH] COMP: Build without Plastimatch and DICOM
+
+Plastimatch is not built for WebAssembly and neither is DCMTK. Every
+module that needs Plastimatch already steps aside when it is not found,
+except DrrImageComputation, which links vtkPlmCommon; the DICOM SRO
+module needs DCMTK and had no guard at all. Both are guarded here. The
+two MRML libraries also tested PLASTIMATCH_LDFLAGS by expanding it,
+which is a CMake error when it is not set. And the common library's
+DICOM reader base classes, which are DCMTK's, are left out when there
+is no DICOM support; only the two DICOM modules use them.
+
+---
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -96,10 +96,14 @@
+ add_subdirectory(PlmProtonDoseEngine)
+ add_subdirectory(VffFileReader)
+ add_subdirectory(DosxyzNrc3dDoseFileReader)
+-add_subdirectory(DicomSroImportExport)
++if(Slicer_BUILD_DICOM_SUPPORT)
++  add_subdirectory(DicomSroImportExport)
++endif()
+ add_subdirectory(BatchProcessing)
+ add_subdirectory(RoomsEyeView)
+-add_subdirectory(DrrImageComputation)
++if(Plastimatch_FOUND)
++  add_subdirectory(DrrImageComputation)
++endif()
+ 
+ add_subdirectory(PlastimatchPy)
+ add_subdirectory(PlmBspline)
+--- a/Isodose/MRML/CMakeLists.txt
++++ b/Isodose/MRML/CMakeLists.txt
+@@ -39,7 +39,7 @@
+   )
+ 
+ # Set linker flags, needed for OpenMP
+-if (NOT ${PLASTIMATCH_LDFLAGS} STREQUAL "")
++if (PLASTIMATCH_LDFLAGS)
+   set_target_properties (${KIT}
+     PROPERTIES LINK_FLAGS ${PLASTIMATCH_LDFLAGS})
+ endif ()
+--- a/DrrImageComputation/MRML/CMakeLists.txt
++++ b/DrrImageComputation/MRML/CMakeLists.txt
+@@ -46,7 +46,7 @@
+   )
+ 
+ # Set linker flags, needed for OpenMP
+-if (NOT ${PLASTIMATCH_LDFLAGS} STREQUAL "")
++if (PLASTIMATCH_LDFLAGS)
+   set_target_properties (${KIT}
+     PROPERTIES LINK_FLAGS ${PLASTIMATCH_LDFLAGS})
+ endif ()
+--- a/SlicerRtCommon/CMakeLists.txt
++++ b/SlicerRtCommon/CMakeLists.txt
+@@ -25,10 +25,15 @@
+   vtkSlicerAutoWindowLevelLogic.h
+   vtkFractionalImageAccumulate.cxx
+   vtkFractionalImageAccumulate.h
+-  vtkSlicerDicomReaderBase.cxx
+-  vtkSlicerDicomReaderBase.h
+-  vtkSlicerDicomReaderBase.txx
+   )
++# The DICOM reader base classes are DCMTK's; without DICOM support there is no DCMTK
++if(Slicer_BUILD_DICOM_SUPPORT)
++  list(APPEND SlicerRtCommon_SRCS
++    vtkSlicerDicomReaderBase.cxx
++    vtkSlicerDicomReaderBase.h
++    vtkSlicerDicomReaderBase.txx
++    )
++endif()
+ 
+ SET (SlicerRtCommon_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR} ${Slicer_Libs_INCLUDE_DIRS} ${vtkSegmentationCore_INCLUDE_DIRS} CACHE INTERNAL "" FORCE)
+ 

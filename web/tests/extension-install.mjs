@@ -21,7 +21,8 @@ console.log(`${stamp()} app ready`);
 // The Extensions Manager is in the application menu, behind the cogwheel at the end of the toolbar
 await page.getByLabel("Application menu").click();
 await page.locator("[role=menuitem]", { hasText: /extensions manager/i }).first().click();
-const card = page.locator("div.mb-2", { hasText: name }).first();
+// The card whose title is the name - not one that only mentions it among its dependencies
+const card = page.locator("div.mb-2").filter({ has: page.locator("*", { hasText: new RegExp("^" + name + "$") }) }).first();
 await card.getByRole("button", { name: /install/i }).click();
 await page.waitForFunction((n) => new RegExp(`${n} installed|failed`).test(document.body.innerText), name, { timeout: 600000 });
 console.log(`${stamp()} ${(await page.locator(".bg-accent").first().innerText()).slice(0, 400)}`);

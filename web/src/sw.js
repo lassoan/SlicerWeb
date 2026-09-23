@@ -41,12 +41,21 @@ self.addEventListener("activate", (event) => {
   })());
 });
 
+/**
+ * Whether a file keeps its name from one publish to the next while its content changes. A wheel
+ * does, and so does the index of wheels: fetched through the browser's own cache they can come
+ * back as the previous publish's, so the first fetch of each for a build goes past that cache.
+ */
+function keepsItsName(url) {
+  return /\.whl$/.test(url.pathname) || /\/(wheels|extensions)\/index\.json$/.test(url.pathname);
+}
+
 async function fromCacheFirst(request) {
-  if (standingDown) return fetch(request);
+  if (standingDown) return fetch(keepsItsName(new URL(request.url)) ? new Request(request, { cache: "reload" }) : request);
   const cache = await caches.open(CACHE);
   const cached = await cache.match(request, { ignoreVary: true });
   if (cached) return cached;
-  const response = await fetch(request);
+  const response = await fetch(keepsItsName(new URL(request.url)) ? new Request(request, { cache: "reload" }) : request);
   if (response.ok || response.type === "opaque") cache.put(request, response.clone()).catch(() => {});
   return response;
 }

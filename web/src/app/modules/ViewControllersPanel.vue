@@ -45,9 +45,18 @@ const bridge = inject<SlicerBridge>("bridge")!;
 const views = ref<ViewEntry[]>([]);
 const selected = ref<string>("");
 const info = ref<ViewInfo | null>(null);
+const trouble = ref("");
 
 async function refreshViews() {
-  views.value = await bridge.call<ViewEntry[]>("listViews").catch(() => []);
+  // An empty menu says nothing. Where the views cannot be listed - an application whose Python
+  // side is older than this page, say - the reason is shown instead.
+  try {
+    views.value = await bridge.call<ViewEntry[]>("listViews");
+    trouble.value = views.value.length ? "" : "The layout has no views.";
+  } catch (e: any) {
+    views.value = [];
+    trouble.value = `The views could not be listed: ${e?.message ?? e}`;
+  }
   if (!views.value.some((v) => v.layoutName === selected.value)) {
     selected.value = (store.activeView && views.value.some((v) => v.layoutName === store.activeView) ? store.activeView : views.value[0]?.layoutName) ?? "";
   }
@@ -167,6 +176,6 @@ onBeforeUnmount(() => offs.forEach((off) => off()));
         </SwFormRow>
       </SwCollapsible>
     </template>
-    <div v-else class="py-6 text-center text-[12px] text-muted-foreground">Choose a view to edit its properties.</div>
+    <div v-else class="py-6 text-center text-[12px] text-muted-foreground">{{ trouble || "Choose a view to edit its properties." }}</div>
   </div>
 </template>

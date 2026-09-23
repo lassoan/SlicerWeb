@@ -110,8 +110,16 @@ export function slicerWebAssets(): Plugin {
     next();
   };
 
+  // The build, as a stamp: unique to each publish (the workflow run where there is one, else the
+  // moment), because a publish can change the wheels without changing anything else, and the
+  // service worker and the page both have to be able to tell one publish from another.
+  const build = process.env.GITHUB_RUN_ID ?? Date.now().toString(36);
+
   return {
     name: "slicerweb-assets",
+    transformIndexHtml(html) {
+      return html.replace("</head>", `  <meta name="slicerweb-build" content="${build}" />\n  </head>`);
+    },
     configureServer(server) {
       server.middlewares.use(downloadProxy);
       server.middlewares.use(serveMounts);
@@ -122,6 +130,11 @@ export function slicerWebAssets(): Plugin {
     },
     writeBundle(options) {
       const outDir = options.dir ?? "dist/app";
+      // The service worker, stamped with the build: its cache is named after it, so a new build
+      // starts an empty cache rather than serving the wheels of the old one under their unchanged
+      // names (see src/sw.js).
+      fs.writeFileSync(path.join(outDir, "sw.js"),
+        fs.readFileSync(path.resolve("src/sw.js"), "utf8").replace("__BUILD__", build));
       for (const [prefix, dir] of Object.entries(mounts)) {
         if (!fs.existsSync(dir)) continue;
         const target = path.join(outDir, prefix);

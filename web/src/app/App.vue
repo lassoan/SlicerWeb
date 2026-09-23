@@ -118,7 +118,9 @@ function keepSessionWhenHidden() {
 
 /**
  * Sample data set loaded at startup: `?sample=<name>` URL parameter, else the VITE_DEFAULT_SAMPLE build
- * setting (`?sample=` with an empty value disables it).
+ * setting (`?sample=` with an empty value disables it). With `&volumeRendering=1` the volume it
+ * loads is also volume rendered, with the preset that suits it (`&volumeRendering=<preset name>`
+ * for a given one), so that a link opens on the rendering.
  */
 async function loadStartupSample() {
   const params = new URLSearchParams(window.location.search);
@@ -131,7 +133,17 @@ async function loadStartupSample() {
   }
   try {
     const path = await runtime.downloadFile(sample.url, sample.fileName);
-    await runtime.bridge.call("loadFiles", [[path], sample.properties ?? {}]);
+    const loaded = await runtime.bridge.call<string[]>("loadFiles", [[path], sample.properties ?? {}]);
+    const rendering = params.get("volumeRendering");
+    if (rendering && !/^(0|false|no)$/i.test(rendering)) {
+      const volumeID = (loaded ?? []).find((id) => /^vtkMRML\w*VolumeNode\d+$/.test(id) && !/LabelMap/.test(id));
+      if (volumeID) {
+        const properties: Record<string, unknown> = { visible: true };
+        if (!/^(1|true|yes)$/i.test(rendering)) properties.preset = rendering;
+        await runtime.bridge.call("setVolumeRendering", [volumeID, properties]);
+        await runtime.bridge.call("resetThreeDViews").catch(() => {});
+      }
+    }
   } catch (e) {
     console.error(`Loading sample data ${name} failed`, e);
   }

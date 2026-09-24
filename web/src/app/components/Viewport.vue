@@ -173,7 +173,9 @@ function hideMagnifier() {
 // comes back).
 function onCanvasPointerDown(event: PointerEvent) {
   const canvas = event.target as HTMLCanvasElement;
-  canvas.focus();
+  // Without preventScroll a browser may scroll the page to bring the canvas fully into view when
+  // it takes focus - under a finger that has just started a drag, moving the view it is on
+  canvas.focus({ preventScroll: true });
   try {
     canvas.setPointerCapture(event.pointerId);
   } catch {

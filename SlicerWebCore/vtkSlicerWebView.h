@@ -67,7 +67,8 @@ public:
   virtual void Finalize();
 
   /// Set the size of the drawing buffer in device pixels (canvas.width/height).
-  /// Call from a ResizeObserver of the canvas container.
+  /// Call from a ResizeObserver of the canvas container. Before Initialize(): the size the view
+  /// is made at.
   virtual void SetSize(int width, int height);
 
   /// Request a render. Multiple requests within one animation frame result in a single render.

@@ -8,27 +8,24 @@
 #include "vtkSlicerWebRenderWindowInteractor.h"
 #include "vtkSlicerWebView.h"
 
-// MRML includes
-#include <vtkMRMLViewInteractorStyle.h>
-
 // VTK includes
 #include <vtkCallbackCommand.h>
 #include <vtkCommand.h>
-#include <vtkInteractorStyleUser.h>
 #include <vtkNew.h>
 #include <vtkObjectFactory.h>
 #include <vtkRenderWindow.h>
 #include <vtkRenderWindowInteractor.h>
-#include <vtkRenderer.h>
 #include <vtkWeakPointer.h>
 
 #ifdef __EMSCRIPTEN__
+#include "vtkSlicerWebSharedRenderWindow.h"
 #include <emscripten/html5.h>
 #include <vtkWebAssemblyOpenGLRenderWindow.h>
 #include <vtkWebAssemblyRenderWindowInteractor.h>
 #endif
 
 #include <algorithm>
+#include <cstdint>
 #include <vector>
 
 //----------------------------------------------------------------------------
@@ -38,24 +35,46 @@ struct ViewEntry
 {
   vtkWeakPointer<vtkSlicerWebView> View;
   int Rect[4] = { 0, 0, 0, 0 }; // x, y, width, height in device pixels, from the top left
+  /// The view is to be rendered in the next animation frame
+  bool RenderRequested{ false };
 };
+
+bool IsButtonPress(unsigned long eid)
+{
+  return eid == vtkCommand::LeftButtonPressEvent || eid == vtkCommand::MiddleButtonPressEvent ||
+         eid == vtkCommand::RightButtonPressEvent;
+}
+
+bool IsButtonRelease(unsigned long eid)
+{
+  return eid == vtkCommand::LeftButtonReleaseEvent || eid == vtkCommand::MiddleButtonReleaseEvent ||
+         eid == vtkCommand::RightButtonReleaseEvent;
+}
+
+bool IsKey(unsigned long eid)
+{
+  return eid == vtkCommand::KeyPressEvent || eid == vtkCommand::KeyReleaseEvent || eid == vtkCommand::CharEvent;
+}
 }
 
 class vtkSlicerWebCanvas::vtkInternal
 {
 public:
+  /// Holds the context; nothing is rendered with it
   vtkSmartPointer<vtkRenderWindow> RenderWindow;
+  /// Listens to the page
   vtkSmartPointer<vtkRenderWindowInteractor> Interactor;
-  /// Clears the whole canvas, so that the gaps between the views do not keep what was drawn there
-  vtkSmartPointer<vtkRenderer> BackgroundRenderer;
   std::vector<ViewEntry> Views;
+  /// The view input goes to: the one under the pointer, or the one a drag started in
   vtkWeakPointer<vtkSlicerWebView> ActiveView;
   vtkNew<vtkCallbackCommand> InteractorCallback;
-  /// While a button is held the view that was pressed keeps the input, wherever the pointer goes
-  bool PointerDown{ false };
-  bool InButtonPressHandler{ false };
-  /// Pan translation of the current touch gesture so far (see vtkSlicerWebView::OnGestureEvent)
-  double PanTranslation[2] = { 0.0, 0.0 };
+  vtkNew<vtkCallbackCommand> ViewRenderedCallback;
+  /// Buttons (or fingers) held down: while any is, the view that was pressed keeps the input
+  int ButtonsDown{ 0 };
+  /// A view rendered since the canvas last showed them
+  bool PresentRequested{ false };
+  /// In the animation frame callback: the views' renders are shown at its end
+  bool InFrame{ false };
   int Size[2] = { 0, 0 };
 
   ViewEntry* Entry(vtkSlicerWebView* view)
@@ -69,6 +88,13 @@ public:
     }
     return nullptr;
   }
+
+  /// Where the view's window has its origin on the canvas, from the bottom left
+  void Origin(const ViewEntry& entry, int origin[2])
+  {
+    origin[0] = entry.Rect[0];
+    origin[1] = this->Size[1] - (entry.Rect[1] + entry.Rect[3]);
+  }
 };
 
 #ifdef __EMSCRIPTEN__
@@ -78,7 +104,7 @@ bool vtkSlicerWebCanvasAnimationFrame(double /*time*/, void* userData)
 {
   vtkSlicerWebCanvas* self = static_cast<vtkSlicerWebCanvas*>(userData);
   self->ProcessScheduledRender();
-  self->UnRegister(nullptr); // reference taken in ScheduleRender()
+  self->UnRegister(nullptr); // reference taken in RequestAnimationFrame()
   return false;              // one-shot
 }
 
@@ -103,6 +129,8 @@ vtkSlicerWebCanvas::vtkSlicerWebCanvas()
 {
   this->Internal->InteractorCallback->SetClientData(this);
   this->Internal->InteractorCallback->SetCallback(&vtkSlicerWebCanvas::OnInteractorEvent);
+  this->Internal->ViewRenderedCallback->SetClientData(this);
+  this->Internal->ViewRenderedCallback->SetCallback(&vtkSlicerWebCanvas::OnViewRendered);
 }
 
 //----------------------------------------------------------------------------
@@ -133,45 +161,38 @@ bool vtkSlicerWebCanvas::Initialize()
   {
     return true;
   }
-  vtkInternal* d = this->Internal;
-  d->RenderWindow = vtkSmartPointer<vtkRenderWindow>::New();
-  d->Interactor.TakeReference(vtkSlicerWebRenderWindowInteractor::New());
-
 #ifdef __EMSCRIPTEN__
+  vtkInternal* d = this->Internal;
   if (!this->CanvasSelector)
   {
     vtkErrorMacro("Initialize: CanvasSelector must be set before Initialize");
     return false;
   }
-  if (auto* glWindow = vtkWebAssemblyOpenGLRenderWindow::SafeDownCast(d->RenderWindow))
+  vtkNew<vtkWebAssemblyOpenGLRenderWindow> window;
+  window->SetCanvasSelector(this->CanvasSelector);
+  window->SetMultiSamples(0);
+  window->Initialize(); // creates the WebGL context
+  if (!window->GetGenericDisplayId())
   {
-    glWindow->SetCanvasSelector(this->CanvasSelector);
+    vtkErrorMacro("Initialize: could not create a WebGL context on " << this->CanvasSelector);
+    return false;
   }
-  if (auto* wasmInteractor = vtkWebAssemblyRenderWindowInteractor::SafeDownCast(d->Interactor))
-  {
-    wasmInteractor->SetCanvasSelector(this->CanvasSelector);
-    // The web application owns canvas layout and resizing (see SetSize()).
-    wasmInteractor->SetExpandCanvasToContainer(false);
-    wasmInteractor->SetInstallHTMLResizeObserver(false);
-  }
-#endif
+  // The window has just set the state of the context up: the views' windows take it afresh
+  vtkSlicerWebSharedRenderWindow::ContextUsedElsewhere();
+  d->RenderWindow = window;
 
-  d->RenderWindow->SetMultiSamples(0);
-  d->RenderWindow->SetAlphaBitPlanes(1);
-
-  // Behind the views: clears the whole canvas, so the gaps between them are not left with
-  // whatever the last frame put there (a renderer only clears its own viewport).
-  d->BackgroundRenderer = vtkSmartPointer<vtkRenderer>::New();
-  d->BackgroundRenderer->SetBackground(0.0, 0.0, 0.0);
-  d->BackgroundRenderer->SetViewport(0.0, 0.0, 1.0, 1.0);
-  d->BackgroundRenderer->InteractiveOff();
-  d->RenderWindow->AddRenderer(d->BackgroundRenderer);
-
-  d->Interactor->SetRenderWindow(d->RenderWindow);
-  vtkNew<vtkInteractorStyleUser> interactorStyle;
-  d->Interactor->SetInteractorStyle(interactorStyle);
-  // Before the views' own styles (priority 0): what the event is, and which view it belongs to,
-  // is settled first.
+  vtkNew<vtkSlicerWebRenderWindowInteractor> interactor;
+  interactor->SetCanvasSelector(this->CanvasSelector);
+  // The web application owns canvas layout and resizing (see SetSize()).
+  interactor->SetExpandCanvasToContainer(false);
+  interactor->SetInstallHTMLResizeObserver(false);
+  // Only passes the events on: the views' interactors make gestures of touches, and their
+  // styles act on them
+  interactor->SetRecognizeGestures(false);
+  interactor->SetInteractorStyle(nullptr);
+  interactor->SetRenderWindow(window);
+  interactor->InitializeWithoutRendering();
+  d->Interactor = interactor;
   for (unsigned long event : { static_cast<unsigned long>(vtkCommand::MouseMoveEvent),
                                static_cast<unsigned long>(vtkCommand::LeftButtonPressEvent),
                                static_cast<unsigned long>(vtkCommand::MiddleButtonPressEvent),
@@ -179,17 +200,27 @@ bool vtkSlicerWebCanvas::Initialize()
                                static_cast<unsigned long>(vtkCommand::LeftButtonReleaseEvent),
                                static_cast<unsigned long>(vtkCommand::MiddleButtonReleaseEvent),
                                static_cast<unsigned long>(vtkCommand::RightButtonReleaseEvent),
+                               static_cast<unsigned long>(vtkCommand::LeftButtonDoubleClickEvent),
+                               static_cast<unsigned long>(vtkCommand::MiddleButtonDoubleClickEvent),
+                               static_cast<unsigned long>(vtkCommand::RightButtonDoubleClickEvent),
                                static_cast<unsigned long>(vtkCommand::MouseWheelForwardEvent),
                                static_cast<unsigned long>(vtkCommand::MouseWheelBackwardEvent),
-                               static_cast<unsigned long>(vtkCommand::StartPanEvent),
-                               static_cast<unsigned long>(vtkCommand::PanEvent) })
+                               static_cast<unsigned long>(vtkCommand::MouseWheelLeftEvent),
+                               static_cast<unsigned long>(vtkCommand::MouseWheelRightEvent),
+                               static_cast<unsigned long>(vtkCommand::KeyPressEvent),
+                               static_cast<unsigned long>(vtkCommand::KeyReleaseEvent),
+                               static_cast<unsigned long>(vtkCommand::CharEvent),
+                               static_cast<unsigned long>(vtkCommand::EnterEvent),
+                               static_cast<unsigned long>(vtkCommand::LeaveEvent) })
   {
-    d->Interactor->AddObserver(event, d->InteractorCallback, 100.0);
+    d->Interactor->AddObserver(event, d->InteractorCallback);
   }
-
   this->Initialized = true;
-  d->Interactor->Initialize(); // creates the WebGL context
   return true;
+#else
+  vtkErrorMacro("Initialize: a shared canvas is only available in the browser");
+  return false;
+#endif
 }
 
 //----------------------------------------------------------------------------
@@ -201,7 +232,14 @@ void vtkSlicerWebCanvas::Finalize()
     return;
   }
   this->Initialized = false;
-  this->SetActiveView(nullptr);
+  d->ActiveView = nullptr;
+  for (auto& entry : d->Views)
+  {
+    if (entry.View && entry.View->GetRenderWindow())
+    {
+      entry.View->GetRenderWindow()->RemoveObserver(d->ViewRenderedCallback);
+    }
+  }
   d->Views.clear();
   if (d->Interactor)
   {
@@ -217,7 +255,6 @@ void vtkSlicerWebCanvas::Finalize()
     d->RenderWindow->Finalize(); // releases the WebGL context
   }
   this->Started = false;
-  d->BackgroundRenderer = nullptr;
   d->Interactor = nullptr;
   d->RenderWindow = nullptr;
 }
@@ -258,19 +295,9 @@ void vtkSlicerWebCanvas::SetSize(int width, int height)
   }
   d->Size[0] = width;
   d->Size[1] = height;
-  const int* current = d->RenderWindow->GetSize();
-  if (current[0] != width || current[1] != height)
-  {
-    d->Interactor->UpdateSize(width, height);
-  }
-  // Every view keeps the same rectangle of the canvas, which is now a different part of it
-  for (auto& entry : d->Views)
-  {
-    if (entry.View)
-    {
-      this->SetViewRect(entry.View, entry.Rect[0], entry.Rect[1], entry.Rect[2], entry.Rect[3]);
-    }
-  }
+  // Sizes the canvas element's drawing buffer, and tells the interactor how tall it is (positions
+  // are reported from the bottom)
+  d->Interactor->UpdateSize(width, height);
   this->ScheduleRender();
 }
 
@@ -287,19 +314,9 @@ void vtkSlicerWebCanvas::SetViewRect(vtkSlicerWebView* view, int x, int y, int w
   entry->Rect[1] = y;
   entry->Rect[2] = width;
   entry->Rect[3] = height;
-  const double canvasWidth = d->Size[0] > 0 ? d->Size[0] : (d->RenderWindow ? d->RenderWindow->GetSize()[0] : 0);
-  const double canvasHeight = d->Size[1] > 0 ? d->Size[1] : (d->RenderWindow ? d->RenderWindow->GetSize()[1] : 0);
-  if (canvasWidth <= 0 || canvasHeight <= 0)
-  {
-    return;
-  }
-  vtkRenderer* renderer = view->GetRenderer();
-  if (renderer)
-  {
-    // The page measures from the top left, a viewport from the bottom left
-    renderer->SetViewport(x / canvasWidth, 1.0 - (y + height) / canvasHeight, (x + width) / canvasWidth, 1.0 - y / canvasHeight);
-  }
-  view->SetSize(width, height);
+  view->SetSize(width, height); // the size of the view's own window
+  // The view may be the same size in another place: the canvas is drawn again either way
+  this->ScheduleRender(view);
 }
 
 //----------------------------------------------------------------------------
@@ -313,14 +330,9 @@ void vtkSlicerWebCanvas::AddView(vtkSlicerWebView* view)
   ViewEntry entry;
   entry.View = view;
   d->Views.push_back(entry);
-  if (d->RenderWindow && view->GetRenderer())
+  if (view->GetRenderWindow())
   {
-    d->RenderWindow->AddRenderer(view->GetRenderer());
-  }
-  // Until the pointer says otherwise, the first view takes the input
-  if (!d->ActiveView)
-  {
-    this->SetActiveView(view);
+    view->GetRenderWindow()->AddObserver(vtkCommand::EndEvent, d->ViewRenderedCallback);
   }
 }
 
@@ -334,20 +346,19 @@ void vtkSlicerWebCanvas::RemoveView(vtkSlicerWebView* view)
   }
   if (d->ActiveView == view)
   {
-    this->SetActiveView(nullptr);
+    d->ActiveView = nullptr;
+    d->ButtonsDown = 0;
   }
-  if (d->RenderWindow && view->GetRenderer())
+  if (view->GetRenderWindow())
   {
-    d->RenderWindow->RemoveRenderer(view->GetRenderer());
+    view->GetRenderWindow()->RemoveObserver(d->ViewRenderedCallback);
   }
   d->Views.erase(std::remove_if(d->Views.begin(), d->Views.end(),
                                 [view](const ViewEntry& entry) { return entry.View == view || entry.View == nullptr; }),
                  d->Views.end());
-  if (!d->ActiveView && !d->Views.empty())
-  {
-    this->SetActiveView(d->Views.front().View);
-  }
-  this->ScheduleRender();
+  // What the view showed is cleared from the canvas
+  d->PresentRequested = true;
+  this->RequestAnimationFrame();
 }
 
 //----------------------------------------------------------------------------
@@ -357,12 +368,23 @@ int vtkSlicerWebCanvas::GetNumberOfViews()
 }
 
 //----------------------------------------------------------------------------
+unsigned long vtkSlicerWebCanvas::GetContextId()
+{
+  vtkInternal* d = this->Internal;
+  if (!d->RenderWindow)
+  {
+    return 0;
+  }
+  return static_cast<unsigned long>(reinterpret_cast<std::uintptr_t>(d->RenderWindow->GetGenericDisplayId()));
+}
+
+//----------------------------------------------------------------------------
 vtkSlicerWebView* vtkSlicerWebCanvas::GetViewAt(int x, int y)
 {
   vtkInternal* d = this->Internal;
   // The interactor reports positions from the bottom left, the rectangles are kept as the page
   // measures them
-  const int fromTop = d->Size[1] > 0 ? d->Size[1] - y : y;
+  const int fromTop = d->Size[1] - y;
   for (auto& entry : d->Views)
   {
     if (!entry.View)
@@ -388,130 +410,212 @@ vtkSlicerWebView* vtkSlicerWebCanvas::GetActiveView()
 void vtkSlicerWebCanvas::SetActiveView(vtkSlicerWebView* view)
 {
   vtkInternal* d = this->Internal;
-  // A view's interactor style observes the interactor while the view has the input, and not
-  // otherwise: every style of the canvas would answer every event, and a widget of another view
-  // would take what was meant for this one.
-  if (d->ActiveView != view)
-  {
-    if (d->ActiveView && d->ActiveView->GetInteractorObserver())
-    {
-      d->ActiveView->GetInteractorObserver()->SetInteractor(nullptr);
-    }
-    d->ActiveView = view;
-  }
-  // Also when the view was already the active one: a view joins the canvas before it has built
-  // its interactor style (the style is made while the view initializes), so the style of the
-  // first view is attached here, at the first event it is meant to answer.
-  if (view && view->GetInteractorObserver())
-  {
-    view->GetInteractorObserver()->SetInteractor(d->Interactor);
-  }
-}
-
-//----------------------------------------------------------------------------
-void vtkSlicerWebCanvas::UpdateActiveView()
-{
-  vtkInternal* d = this->Internal;
-  if (d->PointerDown)
-  {
-    return; // a drag belongs to the view it started in
-  }
-  const int* position = d->Interactor ? d->Interactor->GetEventPosition() : nullptr;
-  if (!position)
+  if (d->ActiveView == view)
   {
     return;
   }
-  vtkSlicerWebView* view = this->GetViewAt(position[0], position[1]);
+  // The pointer leaves one view and enters another, as it would pass from one canvas to the next
+  if (d->ActiveView)
+  {
+    this->ForwardEvent(d->ActiveView, vtkCommand::LeaveEvent);
+  }
+  d->ActiveView = view;
   if (view)
   {
-    this->SetActiveView(view);
+    this->ForwardEvent(view, vtkCommand::EnterEvent);
   }
 }
 
 //----------------------------------------------------------------------------
-void vtkSlicerWebCanvas::OnInteractorEvent(vtkObject* caller, unsigned long eid, void* clientData, void* vtkNotUsed(callData))
+void vtkSlicerWebCanvas::ForwardEvent(vtkSlicerWebView* view, unsigned long eid)
+{
+  vtkInternal* d = this->Internal;
+  ViewEntry* entry = d->Entry(view);
+  vtkRenderWindowInteractor* from = d->Interactor;
+  vtkRenderWindowInteractor* to = view ? view->GetInteractor() : nullptr;
+  if (!entry || !from || !to)
+  {
+    return;
+  }
+  // Every pointer (finger) at its position in the view's window, which starts at the view's
+  // corner of the canvas: outside of the view, during a drag, the position is outside the window,
+  // as it would be for a canvas that has captured the pointer.
+  int origin[2];
+  d->Origin(*entry, origin);
+  const int lastPointer = std::max(0, std::min(from->GetPointerIndex(), VTKI_MAX_POINTERS - 1));
+  for (int i = 0; i <= lastPointer; ++i)
+  {
+    const int* position = from->GetEventPositions(i);
+    to->SetEventInformation(position[0] - origin[0], position[1] - origin[1], from->GetControlKey(), from->GetShiftKey(),
+                            from->GetKeyCode(), from->GetRepeatCount(), from->GetKeySym(), i);
+  }
+  to->SetAltKey(from->GetAltKey());
+
+  switch (eid)
+  {
+    // As the page's events come to an interactor of a canvas of the view's own: through the
+    // methods that make gestures of touches
+    case vtkCommand::MouseMoveEvent:
+      to->MouseMoveEvent();
+      break;
+    case vtkCommand::LeftButtonPressEvent:
+      to->LeftButtonPressEvent();
+      break;
+    case vtkCommand::LeftButtonReleaseEvent:
+      to->LeftButtonReleaseEvent();
+      break;
+    case vtkCommand::MiddleButtonPressEvent:
+      to->MiddleButtonPressEvent();
+      break;
+    case vtkCommand::MiddleButtonReleaseEvent:
+      to->MiddleButtonReleaseEvent();
+      break;
+    case vtkCommand::RightButtonPressEvent:
+      to->RightButtonPressEvent();
+      break;
+    case vtkCommand::RightButtonReleaseEvent:
+      to->RightButtonReleaseEvent();
+      break;
+    default:
+      to->InvokeEvent(eid, nullptr);
+      break;
+  }
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebCanvas::OnInteractorEvent(vtkObject* vtkNotUsed(caller), unsigned long eid, void* clientData,
+                                           void* vtkNotUsed(callData))
 {
   vtkSlicerWebCanvas* self = static_cast<vtkSlicerWebCanvas*>(clientData);
-  vtkRenderWindowInteractor* interactor = vtkRenderWindowInteractor::SafeDownCast(caller);
   vtkInternal* d = self->Internal;
-  if (!interactor)
+  if (!d->Interactor)
   {
     return;
   }
-  if (eid == vtkCommand::StartPanEvent || eid == vtkCommand::PanEvent)
+  if (eid == vtkCommand::EnterEvent)
   {
-    // The pan of a touch gesture is reported from where the fingers touched, while the widgets
-    // expect the change since the previous event (see vtkSlicerWebView::OnGestureEvent).
-    if (eid == vtkCommand::StartPanEvent)
+    return; // the view the pointer is over is entered when the pointer moves
+  }
+  if (eid == vtkCommand::LeaveEvent)
+  {
+    if (d->ButtonsDown == 0)
     {
-      d->PanTranslation[0] = interactor->GetTranslation()[0];
-      d->PanTranslation[1] = interactor->GetTranslation()[1];
-      return;
+      self->SetActiveView(nullptr);
     }
-    const double* total = interactor->GetTranslation();
-    double increment[2] = { total[0] - d->PanTranslation[0], total[1] - d->PanTranslation[1] };
-    d->PanTranslation[0] = total[0];
-    d->PanTranslation[1] = total[1];
-    interactor->SetTranslation(increment);
+    return;
+  }
+  if (IsKey(eid))
+  {
+    // Keys go to the view the pointer was last over
+    if (d->ActiveView)
+    {
+      self->ForwardEvent(d->ActiveView, eid);
+    }
     return;
   }
 
-  const bool press = eid == vtkCommand::LeftButtonPressEvent || eid == vtkCommand::MiddleButtonPressEvent || //
-                     eid == vtkCommand::RightButtonPressEvent;
-  const bool release = eid == vtkCommand::LeftButtonReleaseEvent || eid == vtkCommand::MiddleButtonReleaseEvent || //
-                       eid == vtkCommand::RightButtonReleaseEvent;
-  if (release)
+  if (d->ButtonsDown == 0)
   {
-    d->PointerDown = false;
+    // Nothing held: the input goes to the view under the pointer. (While a button is held, the
+    // view it was pressed in keeps the input, wherever the pointer goes.)
+    const int* position = d->Interactor->GetEventPosition();
+    self->SetActiveView(self->GetViewAt(position[0], position[1]));
   }
-  self->UpdateActiveView();
-  if (press)
+  vtkSlicerWebView* view = d->ActiveView;
+  if (IsButtonPress(eid))
   {
-    d->PointerDown = true;
-    // A touch screen has no pointer that moves before the press, while the widgets act on what is
-    // under the pointer: a move at the position of the press is sent first, so that touch behaves
-    // like a mouse (see vtkSlicerWebView::OnButtonPressEvent).
-    if (!d->InButtonPressHandler)
-    {
-      d->InButtonPressHandler = true;
-      interactor->InvokeEvent(vtkCommand::MouseMoveEvent);
-      d->InButtonPressHandler = false;
-    }
+    ++d->ButtonsDown;
+  }
+  else if (IsButtonRelease(eid))
+  {
+    d->ButtonsDown = std::max(0, d->ButtonsDown - 1);
+  }
+  if (view)
+  {
+    self->ForwardEvent(view, eid);
   }
 }
 
 //----------------------------------------------------------------------------
-void vtkSlicerWebCanvas::ScheduleRender()
+void vtkSlicerWebCanvas::OnViewRendered(vtkObject* vtkNotUsed(caller), unsigned long vtkNotUsed(eid), void* clientData,
+                                        void* vtkNotUsed(callData))
 {
+  // A view has rendered (whoever asked it to): the canvas shows it in the next animation frame, or
+  // at the end of this one.
+  vtkSlicerWebCanvas* self = static_cast<vtkSlicerWebCanvas*>(clientData);
+  self->Internal->PresentRequested = true;
+  if (!self->Internal->InFrame)
+  {
+    self->RequestAnimationFrame();
+  }
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebCanvas::ScheduleRender(vtkSlicerWebView* view)
+{
+  vtkInternal* d = this->Internal;
   if (!this->Initialized)
   {
     return;
   }
-  if (!this->RenderEnabled)
+  for (auto& entry : d->Views)
   {
-    this->RenderPendingWhileDisabled = true;
+    if (!view || entry.View == view)
+    {
+      entry.RenderRequested = true;
+    }
+  }
+  d->PresentRequested = true;
+  this->RequestAnimationFrame();
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebCanvas::RequestAnimationFrame()
+{
+  if (!this->Initialized || this->RenderScheduled)
+  {
     return;
   }
 #ifdef __EMSCRIPTEN__
-  if (this->RenderScheduled)
-  {
-    return;
-  }
   this->RenderScheduled = true;
   this->Register(nullptr); // keep alive until the frame callback runs
   emscripten_request_animation_frame(vtkSlicerWebCanvasAnimationFrame, this);
 #else
-  this->Render();
+  this->ProcessScheduledRender();
 #endif
 }
 
 //----------------------------------------------------------------------------
 void vtkSlicerWebCanvas::ProcessScheduledRender()
 {
+  vtkInternal* d = this->Internal;
   this->RenderScheduled = false;
-  if (this->Initialized && this->RenderEnabled)
+  if (!this->Initialized)
   {
-    this->Render();
+    return;
+  }
+  d->InFrame = true;
+  // Views may leave (and the list change) while one renders
+  std::vector<vtkWeakPointer<vtkSlicerWebView>> toRender;
+  for (auto& entry : d->Views)
+  {
+    if (entry.RenderRequested && entry.View)
+    {
+      toRender.push_back(entry.View);
+    }
+    entry.RenderRequested = false;
+  }
+  for (auto& view : toRender)
+  {
+    if (view)
+    {
+      view->ProcessScheduledRender();
+    }
+  }
+  d->InFrame = false;
+  if (d->PresentRequested)
+  {
+    this->Present();
   }
 }
 
@@ -519,12 +623,48 @@ void vtkSlicerWebCanvas::ProcessScheduledRender()
 void vtkSlicerWebCanvas::Render()
 {
   vtkInternal* d = this->Internal;
-  if (!this->Initialized || !d->RenderWindow)
+  if (!this->Initialized)
   {
     return;
   }
-  d->RenderWindow->Render();
+  for (auto& entry : d->Views)
+  {
+    entry.RenderRequested = true;
+  }
+  this->ProcessScheduledRender();
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebCanvas::Present()
+{
+  vtkInternal* d = this->Internal;
+  if (!this->Initialized || !this->RenderEnabled)
+  {
+    return;
+  }
+  d->PresentRequested = false;
+#ifdef __EMSCRIPTEN__
+  // A WebGL canvas keeps a frame only until it is shown on the page: every view is copied into it
+  // each time, not only the one that rendered.
+  bool cleared = false;
+  for (auto& entry : d->Views)
+  {
+    auto* window = entry.View ? vtkSlicerWebSharedRenderWindow::SafeDownCast(entry.View->GetRenderWindow()) : nullptr;
+    if (!window)
+    {
+      continue;
+    }
+    if (!cleared)
+    {
+      window->ClearCanvas(d->Size[0], d->Size[1]);
+      cleared = true;
+    }
+    int origin[2];
+    d->Origin(entry, origin);
+    window->BlitToCanvas(origin[0], origin[1]);
+  }
   ++this->RenderCount;
+#endif
 }
 
 //----------------------------------------------------------------------------
@@ -535,10 +675,10 @@ void vtkSlicerWebCanvas::SetRenderEnabled(bool enabled)
     return;
   }
   this->RenderEnabled = enabled;
-  if (enabled && this->RenderPendingWhileDisabled)
+  if (enabled)
   {
-    this->RenderPendingWhileDisabled = false;
-    this->ScheduleRender();
+    this->Internal->PresentRequested = true;
+    this->RequestAnimationFrame();
   }
   this->Modified();
 }

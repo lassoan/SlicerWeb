@@ -371,8 +371,9 @@ class LayoutManager(QObject):
         """The canvas the views share, with one WebGL context for all of them.
 
         A browser allows only so many contexts at a time - about eight on a phone - so a layout of
-        nine views cannot give each of them one. Views of a shared canvas are renderers of one
-        render window, each with its own rectangle of it (see vtkSlicerWebCanvas).
+        nine views cannot give each of them one. Views of a shared canvas keep render windows of
+        their own that draw with its context, and the canvas shows each in its rectangle (see
+        vtkSlicerWebCanvas).
         """
         import slicer
 
@@ -457,8 +458,11 @@ class LayoutManager(QObject):
 
         if rect is not None:
             view.SetCanvas(self._sharedCanvas)
+            view.SetSize(int(rect[2]), int(rect[3]))   # made at its size (see vtkSlicerWebView)
         else:
             view.SetCanvasSelector(canvasSelector)
+            if width and height:
+                view.SetSize(int(width), int(height))
         if not view.Initialize(self._app.applicationLogic(), self._scene, layoutName):
             logger.error("attachView: failed to initialize view %s", layoutName)
             return False

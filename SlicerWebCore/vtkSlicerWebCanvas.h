@@ -16,20 +16,25 @@
 
 class vtkRenderWindow;
 class vtkRenderWindowInteractor;
-class vtkRenderer;
 class vtkSlicerWebView;
 
-/// \brief A canvas that several views draw into, each in its own rectangle of it.
+/// \brief A canvas that several views are shown in, each in its own rectangle of it.
 ///
 /// A browser allows only so many WebGL contexts at a time - about eight on a phone - and a view
 /// of its own canvas costs one each, so a layout of nine slice views cannot be shown. Views that
-/// share a canvas share its context: they are renderers of one render window, each with its own
-/// viewport, which is what a displayable manager group is bound to anyway. The context, its
-/// command buffers and its compiled shaders are then paid for once rather than once per view.
+/// share a canvas share its context, and its cost is paid once rather than once per view.
 ///
-/// What a view keeps is its renderer, its displayable managers, its interactor style and its view
-/// node; what the canvas keeps is the render window, the interactor, the rendering of frames, and
-/// the routing of input to the view the pointer is over.
+/// Only the context is shared. Every view keeps a render window of its own, the size of its
+/// rectangle, with its own renderers, interactor, interactor style and displayable managers -
+/// exactly what it has on a canvas of its own, since Slicer takes a view to be a whole window
+/// (display coordinates, layer renderers, widgets sized by the window all rely on it). The view's
+/// window renders into framebuffers of its own in the shared context
+/// (vtkSlicerWebSharedRenderWindow), and the canvas copies each view's last frame into its
+/// rectangle.
+///
+/// The canvas listens to the page: what the pointer and the keyboard do is sent to the view the
+/// pointer is over, in that view's coordinates, and a drag stays with the view it started in
+/// wherever the pointer goes, as if the view had captured the pointer.
 ///
 /// Typical use (from Python, through slicerweb.layout):
 ///   canvas = slicer.vtkSlicerWebCanvas()
@@ -49,7 +54,7 @@ public:
   vtkSetStringMacro(CanvasSelector);
   vtkGetStringMacro(CanvasSelector);
 
-  /// Create the render window, its context and the interactor. Returns false on failure.
+  /// Create the context and start listening to the page. Returns false on failure.
   bool Initialize();
   vtkGetMacro(Initialized, bool);
 
@@ -71,22 +76,32 @@ public:
   void RemoveView(vtkSlicerWebView* view);
   int GetNumberOfViews();
 
-  /// One render of every view, at most one per animation frame.
-  void ScheduleRender();
+  /// The WebGL context that the views' windows draw with.
+  unsigned long GetContextId();
+
+  /// Render the view (none: every view) in the next animation frame, and show it.
+  void ScheduleRender(vtkSlicerWebView* view = nullptr);
+  /// Render every view now, and show them.
   void Render();
 
-  /// Rendering is off while the scene is being loaded or a batch is running.
+  /// Copy the views' last frames into the canvas (after any of them rendered).
+  void Present();
+
+  /// Showing frames is off while the scene is being loaded or a batch is running.
   void SetRenderEnabled(bool enabled);
   vtkGetMacro(RenderEnabled, bool);
 
+  /// The window holding the context (it has no renderers: nothing is drawn with it).
   vtkRenderWindow* GetRenderWindow();
+  /// The interactor listening to the page.
   vtkRenderWindowInteractor* GetInteractor();
 
-  /// The view the pointer is over, and the one input is being sent to.
+  /// The view at this position of the canvas (device pixels, from the bottom left, as the
+  /// interactor reports positions), and the one input is being sent to.
   vtkSlicerWebView* GetViewAt(int x, int y);
   vtkSlicerWebView* GetActiveView();
 
-  /// Number of renders performed (for diagnostics and tests).
+  /// Number of times the views were shown on the canvas (for diagnostics and tests).
   vtkGetMacro(RenderCount, int);
 
   /// Internal: called from the animation frame callbacks.
@@ -97,16 +112,17 @@ protected:
   vtkSlicerWebCanvas();
   ~vtkSlicerWebCanvas() override;
 
-  /// Input goes to one view at a time: the one under the pointer, or the one a drag started in.
-  void UpdateActiveView();
+  void RequestAnimationFrame();
   void SetActiveView(vtkSlicerWebView* view);
+  /// Send the event the page's interactor has just received to the view's own interactor.
+  void ForwardEvent(vtkSlicerWebView* view, unsigned long eid);
   static void OnInteractorEvent(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
+  static void OnViewRendered(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
 
   char* CanvasSelector{ nullptr };
   bool Initialized{ false };
   bool RenderEnabled{ true };
   bool RenderScheduled{ false };
-  bool RenderPendingWhileDisabled{ false };
   bool Started{ false };
   int RenderCount{ 0 };
 

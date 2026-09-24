@@ -21,6 +21,10 @@ set(SlicerWebCore_SRCS
 set(SlicerWebCore_NOWRAP_SRCS
   vtkSlicerWebRenderWindowInteractor.cxx
   )
+if(EMSCRIPTEN)
+  # The render window of a view of a shared canvas (vtkSlicerWebCanvas)
+  list(APPEND SlicerWebCore_NOWRAP_SRCS vtkSlicerWebSharedRenderWindow.cxx)
+endif()
 
 set(lib_name SlicerWebCore)
 add_library(${lib_name} ${SlicerWebCore_SRCS} ${SlicerWebCore_NOWRAP_SRCS})

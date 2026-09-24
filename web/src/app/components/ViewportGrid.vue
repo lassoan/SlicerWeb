@@ -78,6 +78,8 @@ function viewAt(clientX: number, clientY: number) {
 function onPointerDown(event: PointerEvent) {
   const layoutName = viewAt(event.clientX, event.clientY);
   if (layoutName) store.activeView = layoutName;
+  // The keys go to the view the pointer is over, through the canvas (without scrolling to it)
+  canvasElement.value?.focus({ preventScroll: true });
   // The drag is followed even when the pointer leaves the canvas
   try {
     canvasElement.value?.setPointerCapture(event.pointerId);

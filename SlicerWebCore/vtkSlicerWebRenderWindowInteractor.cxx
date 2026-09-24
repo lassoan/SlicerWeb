@@ -11,6 +11,7 @@
 #include <vtkCommand.h>
 #include <vtkMath.h>
 #include <vtkObjectFactory.h>
+#include <vtkRenderWindow.h>
 
 // STD includes
 #include <algorithm>
@@ -23,6 +24,22 @@ void vtkSlicerWebRenderWindowInteractor::PrintSelf(ostream& os, vtkIndent indent
 {
   this->Superclass::PrintSelf(os, indent);
   os << indent << "GestureStarted: " << this->GestureStarted << "\n";
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebRenderWindowInteractor::InitializeWithoutRendering()
+{
+  if (this->Initialized)
+  {
+    return;
+  }
+  this->Initialized = 1;
+  this->Enable();
+  if (this->RenderWindow)
+  {
+    this->Size[0] = this->RenderWindow->GetSize()[0];
+    this->Size[1] = this->RenderWindow->GetSize()[1];
+  }
 }
 
 //----------------------------------------------------------------------------

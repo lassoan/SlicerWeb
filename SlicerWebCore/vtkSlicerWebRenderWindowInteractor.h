@@ -35,6 +35,11 @@ public:
   vtkTypeMacro(vtkSlicerWebRenderWindowInteractor, vtkSlicerWebRenderWindowInteractorBase);
   void PrintSelf(ostream& os, vtkIndent indent) override;
 
+  /// Ready to take events without rendering a frame first and without listening to the page:
+  /// for a view of a shared canvas, which is sent its events by the canvas, and for the canvas's
+  /// own interactor, which has nothing to render (vtkSlicerWebCanvas).
+  void InitializeWithoutRendering();
+
 protected:
   vtkSlicerWebRenderWindowInteractor() = default;
   ~vtkSlicerWebRenderWindowInteractor() override = default;

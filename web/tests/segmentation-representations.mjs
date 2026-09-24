@@ -36,22 +36,38 @@ await page.evaluate(() => { window.slicerWeb.store.activeModule = "Segmentations
 await page.waitForTimeout(3000);
 const panel = page.locator(".sw-panel-scroll").last();
 const row = (name) => panel.locator(`[data-name=representation][data-representation="${name}"]`);
+// what can be done with a representation is in its ... menu
+const choose = async (name, item) => {
+  await row(name).locator("[data-name=representationMore]").click();
+  await page.waitForTimeout(300);
+  await page.locator("[role=menu]").getByRole("menuitem", { name: item, exact: true }).click();
+};
+const offers = async (name) => {
+  await row(name).locator("[data-name=representationMore]").click();
+  await page.waitForTimeout(300);
+  const items = (await page.locator("[role=menu] [role=menuitem]").allInnerTexts()).map((t) => t.trim()).join(", ");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  return items;
+};
 const status = async (name) => (await row(name).innerText()).replace(/\s+/g, " ").trim();
 const contained = () => py('(lambda names: (slicer.util.getNode("Segmentation").GetSegmentation().GetContainedRepresentationNames(names), sorted(names))[1])([])');
 
 check("the representations are listed", await panel.locator("[data-name=representation]").count() >= 4, true);
 check("Binary labelmap is the source", /Binary labelmap Source/.test(await status("Binary labelmap")), true);
-check("Closed surface is not present, and can be created", /Closed surface not present.*Create/.test(await status("Closed surface")), true);
+check("Closed surface is not present", /Closed surface not present/.test(await status("Closed surface")), true);
+check("and its menu offers to create it", await offers("Closed surface"), "Create, Advanced create…");
 
 // Create with the default conversion
-await row("Closed surface").getByRole("button", { name: "Create" }).click();
+await choose("Closed surface", "Create");
 await page.waitForFunction(() => /Closed surface\s+Present/.test(document.body.innerText.replace(/\s+/g, " ")), null, { timeout: 60000 });
-check("created: it is present", /Closed surface Present.*Update.*Remove.*Make source/.test(await status("Closed surface")), true);
+check("created: it is present", /Closed surface Present/.test(await status("Closed surface")), true);
+check("and its menu offers to update, remove or make it the source", await offers("Closed surface"), "Update…, Remove, Make source");
 check("and the segmentation holds it", await contained(), "['Binary labelmap', 'Closed surface']");
 const pointsBefore = Number(await py('slicer.util.getNode("Segmentation").GetSegmentation().GetNthSegment(0).GetRepresentation("Closed surface").GetNumberOfPoints()'));
 
 // Update with a chosen parameter: decimation, so the surface has fewer points
-await row("Closed surface").getByRole("button", { name: "Update" }).click();
+await choose("Closed surface", "Update…");
 await page.waitForTimeout(500);
 const dialog = panel.locator("[data-name=advancedConversion]");
 check("the advanced conversion offers the path", /Binary labelmap -> Closed surface/.test(await dialog.innerText()), true);
@@ -67,20 +83,20 @@ check("the parameter is kept by the segmentation", await py('slicer.util.getNode
 check("and the surface was made again with it", pointsAfter < pointsBefore * 0.8, true);
 
 // Remove
-await row("Closed surface").getByRole("button", { name: "Remove" }).click();
+await choose("Closed surface", "Remove");
 await page.waitForTimeout(1000);
 check("removed: not present again", /Closed surface not present/.test(await status("Closed surface")), true);
 check("and gone from the segmentation", await contained(), "['Binary labelmap']");
 
 // Make source (after creating it again): asked first, as on the desktop
-await row("Closed surface").getByRole("button", { name: "Create" }).click();
+await choose("Closed surface", "Create");
 await page.waitForFunction(() => /Closed surface\s+Present/.test(document.body.innerText.replace(/\s+/g, " ")), null, { timeout: 60000 });
-await row("Closed surface").getByRole("button", { name: "Make source" }).click();
+await choose("Closed surface", "Make source");
 await page.waitForTimeout(1500);
 check("making it the source asks first", dialogs.some((m) => /source representation/i.test(m)), true);
 check("Closed surface is the source", /Closed surface Source/.test(await status("Closed surface")), true);
 check("as the segmentation says", await py('slicer.util.getNode("Segmentation").GetSegmentation().GetSourceRepresentationName()'), "Closed surface");
-check("Binary labelmap can now be made from it", /Binary labelmap.*(Create|Update)/.test(await status("Binary labelmap")), true);
+check("Binary labelmap can now be made from it", /Create|Update/.test(await offers("Binary labelmap")), true);
 
 await browser.close();
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");

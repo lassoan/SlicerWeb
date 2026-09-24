@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { Minus, Plus } from "@lucide/vue";
+import { Minus, MoreHorizontal, Plus } from "@lucide/vue";
 import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
+import PopupMenu from "../components/PopupMenu.vue";
 import SegmentList from "../components/SegmentList.vue";
 import { openModule, store } from "../store";
 import { useNodeState } from "./useNodeState";
@@ -122,17 +123,28 @@ const pathLabel = (p: ConversionPath) => `${p.description} (cost ${p.cost})`;
             <span v-else-if="r.present" class="rounded bg-emerald-900/50 px-1.5 text-[11px] text-emerald-200" title="This representation is present">Present</span>
             <span v-else class="text-[11px] text-muted-foreground" title="This representation is not present">not present</span>
             <span class="flex-1" />
-            <template v-if="!r.isSource">
+            <!-- What can be done with the representation, behind one button, as with a segment or a node -->
+            <PopupMenu v-if="!r.isSource" align="right">
+              <template #trigger="{ open, toggle }">
+                <button type="button" class="sw-row-action text-muted-foreground hover:text-highlight disabled:opacity-40" :class="open ? 'text-highlight' : ''"
+                  :title="`More for ${r.name}`" :disabled="!!busy" data-name="representationMore" @click.stop="toggle()"><MoreHorizontal :size="14" /></button>
+              </template>
               <template v-if="r.present">
-                <SwButton text="Update" :tool-tip="`Update ${r.name} representation using custom conversion parameters`" :enabled="!busy" @clicked="openAdvanced(r)" />
-                <SwButton text="Remove" :tool-tip="`Remove ${r.name} representation from segmentation`" :enabled="!busy" @clicked="remove(r.name)" />
+                <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+                  :title="`Update ${r.name} representation using custom conversion parameters`" @click="openAdvanced(r)">Update…</button>
+                <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-red-300 hover:bg-accent/60"
+                  :title="`Remove ${r.name} representation from segmentation`" @click="remove(r.name)">Remove</button>
               </template>
               <template v-else-if="r.paths.length">
-                <SwButton text="Create" :tool-tip="`Create ${r.name} representation using default conversion parameters`" :enabled="!busy" @clicked="convert(r.name)" />
-                <SwButton text="Advanced…" :tool-tip="`Create ${r.name} representation using custom conversion parameters`" :enabled="!busy" @clicked="openAdvanced(r)" />
+                <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+                  :title="`Create ${r.name} representation using default conversion parameters`" @click="convert(r.name)">Create</button>
+                <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+                  :title="`Create ${r.name} representation using custom conversion parameters`" @click="openAdvanced(r)">Advanced create…</button>
               </template>
-              <SwButton v-if="r.present || representations.segmentCount === 0" text="Make source" :enabled="!busy" @clicked="makeSource(r.name)" />
-            </template>
+              <button v-if="r.present || representations.segmentCount === 0" type="button" role="menuitem"
+                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+                title="Make this the source representation: the one saved to disk and converted from; the others are then made anew" @click="makeSource(r.name)">Make source</button>
+            </PopupMenu>
           </div>
           <div v-if="advanced?.name === r.name" class="mt-1 flex flex-col gap-1 rounded border border-input bg-background/40 p-2" data-name="advancedConversion">
             <SwFormRow label="Path">

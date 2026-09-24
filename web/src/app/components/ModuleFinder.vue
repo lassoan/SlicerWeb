@@ -1,9 +1,10 @@
 <script setup lang="ts">
 // Module finder, as in desktop Slicer: type to search, the first hit is highlighted, the arrow keys
-// walk the list, Enter (or a click, a tap) opens the highlighted module and Escape closes. What is highlighted is
-// described below the list (category, description, contributors, internal name, type, location).
+// walk the list, Enter (or a click, a tap) opens the highlighted module and Escape closes. Pointing at a
+// module shows its description; its (i) button shows all that is known about it (category, description,
+// contributors, internal name, type, location) below it - for one module at a time.
 import { computed, nextTick, ref, watch } from "vue";
-import { FileText, Package, Search, X } from "@lucide/vue";
+import { FileText, Info, Package, Search, X } from "@lucide/vue";
 import { store, type ModuleSummary } from "../store";
 import ModuleInformation from "./ModuleInformation.vue";
 
@@ -32,6 +33,22 @@ const results = computed(() => {
     .sort((a, b) => a.title.localeCompare(b.title));
 });
 
+/** The module whose properties are shown below it, if any. */
+const expanded = ref<string | null>(null);
+function toggleInformation(module: ModuleSummary) {
+  expanded.value = expanded.value === module.name ? null : module.name;
+  searchBox.value?.focus();
+}
+
+/** The description as a tooltip: the help text without its markup, and not too long. */
+function description(module: ModuleSummary) {
+  const element = document.createElement("div");
+  element.innerHTML = module.helpText ?? "";
+  const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+  if (!text) return module.title;
+  return text.length > 300 ? text.slice(0, 297) + "..." : text;
+}
+
 const selected = computed(() => results.value[Math.min(highlighted.value, results.value.length - 1)]);
 
 // typing searches again from the first hit
@@ -51,7 +68,7 @@ function open(module?: ModuleSummary) {
   if (target) emit("select", target.name);
 }
 
-/** A click or a tap opens the module; pointing at one (a mouse) shows what it is below the list. */
+/** A click or a tap opens the module. */
 function pick(index: number) {
   highlighted.value = index;
   open(results.value[index]);
@@ -95,25 +112,26 @@ defineExpose({ focus });
     </div>
 
     <div ref="list" class="min-h-16 flex-1 overflow-y-auto p-1">
-      <button v-for="(m, index) in results" :key="m.name" type="button" :data-highlighted="index === highlighted"
-        :data-name="m.name"
-        class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px]"
-        :class="index === highlighted ? 'bg-accent text-accent-foreground' : m.name === current ? 'text-highlight' : 'hover:bg-accent/50'"
-        @click="pick(index)" @mouseenter="highlighted = index">
-        <img v-if="m.icon" :src="m.icon" alt="" class="h-4 w-4 shrink-0" />
-        <span v-else class="h-4 w-4 shrink-0" />
-        <span class="truncate">{{ m.title }}</span>
-      </button>
+      <template v-for="(m, index) in results" :key="m.name">
+        <div class="flex items-center rounded" :class="index === highlighted ? 'bg-accent text-accent-foreground' : m.name === current ? 'text-highlight' : 'hover:bg-accent/50'"
+          @mouseenter="highlighted = index">
+          <button type="button" :data-highlighted="index === highlighted" :data-name="m.name" :title="description(m)"
+            class="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-[13px]" @click="pick(index)">
+            <img v-if="m.icon" :src="m.icon" alt="" class="h-4 w-4 shrink-0" />
+            <span v-else class="h-4 w-4 shrink-0" />
+            <span class="truncate">{{ m.title }}</span>
+          </button>
+          <button type="button" data-name="moduleInformationButton" :aria-expanded="expanded === m.name"
+            :title="expanded === m.name ? 'Hide module information' : 'Module information'"
+            class="mr-1 shrink-0 rounded p-1" :class="expanded === m.name ? 'text-highlight' : 'text-muted-foreground hover:text-highlight'"
+            @click.stop="toggleInformation(m)"><Info :size="14" /></button>
+        </div>
+        <div v-if="expanded === m.name" class="mx-1 mb-1 rounded border border-input bg-card/60 px-2 pb-2 text-[12px]">
+          <ModuleInformation :module="m" />
+        </div>
+      </template>
       <div v-if="!results.length" class="px-2 py-3 text-[13px] text-muted-foreground">No module matches “{{ filter }}”.</div>
     </div>
 
-    <div v-if="selected" class="max-h-[40%] overflow-y-auto border-t border-input bg-card/60 p-2 text-[12px]" data-name="moduleInformation">
-      <div class="flex items-center justify-between gap-2">
-        <div class="truncate text-[14px] font-semibold text-foreground">{{ selected.title }}</div>
-        <button type="button" class="shrink-0 rounded bg-primary px-2 py-1 text-[12px] text-primary-foreground hover:bg-primary/85"
-          @click="open()">Switch to module</button>
-      </div>
-      <ModuleInformation :module="selected" />
-    </div>
   </div>
 </template>

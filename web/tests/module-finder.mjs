@@ -1,5 +1,6 @@
 // Module finder: typing highlights the first hit, the arrow keys walk the list, Enter opens the
-// module, Escape closes, and the highlighted module is described below the list.
+// module, Escape closes. A module's description is its tooltip, and its (i) button shows what is
+// known about it below it, for one module at a time.
 // Usage: node tests/module-finder.mjs [url] [screenshot.png]
 import { chromium } from "playwright-core";
 
@@ -20,9 +21,13 @@ await page.waitForTimeout(3000);
 
 const open = async () => { await page.locator("[data-name='moduleTitle']").click(); await page.waitForTimeout(400); };
 const highlighted = () => page.locator("[data-highlighted='true']").first().innerText();
-// the finder's information pane, which holds a ModuleInformation of the same name
-const info = () => page.locator("[data-name='moduleInformation']").first().innerText();
 const items = () => page.locator("[data-highlighted]").allInnerTexts();
+let failures = 0;
+const check = (what, got, expected) => {
+  const ok = got === expected;
+  if (!ok) failures++;
+  console.log(`${ok ? "ok  " : "FAIL"} ${what}: ${got}${ok ? "" : ` (expected ${expected})`}`);
+};
 
 await open();
 console.log("focused search box:", await page.evaluate(() => document.activeElement?.getAttribute("placeholder")));
@@ -30,7 +35,32 @@ await page.keyboard.type("centerline");
 await page.waitForTimeout(400);
 console.log("hits for 'centerline':", (await items()).join(" | "));
 console.log("highlighted:", await highlighted());
-console.log("information:", (await info()).replace(/\n+/g, " | ").slice(0, 220));
+check("no module information below the list", await page.locator("[data-name='moduleInformation']").count(), 0);
+const tooltip = await page.locator("[data-highlighted='true']").first().getAttribute("title");
+console.log("tooltip:", tooltip.slice(0, 120));
+check("the description is the tooltip", tooltip.length > 20 && !/</.test(tooltip), true);
+// (i): the properties of that module just below it; another one's (i) shows its own instead
+const infoButtons = page.locator("[data-name='moduleInformationButton']");
+await infoButtons.nth(0).click();
+await page.waitForTimeout(300);
+check("(i) shows the module's properties", await page.locator("[data-name='moduleInformation']").count(), 1);
+const firstInfo = await page.locator("[data-name='moduleInformation']").innerText();
+console.log("information:", firstInfo.replace(/\n+/g, " | ").slice(0, 200));
+check("just below its item", await page.evaluate(() => {
+  const info = document.querySelector("[data-name='moduleInformation']").getBoundingClientRect();
+  const row = document.querySelectorAll("[data-name='moduleInformationButton']")[0].getBoundingClientRect();
+  return info.top >= row.bottom - 1 && info.top - row.bottom < 12;
+}), true);
+check("with the search box keeping the keyboard", await page.evaluate(() => document.activeElement?.getAttribute("placeholder")), "Search modules");
+if ((await infoButtons.count()) > 1) {
+  await infoButtons.nth(1).click();
+  await page.waitForTimeout(300);
+  check("another module's (i): only that one shown", await page.locator("[data-name='moduleInformation']").count(), 1);
+  check("and it is the other module's", (await page.locator("[data-name='moduleInformation']").innerText()) !== firstInfo, true);
+  await infoButtons.nth(1).click();
+  await page.waitForTimeout(300);
+  check("(i) again hides it", await page.locator("[data-name='moduleInformation']").count(), 0);
+}
 
 await page.keyboard.press("ArrowDown");
 await page.waitForTimeout(200);
@@ -70,7 +100,7 @@ await page.waitForTimeout(400);
 // Escape closes, Enter opens the highlighted module
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);
-console.log("finder open after Escape:", await page.locator("[data-name='moduleInformation']").count() > 0);
+console.log("finder open after Escape:", (await page.getByPlaceholder("Search modules").count()) > 0);
 await open();
 await page.keyboard.type("extract centerline");
 await page.waitForTimeout(400);
@@ -95,3 +125,5 @@ await page.waitForTimeout(400);
 const extensionsOnly = await items();
 console.log(`'model' extensions only: ${extensionsOnly.length} hits, built-in "Models" listed: ${extensionsOnly.includes("Models")}`);
 await browser.close();
+console.log(failures ? `${failures} check(s) failed` : "all checks passed");
+process.exit(failures ? 1 : 0);

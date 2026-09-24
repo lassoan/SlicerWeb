@@ -24,7 +24,7 @@ await page.evaluate(() => window.slicerWeb.bridge.evalPython('slicer.mrmlScene.A
 await page.evaluate(() => { window.slicerWeb.store.activeModule = "Segmentations"; });
 await page.waitForTimeout(3000);
 const panel = page.locator(".sw-panel-scroll").last();
-const rows = panel.locator("[data-name=segmentRow]");
+const rows = panel.locator("[data-name=segmentList]").first().locator("[data-name=segmentRow]");
 
 await panel.locator("[data-name=addSegment]").click();
 await page.waitForTimeout(800);

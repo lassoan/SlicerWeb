@@ -53,6 +53,9 @@ const offers = async (name) => {
 const status = async (name) => (await row(name).innerText()).replace(/\s+/g, " ").trim();
 const contained = () => py('(lambda names: (slicer.util.getNode("Segmentation").GetSegmentation().GetContainedRepresentationNames(names), sorted(names))[1])([])');
 
+// the section starts collapsed: open it
+await panel.getByText("Representations", { exact: true }).click();
+await page.waitForTimeout(400);
 check("the representations are listed", await panel.locator("[data-name=representation]").count() >= 4, true);
 check("Binary labelmap is the source", /Binary labelmap Source/.test(await status("Binary labelmap")), true);
 check("Closed surface is not present", /Closed surface not present/.test(await status("Closed surface")), true);

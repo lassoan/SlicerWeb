@@ -1,12 +1,14 @@
 // The Scroll mouse mode: dragging up and down in a slice view browses its slices, the height of
-// the view mapped to the whole slice range (vtkMRMLSliceIntersectionWidget); in the usual mode
-// the same drag does not scroll. The toolbar shows the mode, and a finger drags the same way.
+// the view mapped to the whole slice range (vtkMRMLSliceIntersectionWidget); in the view transform
+// mode a mouse starts in, the same drag does not scroll. The toolbar shows the mode, and a finger
+// drags the same way (a touch screen starts in Scroll mode, see phone-toolbar.mjs).
 // Usage: node tests/mouse-mode-scroll.mjs [url]
 import { chromium } from "playwright-core";
 
 const base = process.argv[2] ?? "http://localhost:5173/";
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
-const context = await browser.newContext({ viewport: { width: 1400, height: 900 }, hasTouch: true });
+// A mouse, not a touch screen (which starts in Scroll mode); touch is emulated for the finger below
+const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
 const page = await context.newPage();
 page.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
 let failures = 0;
@@ -35,18 +37,15 @@ async function drag(dy) {
   await page.waitForTimeout(400);
 }
 
-check("Scroll is the mode the application starts in", await mode(), "Scroll");
+check("with a mouse, the application starts in the view transform mode", await mode(), "ViewTransform");
 check("the slice bar has its offset slider on a wide view", await page.locator("[data-name=sliceOffsetSlider]").count() > 0, true);
 const start = await offset();
-await page.getByRole("button", { name: "Rotate / Pan / Zoom" }).first().click();
-await page.waitForTimeout(500);
-check("the toolbar enters the view transform mode", await mode(), "ViewTransform");
 await drag(-100);
 check("in which a drag does not scroll", await offset(), start);
 
 await page.getByRole("button", { name: "Scroll slices" }).first().click();
 await page.waitForTimeout(500);
-check("and back to Scroll mode", await mode(), "Scroll");
+check("the toolbar enters Scroll mode", await mode(), "Scroll");
 check("as the interaction node says", await py('slicer.app.applicationLogic().GetInteractionNode().GetInteractionModeAsString(slicer.app.applicationLogic().GetInteractionNode().GetCurrentInteractionMode())'), "Scroll");
 await drag(-100);
 const up = await offset();
@@ -59,6 +58,7 @@ check("dragging down browses back", Math.abs(down - up) > 5 && Math.abs(down - s
 
 // A finger does the same
 const cdp = await context.newCDPSession(page);
+await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true });
 await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: cx, y: cy, id: 0 }] });
 for (let i = 1; i <= 10; i++) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: cx, y: cy - 8 * i, id: 0 }] });

@@ -44,6 +44,8 @@ class SlicerWebApplication:
     - ``temp``: temporary directory (default: ``/tmp/Slicer``)
     - ``layout``: initial layout name, e.g. ``"FourUp"`` (default) or a vtkMRMLLayoutNode constant
     - ``modules``: list of module names to load (default: all discovered modules)
+    - ``touchScreen``: whether the pointer is a finger rather than a mouse; the mouse mode then
+      starts as Scroll (browse the slices by dragging)
     - ``settings``: application settings kept by the web page, by their Qt key
       (``{"Developer/DeveloperMode": True}``), applied to :meth:`userSettings`
     """
@@ -135,11 +137,11 @@ class SlicerWebApplication:
 
         self._moduleManager.loadModules(self._config.get("modules"))
         self._layoutManager.setLayout(self._config.get("layout", "FourUp"))
-        # What a click-and-drag in a slice view does to begin with: browse the slices. The desktop
-        # starts in view transform mode, where such a drag does nothing in a slice view; here a
-        # finger on a phone is the usual pointer, and browsing is what it is most often for.
+        # What a drag in a slice view does to begin with. With a mouse, the view transform mode
+        # the desktop starts in; on a touch screen (a phone, a tablet) browsing the slices, which
+        # is what a finger on a slice view is most often for.
         interaction = self.applicationLogic().GetInteractionNode()
-        if interaction is not None and hasattr(slicer.vtkMRMLInteractionNode, "Scroll"):
+        if interaction is not None and self._config.get("touchScreen") and hasattr(slicer.vtkMRMLInteractionNode, "Scroll"):
             interaction.SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.Scroll)
         self._startupCompleted = True
         self._moduleManager.connect("modulesLoaded(QStringList)", lambda *args: self._flushStartupSlots())

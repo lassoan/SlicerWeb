@@ -73,7 +73,8 @@ export const store = reactive({
   availableLayouts: {} as Record<string, number>,
   activeView: "" as string,
   subjectHierarchy: [] as SubjectHierarchyItem[],
-  interactionMode: "Scroll" as string,   // what the application starts in (see app.py); the scene's word follows
+  // What the application starts in (see app.py: Scroll on a touch screen); the scene's word follows
+  interactionMode: (typeof window !== "undefined" && window.matchMedia?.("(hover: none) and (pointer: coarse)").matches ? "Scroll" : "ViewTransform") as string,
   logs: [] as LogEntry[],
   leftPanelOpen: true,
   rightPanelOpen: true,

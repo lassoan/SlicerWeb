@@ -18,6 +18,8 @@ const fits = await nav.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWi
 console.log(`toolbar: ${fits.scrollWidth} px of buttons in ${fits.clientWidth} px ${fits.scrollWidth <= fits.clientWidth + 1 ? "(fits)" : "(does not fit)"}`);
 console.log("buttons shown:", await nav.locator("button").count());
 
+// a touch screen starts in Scroll mode: a finger on a slice view browses the slices
+console.log("mouse mode on the phone:", await page.evaluate(() => window.slicerWeb.store.interactionMode), "(Scroll expected)");
 // the menus must work with a tap (they used to be cut off by the scrolling toolbar)
 await page.getByRole("button", { name: /new markup/i }).tap();
 await page.waitForTimeout(300);

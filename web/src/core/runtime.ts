@@ -253,6 +253,8 @@ slicerweb.initialize(json.loads(${JSON.stringify(JSON.stringify({
       settings: loadSettings(),
       // display properties: markups glyphs and picking tolerance are sized for this screen
       devicePixelRatio: window.devicePixelRatio || 1,
+      // A finger rather than a mouse (a phone, a tablet): the mouse mode starts as Scroll there
+      touchScreen: !!window.matchMedia?.("(hover: none) and (pointer: coarse)").matches,
       screenWidth: window.screen?.width ?? 0,
       screenHeight: window.screen?.height ?? 0,
     }))}))

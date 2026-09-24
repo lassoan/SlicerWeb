@@ -434,8 +434,19 @@ def setSegmentationSourceRepresentation(nodeID, representationName):
 
 
 @method()
+def addSegment(nodeID, name=None):
+    """Add an empty segment (the Add button of the segment list); returns its ID."""
+    node = _node(nodeID)
+    segmentID = node.GetSegmentation().AddEmptySegment("", name or "")
+    node.Modified()   # the lists that watch the node follow
+    return segmentID
+
+
+@method()
 def removeSegment(nodeID, segmentID):
-    _node(nodeID).GetSegmentation().RemoveSegment(segmentID)
+    node = _node(nodeID)
+    node.GetSegmentation().RemoveSegment(segmentID)
+    node.Modified()
     return True
 
 

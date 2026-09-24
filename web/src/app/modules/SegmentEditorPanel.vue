@@ -4,7 +4,7 @@ import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, 
   MousePointer2, Sprout, Layers, Expand, CircleDashed, Combine } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider, SwButton, SwComboBox } from "@/widgets";
-import TerminologySelector from "../components/TerminologySelector.vue";
+import SegmentList from "../components/SegmentList.vue";
 
 interface EditorState {
   segmentationNodeID: string | null;
@@ -30,7 +30,6 @@ const smoothing = ref(3);
 const error = ref("");
 // Double-clicking a segment asks what it is, the way the desktop Segment Editor does: the choice
 // names the segment and colours it from the terminology.
-const terminologyFor = ref<{ id: string; name: string } | null>(null);
 
 async function refresh() {
   state.value = await bridge.call<EditorState>("segmentEditorState");
@@ -153,9 +152,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="flex flex-col gap-2">
-    <TerminologySelector v-if="terminologyFor && state?.segmentationNodeID" :segmentation-node-id="state.segmentationNodeID"
-      :segment-id="terminologyFor.id" :segment-name="terminologyFor.name"
-      @close="terminologyFor = null" @applied="refresh" />
     <SwFormRow label="Segmentation">
       <SwNodeSelector node-types="vtkMRMLSegmentationNode" add-enabled base-name="Segmentation" :current-node-id="state?.segmentationNodeID"
         @current-node-changed="setup($event, state?.sourceVolumeNodeID ?? null)" />
@@ -177,17 +173,11 @@ onBeforeUnmount(() => {
         <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight disabled:opacity-30" :disabled="!state.canRedo" title="Redo"
           @click="run('segmentEditorRedo')"><Redo2 :size="16" /></button>
       </div>
-      <div class="max-h-48 overflow-y-auto rounded-md border border-input/60">
-        <button v-for="s in state.segments" :key="s.id" type="button" data-name="segmentRow"
-          class="flex w-full items-center gap-2 px-2 py-1 text-left text-[13px]"
-          :class="s.id === state.currentSegmentID ? 'bg-accent text-foreground' : 'hover:bg-accent/40'"
-          title="Double-click to say what this segment is"
-          @click="run('segmentEditorSelectSegment', [s.id])"
-          @dblclick="terminologyFor = { id: s.id, name: s.name }">
-          <span class="h-3 w-3 rounded-sm" :style="{ background: s.color }" />{{ s.name }}
-        </button>
-        <div v-if="!state.segments.length" class="p-2 text-[12px] text-muted-foreground">Add a segment to start editing.</div>
-      </div>
+      <!-- The same list as the Segmentations module's: choose, rename, colour and terminology, show, remove -->
+      <SegmentList :segmentation-node-id="state.segmentationNodeID" :current-id="state.currentSegmentID"
+        @select="run('segmentEditorSelectSegment', [$event])" @changed="refresh">
+        <template #empty>Add a segment to start editing.</template>
+      </SegmentList>
       <div class="grid grid-cols-4 gap-1">
         <button v-for="e in effects" :key="e.label" type="button" :disabled="!!unusable(e.name)"
           class="flex flex-col items-center gap-0.5 rounded-md py-1.5 text-[11px] disabled:cursor-not-allowed disabled:opacity-40"

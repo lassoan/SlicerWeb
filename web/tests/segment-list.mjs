@@ -1,0 +1,68 @@
+// The segment list the Segmentations module shares with the Segment Editor: Add makes a segment
+// and chooses it, a click chooses one, a double-click on the name renames it, the eye hides it,
+// Remove takes the chosen one away - and the editor's list shows the same segments.
+// Usage: node tests/segment-list.mjs [url]
+import { chromium } from "playwright-core";
+
+const base = process.argv[2] ?? "http://localhost:5173/";
+const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+const page = await (await browser.newContext({ viewport: { width: 1400, height: 900 } })).newPage();
+page.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
+let failures = 0;
+const check = (what, got, expected) => {
+  const ok = got === expected;
+  if (!ok) failures++;
+  console.log(`${ok ? "ok  " : "FAIL"} ${what}: ${got}${ok ? "" : ` (expected ${expected})`}`);
+};
+const py = async (code) => String(await page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, "eval"), code)).replace(/^'|'$/g, "");
+const names = () => py('[slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegment(i).GetName() for i in range(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNumberOfSegments())]');
+
+await page.goto(base + "?sample=MRHead");
+await page.waitForFunction(() => window.slicerWeb?.store?.status === "ready" && /MR-head/.test(document.body.innerText), null, { timeout: 300000 });
+await page.waitForTimeout(2000);
+await page.evaluate(() => window.slicerWeb.bridge.evalPython('slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Segmentation").CreateDefaultDisplayNodes()', "exec"));
+await page.evaluate(() => { window.slicerWeb.store.activeModule = "Segmentations"; });
+await page.waitForTimeout(3000);
+const panel = page.locator(".sw-panel-scroll").last();
+const rows = panel.locator("[data-name=segmentRow]");
+
+await panel.locator("[data-name=addSegment]").click();
+await page.waitForTimeout(800);
+await panel.locator("[data-name=addSegment]").click();
+await page.waitForTimeout(800);
+check("Add makes segments", await rows.count(), 2);
+check("and chooses the new one", await rows.nth(1).evaluate((el) => el.className.includes("bg-accent")), true);
+
+await rows.nth(0).click();
+await page.waitForTimeout(300);
+check("a click chooses a segment", await rows.nth(0).evaluate((el) => el.className.includes("bg-accent")), true);
+
+await rows.nth(0).locator("[data-name=segmentName]").dblclick();
+await page.waitForTimeout(300);
+const input = rows.nth(0).locator("[data-name=segmentNameInput]");
+check("a double-click on the name opens it for editing", await input.count(), 1);
+await input.fill("Tumor");
+await input.press("Enter");
+await page.waitForTimeout(800);
+check("and Enter renames it", await names(), "['Tumor', 'Segment_2']");
+
+await rows.nth(1).locator("[data-name=segmentVisible]").click();
+await page.waitForTimeout(600);
+check("the eye hides a segment", await py('str(bool(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetDisplayNode().GetSegmentVisibility(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegmentID(1))))'), "False");
+
+await rows.nth(1).click();
+await page.waitForTimeout(300);
+await panel.locator("[data-name=removeSegment]").click();
+await page.waitForTimeout(800);
+check("Remove takes the chosen one away", await names(), "['Tumor']");
+
+// the editor lists the same
+await page.evaluate(() => { window.slicerWeb.store.activeModule = "SegmentEditor"; });
+await page.waitForTimeout(3000);
+const editorRows = page.locator(".sw-panel-scroll").last().locator("[data-name=segmentRow]");
+check("the Segment Editor lists the same segments, the same way", await editorRows.count(), 1);
+check("with the name", (await editorRows.nth(0).locator("[data-name=segmentName]").innerText()).trim(), "Tumor");
+
+await browser.close();
+console.log(failures ? `${failures} check(s) failed` : "all checks passed");
+process.exit(failures ? 1 : 0);

@@ -43,6 +43,13 @@ await page.waitForTimeout(200);
 console.log("after PageDown: ", await highlighted());
 if (shot) await page.screenshot({ path: shot });
 
+// a single click opens a module (a phone has no keyboard, and no second tap should be needed)
+await page.locator("[data-highlighted]").last().click();
+await page.waitForTimeout(600);
+console.log("after a click on the last hit, the module open is:", await page.evaluate(() => window.slicerWeb.store.activeModule), "and the finder is", (await page.getByPlaceholder("Search modules").count()) ? "still open" : "closed");
+await open();
+await page.keyboard.type("centerline");
+await page.waitForTimeout(400);
 // Escape closes, Enter opens the highlighted module
 await page.keyboard.press("Escape");
 await page.waitForTimeout(300);

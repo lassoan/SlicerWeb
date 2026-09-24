@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { Eye, EyeOff, Trash2 } from "@lucide/vue";
+import { Minus, Plus } from "@lucide/vue";
 import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwNodeSelector, SwSlider } from "@/widgets";
+import SegmentList from "../components/SegmentList.vue";
 import { openModule, store } from "../store";
 import { useNodeState } from "./useNodeState";
 import { useSelectedNode } from "./useSelectedNode";
@@ -24,8 +25,19 @@ const { state, bridge } = useNodeState<SegmentationInfo>("segmentationInfo", nod
 // The representations, as qMRMLSegmentationRepresentationsListView lists them: read with the
 // segmentation, since a conversion changes what it holds.
 const { state: representations, refresh: refreshRepresentations } = useNodeState<Representations>("segmentationRepresentations", nodeID);
-const setSeg = (id: string, props: Record<string, unknown>) => nodeID.value && bridge.call("setSegment", [nodeID.value, id, props]);
 const setDisplay = (props: Record<string, unknown>) => nodeID.value && bridge.call("setSegmentationDisplay", [nodeID.value, props]);
+
+// The segment chosen in the list; Add chooses the new one, Remove takes the chosen one away
+const currentSegment = ref<string | null>(null);
+async function addSegment() {
+  if (!nodeID.value) return;
+  currentSegment.value = await bridge.call<string>("addSegment", [nodeID.value]);
+}
+async function removeSegment() {
+  if (!nodeID.value || !currentSegment.value) return;
+  await bridge.call("removeSegment", [nodeID.value, currentSegment.value]);
+  currentSegment.value = null;
+}
 
 const conversionError = ref("");
 const busy = ref("");
@@ -84,14 +96,12 @@ const pathLabel = (p: ConversionPath) => `${p.description} (cost ${p.cost})`;
     <template v-if="state">
       <SwButton text="Edit segments…" primary @clicked="openModule('SegmentEditor')" />
       <SwCollapsible :text="`Segments (${state.segments.length})`">
-        <div v-for="s in state.segments" :key="s.id" class="group flex h-7 items-center gap-2 rounded px-1 text-[13px] hover:bg-accent/40">
-          <input type="color" class="h-4 w-5 cursor-pointer border-0 bg-transparent p-0" :value="s.color" @input="setSeg(s.id, { color: ($event.target as HTMLInputElement).value })" />
-          <input class="min-w-0 flex-1 bg-transparent outline-none focus:bg-background" :value="s.name" @change="setSeg(s.id, { name: ($event.target as HTMLInputElement).value })" />
-          <button type="button" class="text-muted-foreground hover:text-highlight" @click="setSeg(s.id, { visible: !s.visible })">
-            <Eye v-if="s.visible" :size="14" /><EyeOff v-else :size="14" />
-          </button>
-          <button type="button" class="hidden text-muted-foreground group-hover:inline hover:text-red-400" @click="bridge.call('removeSegment', [nodeID, s.id])"><Trash2 :size="14" /></button>
+        <div class="flex items-center gap-1">
+          <SwButton data-name="addSegment" @clicked="addSegment"><Plus :size="14" />Add</SwButton>
+          <SwButton data-name="removeSegment" :enabled="!!currentSegment" @clicked="removeSegment"><Minus :size="14" />Remove</SwButton>
         </div>
+        <!-- The same list as the Segment Editor's: choose, rename, colour and terminology, show, remove -->
+        <SegmentList :segmentation-node-id="nodeID" :current-id="currentSegment" @select="currentSegment = $event" />
       </SwCollapsible>
       <SwCollapsible text="Display">
         <SwCheckBox text="Visible" :checked="state.visible" @toggled="setDisplay({ visible: $event })" />

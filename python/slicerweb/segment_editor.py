@@ -192,13 +192,17 @@ class SegmentEditor:
     def addSegment(self):
         sid = self.logic.AddEmptySegment()
         self.logic.SetCurrentSegmentID(sid)
+        host.emit("segment-editor-changed", self.state())
         return sid
 
     def removeSegment(self):
-        return self.logic.RemoveSelectedSegment()
+        removed = self.logic.RemoveSelectedSegment()
+        host.emit("segment-editor-changed", self.state())
+        return removed
 
     def selectSegment(self, segmentID):
         self.logic.SetCurrentSegmentID(segmentID or "")
+        host.emit("segment-editor-changed", self.state())
 
     # ------------------------------------------------------------------ effects
     def setEffect(self, name):

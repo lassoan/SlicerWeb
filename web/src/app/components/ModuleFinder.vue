@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Module finder, as in desktop Slicer: type to search, the first hit is highlighted, the arrow keys
-// walk the list, Enter opens the highlighted module and Escape closes. What is highlighted is
+// walk the list, Enter (or a click, a tap) opens the highlighted module and Escape closes. What is highlighted is
 // described below the list (category, description, contributors, internal name, type, location).
 import { computed, nextTick, ref, watch } from "vue";
 import { FileText, Package, Search, X } from "@lucide/vue";
@@ -51,10 +51,10 @@ function open(module?: ModuleSummary) {
   if (target) emit("select", target.name);
 }
 
-/** A tap shows what a module is; a tap on the one already shown opens it (no keyboard on a phone). */
+/** A click or a tap opens the module; pointing at one (a mouse) shows what it is below the list. */
 function pick(index: number) {
-  if (highlighted.value === index) open(results.value[index]);
-  else highlighted.value = index;
+  highlighted.value = index;
+  open(results.value[index]);
 }
 
 function focus() {
@@ -99,7 +99,7 @@ defineExpose({ focus });
         :data-name="m.name"
         class="flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[13px]"
         :class="index === highlighted ? 'bg-accent text-accent-foreground' : m.name === current ? 'text-highlight' : 'hover:bg-accent/50'"
-        @click="pick(index)" @dblclick="open(m)">
+        @click="pick(index)" @mouseenter="highlighted = index">
         <img v-if="m.icon" :src="m.icon" alt="" class="h-4 w-4 shrink-0" />
         <span v-else class="h-4 w-4 shrink-0" />
         <span class="truncate">{{ m.title }}</span>

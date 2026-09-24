@@ -47,6 +47,10 @@ class Settings:
         self.sync()
         if changed:
             host.emit("settings-changed", {key: value})
+            if key == "Developer/ShowRenderingFPS":
+                import slicer
+
+                slicer.app.layoutManager().applyViewSettings()
 
     def update(self, values):
         """Set several values (full keys, "Developer/DeveloperMode"), as the web page hands them over.

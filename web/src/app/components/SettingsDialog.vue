@@ -36,8 +36,7 @@ const section = ref(sections[0].id);
             <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
               Every view is drawn into one canvas rather than one of its own. A browser allows only so many WebGL
               contexts at a time - about eight on a phone - so a layout of nine views cannot give each of them one;
-              a context also costs a few megabytes of graphics memory and its own copy of every shader. The price is
-              that a change in one view redraws all of them. The views are rebuilt when this is changed.
+              a context also costs a few megabytes of graphics memory. The views are rebuilt when this is changed.
             </div>
           </template>
           <template v-if="section === 'developer'">
@@ -46,6 +45,13 @@ const section = ref(sections[0].id);
             <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
               Show what a module developer needs: the Reload and Test section at the bottom of a scripted module's panel.
               (Slicer setting <code>Developer/DeveloperMode</code>.)
+            </div>
+            <SwCheckBox text="Show rendering FPS" class="mt-3" data-name="showRenderingFPS"
+              :checked="store.settings['Developer/ShowRenderingFPS']"
+              @toggled="setSetting('Developer/ShowRenderingFPS', $event)" />
+            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+              Show in the top right corner of every view how many times it rendered in the last second, and how long
+              its last render took.
             </div>
           </template>
         </div>

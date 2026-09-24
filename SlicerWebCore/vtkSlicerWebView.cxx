@@ -25,7 +25,13 @@
 #include <vtkCamera.h>
 #include <vtkRendererCollection.h>
 #include <vtkRenderer.h>
+#include <vtkTextActor.h>
+#include <vtkTextProperty.h>
+#include <vtkTimerLog.h>
 #include <vtkWeakPointer.h>
+
+#include <cstdio>
+#include <deque>
 
 #ifdef __EMSCRIPTEN__
 #include "vtkSlicerWebSharedRenderWindow.h"
@@ -59,7 +65,66 @@ public:
   bool Started{ false };
   /// The size given before the view was initialized: it is made at that size
   int InitialSize[2] = { 0, 0 };
+
+  /// How fast the view renders (SetFPSVisible)
+  bool FPSVisible{ false };
+  vtkSmartPointer<vtkTextActor> FPSActor;
+  vtkNew<vtkCallbackCommand> RenderTimingCallback;
+  double RenderStartTime{ 0.0 };
+  double LastRenderTime{ 0.0 }; // seconds
+  std::deque<double> RenderEndTimes; // of the last second
+  void UpdateFPSActor();
 };
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::vtkInternal::UpdateFPSActor()
+{
+  if (this->FPSVisible && this->Renderer)
+  {
+    if (!this->FPSActor)
+    {
+      this->FPSActor = vtkSmartPointer<vtkTextActor>::New();
+      this->FPSActor->SetPickable(false);
+      this->FPSActor->SetTextScaleModeToNone();
+      // In the top right corner, wherever that is as the view is resized
+      this->FPSActor->GetPositionCoordinate()->SetCoordinateSystemToNormalizedViewport();
+      this->FPSActor->SetPosition(0.98, 0.98);
+      vtkTextProperty* text = this->FPSActor->GetTextProperty();
+      text->SetJustificationToRight();
+      text->SetVerticalJustificationToTop();
+      text->SetColor(1.0, 1.0, 0.4);
+      text->SetShadow(true);
+      text->SetFontFamilyToArial();
+      double pixelRatio = 1.0;
+#ifdef __EMSCRIPTEN__
+      pixelRatio = emscripten_get_device_pixel_ratio();
+#endif
+      text->SetFontSize(static_cast<int>(13 * pixelRatio + 0.5));
+      this->FPSActor->SetInput("");
+    }
+    if (!this->Renderer->HasViewProp(this->FPSActor))
+    {
+      this->Renderer->AddActor2D(this->FPSActor);
+    }
+    if (this->RenderWindow && !this->RenderWindow->HasObserver(vtkCommand::EndEvent, this->RenderTimingCallback))
+    {
+      this->RenderWindow->AddObserver(vtkCommand::StartEvent, this->RenderTimingCallback);
+      this->RenderWindow->AddObserver(vtkCommand::EndEvent, this->RenderTimingCallback);
+    }
+  }
+  else
+  {
+    if (this->FPSActor && this->Renderer)
+    {
+      this->Renderer->RemoveActor2D(this->FPSActor);
+    }
+    if (this->RenderWindow)
+    {
+      this->RenderWindow->RemoveObserver(this->RenderTimingCallback);
+    }
+    this->RenderEndTimes.clear();
+  }
+}
 
 #ifdef __EMSCRIPTEN__
 namespace
@@ -97,6 +162,8 @@ vtkSlicerWebView::vtkSlicerWebView()
   this->Internal->ButtonPressCallback->SetCallback(&vtkSlicerWebView::OnButtonPressEvent);
   this->Internal->RenderRequestCallback->SetClientData(this);
   this->Internal->RenderRequestCallback->SetCallback(&vtkSlicerWebView::OnRenderRequest);
+  this->Internal->RenderTimingCallback->SetClientData(this->Internal);
+  this->Internal->RenderTimingCallback->SetCallback(&vtkSlicerWebView::OnRenderTiming);
 }
 
 //----------------------------------------------------------------------------
@@ -247,6 +314,7 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
     d->InitialSize[0] = d->InitialSize[1] = 0;
     this->SetSize(width, height); // the views update for it (e.g. slice node dimensions)
   }
+  d->UpdateFPSActor();
   this->Render();
   return true;
 }
@@ -314,6 +382,12 @@ void vtkSlicerWebView::Finalize()
     d->InteractorObserver->SetDisplayableManagers(nullptr);
   }
   this->FinalizeView();
+  if (d->RenderWindow)
+  {
+    d->RenderWindow->RemoveObserver(d->RenderTimingCallback);
+  }
+  d->FPSActor = nullptr;
+  d->RenderEndTimes.clear();
   d->DisplayableManagerGroup = nullptr;
   d->InteractorObserver = nullptr;
   if (d->Canvas)
@@ -635,4 +709,65 @@ void vtkSlicerWebView::OnButtonPressEvent(vtkObject* caller, unsigned long vtkNo
   d->InButtonPressHandler = true;
   interactor->InvokeEvent(vtkCommand::MouseMoveEvent);
   d->InButtonPressHandler = false;
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::SetFPSVisible(bool visible)
+{
+  vtkInternal* d = this->Internal;
+  if (d->FPSVisible == visible)
+  {
+    return;
+  }
+  d->FPSVisible = visible;
+  if (this->Initialized)
+  {
+    d->UpdateFPSActor();
+    this->ScheduleRender();
+  }
+  this->Modified();
+}
+
+//----------------------------------------------------------------------------
+bool vtkSlicerWebView::GetFPSVisible()
+{
+  return this->Internal->FPSVisible;
+}
+
+//----------------------------------------------------------------------------
+int vtkSlicerWebView::GetFramesPerSecond()
+{
+  return static_cast<int>(this->Internal->RenderEndTimes.size());
+}
+
+//----------------------------------------------------------------------------
+double vtkSlicerWebView::GetLastRenderTime()
+{
+  return this->Internal->LastRenderTime * 1000.0;
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::OnRenderTiming(vtkObject* vtkNotUsed(caller), unsigned long eid, void* clientData, void* vtkNotUsed(callData))
+{
+  vtkInternal* d = static_cast<vtkInternal*>(clientData);
+  const double now = vtkTimerLog::GetUniversalTime();
+  if (eid == vtkCommand::StartEvent)
+  {
+    d->RenderStartTime = now;
+    return;
+  }
+  d->LastRenderTime = now - d->RenderStartTime;
+  d->RenderEndTimes.push_back(now);
+  while (!d->RenderEndTimes.empty() && d->RenderEndTimes.front() < now - 1.0)
+  {
+    d->RenderEndTimes.pop_front();
+  }
+  if (d->FPSActor)
+  {
+    // Shown with the next render: changing the text does not ask for one, or the view would
+    // render for ever. When the view stops rendering, the last second before it stopped is shown.
+    char text[64];
+    std::snprintf(text, sizeof(text), "%d fps  %.1f ms", static_cast<int>(d->RenderEndTimes.size()), d->LastRenderTime * 1000.0);
+    d->FPSActor->SetInput(text);
+  }
 }

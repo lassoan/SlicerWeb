@@ -461,6 +461,8 @@ def setApplicationSettings(values):
     import slicer
 
     slicer.app.userSettings().update(values)
+    if any(key.startswith("Developer/ShowRenderingFPS") for key in values or {}):
+        slicer.app.layoutManager().applyViewSettings()
     return True
 
 

@@ -93,6 +93,14 @@ public:
   /// Number of renders performed (for diagnostics/tests).
   vtkGetMacro(RenderCount, int);
 
+  /// Show how fast the view renders, in its top right corner: the renders of the last second, and
+  /// how long the last one took (Application settings > Developer).
+  void SetFPSVisible(bool visible);
+  bool GetFPSVisible();
+  /// The renders of the last second, and the time the last one took in milliseconds.
+  int GetFramesPerSecond();
+  double GetLastRenderTime();
+
   /// Internal: called from the animation frame callback.
   void ProcessScheduledRender();
 
@@ -128,6 +136,7 @@ protected:
   static void OnGestureEvent(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
   static void OnSceneEvent(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
   static void OnRenderRequest(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
+  static void OnRenderTiming(vtkObject* caller, unsigned long eid, void* clientData, void* callData);
 
   char* CanvasSelector{ nullptr };
   bool Initialized{ false };

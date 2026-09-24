@@ -366,6 +366,16 @@ class LayoutManager(QObject):
             yield from self._visibleViews(child)
 
     # ------------------------------------------------------------------ views
+    # ------------------------------------------------------------------ view settings
+    def _fpsVisible(self):
+        return bool(self._app.userSettings().value("Developer/ShowRenderingFPS", False, type=bool))
+
+    def applyViewSettings(self):
+        """Apply the application settings that concern every view (Developer/ShowRenderingFPS)."""
+        visible = self._fpsVisible()
+        for view in self._views.values():
+            view.SetFPSVisible(visible)
+
     # ------------------------------------------------------------------ shared canvas
     def attachSharedCanvas(self, canvasSelector, width, height):
         """The canvas the views share, with one WebGL context for all of them.
@@ -463,6 +473,7 @@ class LayoutManager(QObject):
             view.SetCanvasSelector(canvasSelector)
             if width and height:
                 view.SetSize(int(width), int(height))
+        view.SetFPSVisible(self._fpsVisible())
         if not view.Initialize(self._app.applicationLogic(), self._scene, layoutName):
             logger.error("attachView: failed to initialize view %s", layoutName)
             return False

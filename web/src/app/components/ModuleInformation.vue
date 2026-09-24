@@ -28,7 +28,6 @@ function categories(m: ModuleSummary) {
       <span class="truncate">{{ module.title }}</span>
     </div>
     <div v-if="module.helpText" class="mt-1 text-muted-foreground" v-html="module.helpText" />
-    <div v-else class="mt-1 text-muted-foreground">This module says nothing about itself.</div>
     <dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-2">
       <dt class="font-semibold">Category:</dt><dd class="truncate">{{ categories(module) }}</dd>
       <template v-if="module.contributors.length">

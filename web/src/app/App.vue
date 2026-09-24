@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch } from "vue";
 import type { SlicerRuntime } from "@/core/runtime";
 import { setSetting, store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
 import { reportGLToApplication } from "../core/glDiagnostics";
@@ -31,10 +31,15 @@ events.on<LogEntry>("log", (entry) => {
   if (store.logs.length > 1000) store.logs.splice(0, store.logs.length - 1000);
 });
 let shTimer: number | undefined;
-events.on("scene-changed", () => {
+function scheduleSubjectHierarchyRefresh() {
   window.clearTimeout(shTimer);
   shTimer = window.setTimeout(refreshSubjectHierarchy, 50);
-});
+}
+events.on("scene-changed", scheduleSubjectHierarchyRefresh);
+// The eye of a volume shows whether it is shown in the selected view: another view selected, or
+// the volumes the views show changed (from a slice controller, say), and the eyes follow.
+events.on("views-shown-changed", scheduleSubjectHierarchyRefresh);
+watch(() => store.activeView, scheduleSubjectHierarchyRefresh);
 
 // What a click in a view does is the scene's to say: a module may change it, and place mode ends
 // by itself once something has been placed. The toolbar shows what the scene says, not what was
@@ -61,7 +66,7 @@ events.on<{ itemID: number; name: string }>("item-renamed", ({ itemID, name }) =
 
 async function refreshSubjectHierarchy() {
   if (store.status !== "ready") return;
-  store.subjectHierarchy = await runtime.bridge.call("getSubjectHierarchy");
+  store.subjectHierarchy = await runtime.bridge.call("getSubjectHierarchy", [store.activeView || null]);
   store.sceneVersion++;
 }
 

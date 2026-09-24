@@ -32,9 +32,17 @@ function toggle(item: SubjectHierarchyItem) {
   collapsed.value = s;
 }
 
+/** A volume is shown or hidden in the selected view only (see bridge.setSubjectHierarchyItemVisibility). */
+const inSelectedView = (item: SubjectHierarchyItem) => !!store.activeView && item.className.includes("VolumeNode");
+
 async function setVisible(item: SubjectHierarchyItem) {
   item.visible = !item.visible;
-  await bridge.call("setSubjectHierarchyItemVisibility", [item.id, item.visible]);
+  await bridge.call("setSubjectHierarchyItemVisibility", [item.id, item.visible, store.activeView || null]);
+}
+
+function visibilityTitle(item: SubjectHierarchyItem) {
+  const action = item.visible ? "Hide" : "Show";
+  return inSelectedView(item) ? `${action} in view ${store.activeView}` : action;
 }
 
 // Which module shows a node of this kind, as the subject hierarchy plugins of desktop Slicer
@@ -151,7 +159,7 @@ function clicked(item: SubjectHierarchyItem) {
           <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-red-300 hover:bg-accent/60"
             @click="remove(item)"><Trash2 :size="14" />Delete</button>
         </PopupMenu>
-        <button type="button" class="text-muted-foreground hover:text-highlight" :title="item.visible ? 'Hide' : 'Show'" @click.stop="setVisible(item)">
+        <button type="button" class="text-muted-foreground hover:text-highlight" :title="visibilityTitle(item)" @click.stop="setVisible(item)">
           <Eye v-if="item.visible" :size="14" /><EyeOff v-else :size="14" class="opacity-60" />
         </button>
       </div>

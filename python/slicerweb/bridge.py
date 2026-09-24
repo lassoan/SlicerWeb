@@ -436,6 +436,38 @@ def install_scene_observers():
                         (slicer.vtkMRMLScene.EndBatchProcessEvent, "batch")):
         _scene_observers.append(scene.AddObserver(event, lambda c, e, kind=kind: host.emit("scene-changed", {"event": kind})))
 
+    # What each view shows - the volumes of the slice views' layers, the volumes rendered in the 3D
+    # views - is what the eyes of volumes in the Data tree show for the selected view. It changes
+    # from the slice controllers, the Volume Rendering module and Python alike: the page is told
+    # whenever it has changed.
+    shown = {}
+
+    def watchShown(node):
+        def state(n):
+            if n.IsA("vtkMRMLSliceCompositeNode"):
+                return (n.GetBackgroundVolumeID(), n.GetLabelVolumeID())
+            return (n.GetVisibility(), tuple(n.GetViewNodeIDs()))
+
+        shown[node.GetID()] = state(node)
+
+        def onModified(caller, event):
+            now = state(caller)
+            if shown.get(caller.GetID()) != now:
+                shown[caller.GetID()] = now
+                host.emit("views-shown-changed", {})
+
+        node.AddObserver(vtk.vtkCommand.ModifiedEvent, onModified)
+
+    def onNodeAdded(caller, event, node=None):
+        if node is not None and (node.IsA("vtkMRMLSliceCompositeNode") or node.IsA("vtkMRMLVolumeRenderingDisplayNode")):
+            watchShown(node)
+
+    onNodeAdded.CallDataType = vtk.VTK_OBJECT
+    _scene_observers.append(scene.AddObserver(slicer.vtkMRMLScene.NodeAddedEvent, onNodeAdded))
+    for className in ("vtkMRMLSliceCompositeNode", "vtkMRMLVolumeRenderingDisplayNode"):
+        for node in _nodesByClass(className):
+            watchShown(node)
+
     # What a click in a view does is the scene's to say, not the toolbar's: it is also set by
     # modules and by Python, and it ends by itself once a markup that is not placed for ever has
     # been placed. The toolbar follows what the interaction node says rather than what it asked for.
@@ -497,15 +529,118 @@ def interactionMode():
 
 
 # --------------------------------------------------------------------------- subject hierarchy
+def _volumeRenderingLogic():
+    import slicer
+
+    return slicer.app.applicationLogic().GetModuleLogic("VolumeRendering")
+
+
+def _viewNodeByLayoutName(layoutName):
+    """The slice or 3D view node of a view of the layout (None for other views, or none given)."""
+    import slicer
+
+    if not layoutName:
+        return None
+    for className in ("vtkMRMLSliceNode", "vtkMRMLViewNode"):
+        nodes = _scene().GetNodesByClass(className)
+        for i in range(nodes.GetNumberOfItems()):
+            node = nodes.GetItemAsObject(i)
+            if node.GetLayoutName() == layoutName:
+                return node
+    return None
+
+
+def _volumeVisibleInView(volume, viewNode):
+    """Whether a volume is shown in a view: as the background of a slice view (the label layer for a
+    labelmap), or volume rendered in a 3D view."""
+    import slicer
+
+    if viewNode.IsA("vtkMRMLSliceNode"):
+        composite = slicer.app.applicationLogic().GetSliceLogic(viewNode).GetSliceCompositeNode()
+        if volume.IsA("vtkMRMLLabelMapVolumeNode"):
+            return composite.GetLabelVolumeID() == volume.GetID()
+        return composite.GetBackgroundVolumeID() == volume.GetID()
+    displayNode = _volumeRenderingLogic().GetFirstVolumeRenderingDisplayNode(volume)
+    return bool(displayNode is not None and displayNode.GetVisibility()
+                and displayNode.IsDisplayableInView(viewNode.GetID()))
+
+
+def _setVolumeVisibleInView(volume, viewNode, visible):
+    """Show or hide a volume in one view, as its eye in the Data tree does for the selected view.
+
+    In a slice view the volume becomes (or stops being) the background - a labelmap the label
+    layer - and slice views linked to it follow, as they follow the slice controller. In a 3D view
+    it is volume rendered, the volume rendering made first if there is none; hiding it in the last
+    view that shows it hides it (the view's AutoReleaseGraphicsResources then lets go of what it
+    had on the graphics card).
+    """
+    import slicer
+
+    if viewNode.IsA("vtkMRMLSliceNode"):
+        logic = slicer.app.applicationLogic().GetSliceLogic(viewNode)
+        composite = logic.GetSliceCompositeNode()
+        label = volume.IsA("vtkMRMLLabelMapVolumeNode")
+        flag = (slicer.vtkMRMLSliceCompositeNode.LabelVolumeFlag if label
+                else slicer.vtkMRMLSliceCompositeNode.BackgroundVolumeFlag)
+        volumeID = volume.GetID() if visible else None
+        # Through the slice logic's interaction, so that linked slice views are given the same
+        logic.StartSliceCompositeNodeInteraction(flag)
+        if label:
+            composite.SetLabelVolumeID(volumeID)
+        else:
+            composite.SetBackgroundVolumeID(volumeID)
+        logic.EndSliceCompositeNodeInteraction()
+        return
+
+    vrLogic = _volumeRenderingLogic()
+    displayNode = vrLogic.GetFirstVolumeRenderingDisplayNode(volume)
+    viewID = viewNode.GetID()
+    threeDViews = [n.GetID() for n in _nodesByClass("vtkMRMLViewNode")]
+    if visible:
+        if displayNode is None:
+            # the preset that suits the volume (see setVolumeRendering)
+            displayNode = vrLogic.CreateDefaultVolumeRenderingNodes(volume)
+            displayNode.SetVisibility(False)
+        if not displayNode.GetVisibility():
+            # shown here only (all views, when this is the only one)
+            displayNode.RemoveAllViewNodeIDs()
+            if len(threeDViews) > 1:
+                displayNode.AddViewNodeID(viewID)
+            displayNode.SetVisibility(True)
+        elif not displayNode.IsDisplayableInView(viewID):
+            displayNode.AddViewNodeID(viewID)
+        return
+    if displayNode is None or not _volumeVisibleInView(volume, viewNode):
+        return
+    others = [i for i in threeDViews if i != viewID and displayNode.IsDisplayableInView(i)]
+    if not others:
+        displayNode.SetVisibility(False)
+    else:
+        displayNode.RemoveAllViewNodeIDs()
+        for i in others:
+            displayNode.AddViewNodeID(i)
+
+
+def _nodesByClass(className):
+    nodes = _scene().GetNodesByClass(className)
+    return [nodes.GetItemAsObject(i) for i in range(nodes.GetNumberOfItems())]
+
+
 @method()
-def getSubjectHierarchy():
-    """Tree of subject hierarchy items: [{id, name, nodeID, className, visible, children:[...]}]."""
+def getSubjectHierarchy(layoutName=None):
+    """Tree of subject hierarchy items: [{id, name, nodeID, className, visible, children:[...]}].
+
+    With *layoutName* (the selected view) a volume is visible if it is shown in that view (see
+    _volumeVisibleInView), as its eye in the Data tree shows.
+    """
     import slicer
 
     shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(_scene())
     if shNode is None:
         return []
     import vtk
+
+    viewNode = _viewNodeByLayoutName(layoutName)
 
     def build(itemID):
         children = vtk.vtkIdList()
@@ -522,7 +657,9 @@ def getSubjectHierarchy():
                 "nodeID": dataNode.GetID() if dataNode else None,
                 "className": dataNode.GetClassName() if dataNode else shNode.GetItemLevel(child),
                 "level": shNode.GetItemLevel(child),
-                "visible": bool(shNode.GetItemDisplayVisibility(child)),
+                "visible": (_volumeVisibleInView(dataNode, viewNode)
+                            if viewNode is not None and dataNode is not None and dataNode.IsA("vtkMRMLVolumeNode")
+                            else bool(shNode.GetItemDisplayVisibility(child))),
                 "children": build(child),
             }
             result.append(entry)
@@ -532,10 +669,16 @@ def getSubjectHierarchy():
 
 
 @method()
-def setSubjectHierarchyItemVisibility(itemID, visible):
+def setSubjectHierarchyItemVisibility(itemID, visible, layoutName=None):
+    """Show or hide an item; a volume in the selected view (*layoutName*) only."""
     import slicer
 
     shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(_scene())
+    dataNode = shNode.GetItemDataNode(int(itemID))
+    viewNode = _viewNodeByLayoutName(layoutName)
+    if viewNode is not None and dataNode is not None and dataNode.IsA("vtkMRMLVolumeNode"):
+        _setVolumeVisibleInView(dataNode, viewNode, bool(visible))
+        return True
     shNode.SetItemDisplayVisibility(int(itemID), bool(visible))
     return True
 

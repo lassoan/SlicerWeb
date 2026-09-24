@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch } from "vue";
 import type { SlicerRuntime } from "@/core/runtime";
-import { setSetting, store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
+import { openModule, setSetting, store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
 import { reportGLToApplication } from "../core/glDiagnostics";
 import ViewerHeader from "./components/ViewerHeader.vue";
 import SidePanel from "./components/SidePanel.vue";
@@ -36,6 +36,8 @@ function scheduleSubjectHierarchyRefresh() {
   shTimer = window.setTimeout(refreshSubjectHierarchy, 50);
 }
 events.on("scene-changed", scheduleSubjectHierarchyRefresh);
+// A module selected from Python (slicer.util.selectModule): it has been entered there already
+events.on<{ name: string }>("select-module", ({ name }) => openModule(name));
 // The eye of a volume shows whether it is shown in the selected view: another view selected, or
 // the volumes the views show changed (from a slice controller, say), and the eyes follow.
 events.on("views-shown-changed", scheduleSubjectHierarchyRefresh);

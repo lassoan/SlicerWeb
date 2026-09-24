@@ -827,6 +827,8 @@ class qMRMLTransformSliders(QWidget):
             row = QHBoxLayout()
             row.addWidget(QLabel(axis))
             slider = ctkSliderWidget()
+            # named as in qMRMLTransformSliders.ui, where tests find them (slicer.util.findChild)
+            slider.setObjectName(axis + "Slider")
             slider.setRange(*self._range)
             slider.setValue(0.0)
             if hasattr(slider, "setDecimals"):

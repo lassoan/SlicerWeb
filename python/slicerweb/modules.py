@@ -684,9 +684,65 @@ def show_scripted_module_widget(moduleName, containerSelector):
     container = dom.query(containerSelector)
     if container is not None:
         container.appendChild(parent.element())
-    if hasattr(module._widget, "enter"):
+    _selectedModule[0] = moduleName
+    # Selected from Python (select_module), the module has already been entered
+    if getattr(module, "_enteredBeforeShown", False):
+        module._enteredBeforeShown = False
+    elif hasattr(module._widget, "enter"):
         module._widget.enter()
     return True
+
+
+_selectedModule = [None]
+
+
+def select_module(moduleName):
+    """Make a module the current one, as slicer.util.selectModule does on the desktop.
+
+    What a module does when it is selected happens now, before this returns - its GUI is made and
+    entered - since the code that selects it (a self test, say) goes on to use it at once; the page
+    then shows the module's panel.
+    """
+    import slicer
+
+    module = slicer.app.moduleManager().module(moduleName)
+    if module is None:
+        raise RuntimeError(f"Module {moduleName} is not loaded")
+    if module.kind == "scripted" and _selectedModule[0] != moduleName:
+        widget = create_scripted_module_widget(moduleName)
+        if hasattr(widget, "enter"):
+            widget.enter()
+            module._enteredBeforeShown = True
+    _selectedModule[0] = moduleName
+    host.emit("select-module", {"name": moduleName})
+
+
+class ModuleSelector:
+    """slicer.util.moduleSelector(): the module panel of the page (qSlicerModuleSelectorToolBar)."""
+
+    def selectModule(self, moduleName):
+        select_module(moduleName)
+
+    @property
+    def selectedModule(self):
+        return _selectedModule[0]
+
+
+def install_module_selector():
+    """slicer.util.moduleSelector(), selectModule() and selectedModule() without a main window.
+
+    There is no Qt main window in the browser (slicer.util.mainWindow() is None, which modules
+    rely on to leave out desktop-only GUI), so these go to the page's module panel instead.
+    """
+    import slicer.util
+
+    selector = ModuleSelector()
+    slicer.util.moduleSelector = lambda: selector
+    # What a scripted module is on the desktop, for isinstance() checks such as that of
+    # slicer.util.getModuleLogic (the logic of a scripted module is its widget's)
+    import slicer
+
+    slicer.qSlicerScriptedLoadableModule = ScriptedModule
 
 
 def reload_scripted_module(moduleName):

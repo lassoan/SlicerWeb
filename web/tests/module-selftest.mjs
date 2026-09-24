@@ -37,14 +37,19 @@ const panel = page.locator(".sw-panel-scroll").last();
 await panel.getByText("Reload and Test", { exact: true }).first().click();   // open the section
 await page.waitForTimeout(500);
 const t0 = Date.now();
-await panel.locator("button.sw-button", { hasText: "Reload and Test" }).click();
+// A test runs in the page's thread and holds it until it is done: it is started from a timer, so
+// that the click returns, and the page is waited for however long it takes
+await panel.locator("button.sw-button", { hasText: "Reload and Test" }).evaluate((b) => setTimeout(() => b.click(), 0));
+page.setDefaultTimeout(0);
 for (let i = 0; i < 180; i++) {
   const text = await panel.innerText();
   if (/Test passed|Error|error:|Failed|failed/.test(text)) break;
   await page.waitForTimeout(5000);
 }
 console.log(`after ${((Date.now() - t0) / 1000).toFixed(0)} s: ${(await panel.innerText()).split("\n").filter((l) => /passed|Error|error|Failed|failed|s\)$/.test(l)).slice(0, 6).join(" | ")}`);
-const logs = await page.evaluate(() => (window.__logs || []).slice(-12).map((l) => `${l.level}: ${String(l.message).slice(0, 1200)}`));
+// how much of the log to show: LOG_COUNT entries of up to LOG_CHARS characters
+const [logCount, logChars] = [Number(process.env.LOG_COUNT ?? 12), Number(process.env.LOG_CHARS ?? 1200)];
+const logs = await page.evaluate(([n, c]) => (window.__logs || []).slice(-n).map((l) => `${l.level}: ${String(l.message).slice(0, c)}`), [logCount, logChars]);
 console.log(logs.join("\n"));
 if (shot) await page.screenshot({ path: shot });
 await browser.close();

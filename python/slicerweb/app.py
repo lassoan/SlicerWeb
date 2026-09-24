@@ -118,6 +118,11 @@ class SlicerWebApplication:
 
         slicer.util.reloadScriptedModule = reload_scripted_module
 
+        # Selecting a module goes to the page's module panel (there is no Qt main window)
+        from .modules import install_module_selector
+
+        install_module_selector()
+
         # Python console namespace, as in the desktop Python interactor
         import __main__
 

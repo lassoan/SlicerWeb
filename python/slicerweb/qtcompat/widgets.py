@@ -742,11 +742,15 @@ class QComboBox(_ElementWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._itemTexts = []
-        self._itemData = []
+        self._itemData = []   # Qt::UserRole, what itemData() and findData() give by default
+        self._itemRoles = []  # the other roles (Qt::ToolTipRole, ...) of each item
         self._currentIndex = -1
 
     def _sync(self):
-        dom.set_prop(self._el, "items", list(self._itemTexts))
+        # an item with a tooltip is handed over with it
+        items = [{"text": text, "toolTip": str(roles[3])} if 3 in roles else text
+                 for text, roles in zip(self._itemTexts, self._itemRoles)]
+        dom.set_prop(self._el, "items", items)
         dom.set_prop(self._el, "currentIndex", self._currentIndex)
 
     def _onIndexChanged(self, index):
@@ -771,6 +775,7 @@ class QComboBox(_ElementWidget):
             data = args[1]
         self._itemTexts.append(text)
         self._itemData.append(data)
+        self._itemRoles.append({})
         if self._currentIndex < 0:
             self._currentIndex = 0
             self._sync()
@@ -786,18 +791,20 @@ class QComboBox(_ElementWidget):
     def insertItem(self, index, text, data=None):
         self._itemTexts.insert(index, str(text))
         self._itemData.insert(index, data)
+        self._itemRoles.insert(index, {})
         self._sync()
 
     def removeItem(self, index):
         if 0 <= index < len(self._itemTexts):
             del self._itemTexts[index]
             del self._itemData[index]
+            del self._itemRoles[index]
             if self._currentIndex >= len(self._itemTexts):
                 self._currentIndex = len(self._itemTexts) - 1
             self._sync()
 
     def clear(self):
-        self._itemTexts, self._itemData = [], []
+        self._itemTexts, self._itemData, self._itemRoles = [], [], []
         self._currentIndex = -1
         self._sync()
 
@@ -807,12 +814,33 @@ class QComboBox(_ElementWidget):
     def itemText(self, index):
         return self._itemTexts[index] if 0 <= index < len(self._itemTexts) else ""
 
+    # Qt::ItemDataRole: DisplayRole 0 (the text), UserRole 256 (the data, the default)
+    _DisplayRole, _UserRole = 0, 256
+
     def itemData(self, index, role=None):
-        return self._itemData[index] if 0 <= index < len(self._itemData) else None
+        if not 0 <= index < len(self._itemData):
+            return None
+        role = self._UserRole if role is None else int(role)
+        if role == self._UserRole:
+            return self._itemData[index]
+        if role == self._DisplayRole:
+            return self._itemTexts[index]
+        return self._itemRoles[index].get(role)
 
     def setItemData(self, index, value, role=None):
-        if 0 <= index < len(self._itemData):
+        """Set a role of an item: its data (Qt::UserRole, the default), its text, or another
+        role such as Qt::ToolTipRole, shown when the item is pointed at."""
+        if not 0 <= index < len(self._itemData):
+            return
+        role = self._UserRole if role is None else int(role)
+        if role == self._UserRole:
             self._itemData[index] = value
+        elif role == self._DisplayRole:
+            self._itemTexts[index] = str(value)
+            self._sync()
+        else:
+            self._itemRoles[index][role] = value
+            self._sync()
 
     def findText(self, text, *args):
         return self._itemTexts.index(text) if text in self._itemTexts else -1

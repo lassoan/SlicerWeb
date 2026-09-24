@@ -50,6 +50,27 @@ await rows.nth(1).locator("[data-name=segmentVisible]").click();
 await page.waitForTimeout(600);
 check("the eye hides a segment", await py('str(bool(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetDisplayNode().GetSegmentVisibility(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegmentID(1))))'), "False");
 
+// the ... button holds what else can be done: the terminology, renaming, deleting
+await panel.locator("[data-name=addSegment]").click();
+await page.waitForTimeout(800);
+await rows.nth(2).locator("[data-name=segmentMore]").click();
+await page.waitForTimeout(300);
+const menu = page.locator("[role=menu]");
+check("the ... button opens a menu with the terminology, renaming and deleting", (await menu.locator("[role=menuitem]").allInnerTexts()).map((t) => t.trim()).join(", "), "What is it…, Rename, Delete");
+await menu.locator("[data-name=segmentRename]").click();
+await page.waitForTimeout(300);
+const renameBox = rows.nth(2).locator("[data-name=segmentNameInput]");
+check("Rename opens the name for editing", await renameBox.count(), 1);
+await renameBox.fill("Vessel");
+await renameBox.press("Enter");
+await page.waitForTimeout(600);
+await rows.nth(2).locator("[data-name=segmentMore]").click();
+await page.waitForTimeout(300);
+await page.locator("[role=menu] [data-name=segmentRemove]").click();
+await page.waitForTimeout(800);
+check("Delete in the menu takes the segment away", await names(), "['Tumor', 'Segment_2']");
+check("the eye is always there, on the right", await rows.nth(0).locator("[data-name=segmentVisible]").isVisible(), true);
+
 await rows.nth(1).click();
 await page.waitForTimeout(300);
 await panel.locator("[data-name=removeSegment]").click();

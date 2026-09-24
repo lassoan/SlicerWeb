@@ -34,6 +34,8 @@ await segmentRow.locator("[data-name='segmentColor']").click();
 await page.waitForTimeout(1500);
 const dialog = page.locator("[data-name='terminologySelector']");
 check("the segment's colour opens what it is", await dialog.count() > 0);
+check("typing goes to the search box first", await page.evaluate(() => document.activeElement?.getAttribute("data-name")) === "terminologySearch");
+const heightBefore = (await dialog.boundingBox())?.height ?? 0;
 const categories = await page.locator("[data-name='terminologyCategories'] button").allInnerTexts();
 check("it offers the categories of the terminology", categories.length > 1, categories.slice(0, 4).join(", "));
 
@@ -43,6 +45,7 @@ await page.waitForTimeout(800);
 const types = page.locator("[data-name='terminologyTypes'] button");
 const typeNames = await types.allInnerTexts();
 check("searching for liver lists the type", typeNames.some((t) => /^Liver$/i.test(t.trim())), typeNames.slice(0, 4).join(", "));
+check("and the dialog keeps its height with few types listed", Math.abs(((await dialog.boundingBox())?.height ?? 0) - heightBefore) < 4, `${heightBefore} -> ${(await dialog.boundingBox())?.height}`);
 const wanted = Math.max(0, typeNames.findIndex((t) => /^Liver$/i.test(t.trim())));
 await types.nth(wanted).click();
 await page.waitForTimeout(600);
@@ -67,23 +70,26 @@ if (shot) await page.screenshot({ path: shot });
 // A name and a colour of one's own, and the buttons back to the terminology's
 await segmentRow.locator("[data-name='segmentColor']").click();
 await page.waitForTimeout(1200);
-await page.locator("[data-name='terminologyName']").fill("Liver (my own)");
-await page.locator("[data-name='terminologyName']").press("Tab");
 await page.locator("[data-name='terminologyColor']").fill("#123456");
+await page.locator("[data-name='terminologyName']").fill("Liver (my own)");
 await page.waitForTimeout(300);
 check("a name of one's own can be reset", await page.locator("[data-name='terminologyNameReset']").isEnabled());
 check("and so can a colour", await page.locator("[data-name='terminologyColorReset']").isEnabled());
-await page.locator("[data-name='terminologyApply']").click();
+// Enter, in the name box, takes what is chosen
+await page.locator("[data-name='terminologyName']").press("Enter");
 await page.waitForTimeout(1500);
+check("Enter takes it", (await page.locator("[data-name='terminologySelector']").count()) === 0);
 check("the segment takes the name and colour of one's own, marked as such", (await nameAndColour()) === "Liver (my own)|#123456|False|False", await nameAndColour());
 await segmentRow.locator("[data-name='segmentColor']").click();
 await page.waitForTimeout(1200);
 check("opened again, the boxes show them", (await page.locator("[data-name='terminologyName']").inputValue()) === "Liver (my own)");
+check("and typing goes to the name of one's own", await page.evaluate(() => document.activeElement?.getAttribute("data-name")) === "terminologyName");
 await page.locator("[data-name='terminologyNameReset']").click();
 await page.locator("[data-name='terminologyColorReset']").click();
 await page.waitForTimeout(200);
 check("reset, the name is the terminology's again", (await page.locator("[data-name='terminologyName']").inputValue()) === chosen);
-await page.locator("[data-name='terminologyApply']").click();
+// Enter, in the search box, takes what is chosen as well
+await page.locator("[data-name='terminologySearch']").press("Enter");
 await page.waitForTimeout(1500);
 check("and the segment is back to the terminology's name and colour", (await nameAndColour()) === `${chosen}|${colour}|True|True`, await nameAndColour());
 

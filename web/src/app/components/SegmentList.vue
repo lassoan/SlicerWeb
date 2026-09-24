@@ -1,9 +1,12 @@
 <script setup lang="ts">
 // The segments of a segmentation, as the Segmentations module and the Segment Editor both list
 // them: a click chooses one, a double-click on the name renames it, the colour opens the
-// terminology selector (what the segment is), the eye shows or hides it, and the bin removes it.
+// terminology selector (what the segment is), the eye shows or hides it, and what else can be
+// done - the terminology, renaming, deleting - is behind a ... button (or a right-click, or a
+// long press), as in the data tree.
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Eye, EyeOff, Trash2 } from "@lucide/vue";
+import { Eye, EyeOff, MoreHorizontal, Pencil, Tag, Trash2 } from "@lucide/vue";
+import PopupMenu from "./PopupMenu.vue";
 import TerminologySelector from "./TerminologySelector.vue";
 import { useNodeState } from "../modules/useNodeState";
 
@@ -18,6 +21,7 @@ const { state, bridge, refresh } = useNodeState<SegmentationInfo>("segmentationI
 const segments = computed(() => state.value?.segments ?? []);
 const terminologyFor = ref<{ id: string; name: string } | null>(null);
 const renaming = ref<string | null>(null);
+const menus = ref(new Map<string, { show: () => void }>());
 
 async function set(id: string, props: Record<string, unknown>) {
   if (!nodeID.value) return;
@@ -47,6 +51,21 @@ function startRenaming(id: string) {
   });
 }
 
+// The row's menu on a right-click, and on a long press (a touch screen has no right button)
+function openMenu(id: string) {
+  emit("select", id);
+  menus.value.get(id)?.show();
+}
+let hold: number | undefined;
+function holdStart(id: string, event: PointerEvent) {
+  if (event.pointerType !== "touch") return;
+  window.clearTimeout(hold);
+  hold = window.setTimeout(() => openMenu(id), 500);
+}
+function holdEnd() {
+  window.clearTimeout(hold);
+}
+
 // What the terminology selector changed shows here and where the list is used
 watch(terminologyFor, (v) => { if (!v) refresh(); });
 // The Segment Editor adds, removes and chooses segments through its own logic: the list follows
@@ -59,9 +78,11 @@ onBeforeUnmount(off);
     <TerminologySelector v-if="terminologyFor && nodeID" :segmentation-node-id="nodeID" :segment-id="terminologyFor.id"
       :segment-name="terminologyFor.name" @close="terminologyFor = null" @applied="emit('changed')" />
     <div v-for="s in segments" :key="s.id" data-name="segmentRow" :data-segment="s.id"
-      class="group flex h-7 cursor-pointer items-center gap-2 px-2 text-[13px] [@media(hover:none)]:h-9"
+      class="flex h-7 cursor-pointer items-center gap-2 px-2 text-[13px] [@media(hover:none)]:h-9"
       :class="s.id === currentId ? 'bg-accent text-foreground' : 'hover:bg-accent/40'"
-      @click="emit('select', s.id)" @dblclick.self="terminologyFor = { id: s.id, name: s.name }">
+      @click="emit('select', s.id)" @dblclick.self="terminologyFor = { id: s.id, name: s.name }"
+      @contextmenu.prevent="openMenu(s.id)" @pointerdown="holdStart(s.id, $event)"
+      @pointerup="holdEnd" @pointercancel="holdEnd" @pointermove="holdEnd">
       <button type="button" class="h-3.5 w-3.5 shrink-0 rounded-sm border border-black/30" :style="{ background: s.color }"
         title="What is this segment? (terminology, name and colour)" data-name="segmentColor"
         @click.stop="terminologyFor = { id: s.id, name: s.name }" />
@@ -71,12 +92,22 @@ onBeforeUnmount(off);
         @keydown.escape.prevent="renaming = null" @blur="rename(s.id, ($event.target as HTMLInputElement).value)" />
       <span v-else class="min-w-0 flex-1 truncate" data-name="segmentName" title="Double-click to rename"
         :class="s.visible ? '' : 'text-muted-foreground'" @dblclick.stop="startRenaming(s.id)">{{ s.name }}</span>
-      <button type="button" class="shrink-0 text-muted-foreground hover:text-highlight" :title="s.visible ? 'Hide' : 'Show'" data-name="segmentVisible"
+      <PopupMenu :ref="(el: any) => menus.set(s.id, el)" align="right">
+        <template #trigger="{ open, toggle }">
+          <button type="button" class="sw-row-action text-muted-foreground hover:text-highlight" :class="open ? 'text-highlight' : ''"
+            :title="`More for ${s.name}`" data-name="segmentMore" @click.stop="toggle()"><MoreHorizontal :size="14" /></button>
+        </template>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="segmentTerminology" @click="terminologyFor = { id: s.id, name: s.name }"><Tag :size="14" />What is it…</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="segmentRename" @click="startRenaming(s.id)"><Pencil :size="14" />Rename</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-red-300 hover:bg-accent/60"
+          data-name="segmentRemove" @click="remove(s.id)"><Trash2 :size="14" />Delete</button>
+      </PopupMenu>
+      <button type="button" class="sw-row-action shrink-0 text-muted-foreground hover:text-highlight" :title="s.visible ? 'Hide' : 'Show'" data-name="segmentVisible"
         @click.stop="set(s.id, { visible: !s.visible })">
-        <Eye v-if="s.visible" :size="14" /><EyeOff v-else :size="14" />
+        <Eye v-if="s.visible" :size="14" /><EyeOff v-else :size="14" class="opacity-60" />
       </button>
-      <button type="button" class="hidden shrink-0 text-muted-foreground group-hover:inline hover:text-red-400 [@media(hover:none)]:inline" title="Remove"
-        data-name="segmentRemove" @click.stop="remove(s.id)"><Trash2 :size="14" /></button>
     </div>
     <div v-if="!segments.length" class="p-2 text-[12px] text-muted-foreground"><slot name="empty">No segments yet.</slot></div>
   </div>

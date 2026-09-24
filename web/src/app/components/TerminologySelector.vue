@@ -4,7 +4,7 @@
 // it the way the terminology recommends, as the terminology selector of Slicer does - unless a
 // name or a colour of one's own is given below, which is then kept as one's own (the desktop's
 // navigator has the same two boxes, each with a button back to the terminology's).
-import { computed, inject, ref, watch } from "vue";
+import { computed, inject, nextTick, ref, watch } from "vue";
 import { RotateCcw, Search, X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 
@@ -31,6 +31,8 @@ const error = ref("");
 // A name or colour of one's own; null means the terminology's
 const ownName = ref<string | null>(null);
 const ownColor = ref<string | null>(null);
+const searchBox = ref<HTMLInputElement>();
+const nameBox = ref<HTMLInputElement>();
 
 const chosenType = computed(() => types.value.find((t) => t.codeValue === type.value));
 const chosenModifier = computed(() => modifiers.value.find((m) => m.codeValue === modifier.value));
@@ -73,6 +75,12 @@ async function start() {
   await loadCategories();
   await loadTypes();
   await loadModifiers();
+  // Where typing goes first: to a name of one's own, when there is one to go on editing;
+  // otherwise to the search, to find a type
+  await nextTick();
+  const box = ownName.value !== null ? nameBox.value : searchBox.value;
+  box?.focus();
+  box?.select();
 }
 
 watch(() => [props.segmentationNodeId, props.segmentId].join(), start, { immediate: true });
@@ -114,8 +122,9 @@ async function apply() {
 
 <template>
   <div class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" @click.self="emit('close')">
+    <!-- Enter takes what is chosen, wherever typing is; Escape leaves things as they were -->
     <div class="flex max-h-[85vh] w-full max-w-3xl flex-col rounded-lg border border-input bg-popover shadow-2xl"
-      data-name="terminologySelector">
+      data-name="terminologySelector" @keydown.enter.prevent="type && apply()" @keydown.escape.prevent="emit('close')">
       <div class="flex items-center gap-2 border-b border-input px-3 py-2">
         <span class="flex-1 text-[14px] font-medium text-foreground">What is "{{ segmentName }}"?</span>
         <button type="button" class="text-muted-foreground hover:text-highlight" title="Close" @click="emit('close')">
@@ -131,13 +140,15 @@ async function apply() {
         <div class="relative flex-1">
           <Search :size="13" class="pointer-events-none absolute top-2 left-2 text-muted-foreground" />
           <!-- Bound by hand rather than with v-model, so that the lists follow every keystroke on a phone too -->
-          <input :value="search" type="search" placeholder="Search for a type (liver, tumor, …)" data-name="terminologySearch"
+          <input ref="searchBox" :value="search" type="search" placeholder="Search for a type (liver, tumor, …)" data-name="terminologySearch"
             class="h-7 w-full rounded-md border border-input bg-background pr-2 pl-7 text-[13px] text-foreground outline-none focus:border-primary"
             @input="search = ($event.target as HTMLInputElement).value" />
         </div>
       </div>
 
-      <div class="grid min-h-0 flex-1 grid-cols-3 divide-x divide-input">
+      <!-- The lists keep their height whatever a search leaves in them, so the dialog does not
+           shrink to a few rows and grow back as the search changes -->
+      <div class="grid h-[45vh] min-h-[220px] grid-cols-3 divide-x divide-input">
         <div class="flex min-h-0 flex-col">
           <div class="px-3 py-1 text-[11px] tracking-wide text-muted-foreground uppercase">Category</div>
           <div class="min-h-0 flex-1 overflow-y-auto" data-name="terminologyCategories">
@@ -181,10 +192,10 @@ async function apply() {
       <!-- The segment's name and colour: the terminology's, or one's own -->
       <div class="grid grid-cols-[auto_1fr_auto] items-center gap-x-2 gap-y-1 border-t border-input px-3 py-2 text-[13px]">
         <span class="text-muted-foreground">Name</span>
-        <input :value="resultingName" data-name="terminologyName"
+        <input ref="nameBox" :value="resultingName" data-name="terminologyName"
           class="h-7 min-w-0 rounded-md border border-input bg-background px-2 text-[13px] text-foreground outline-none focus:border-primary"
           :class="ownName !== null ? 'border-highlight/60' : ''"
-          @change="setOwnName(($event.target as HTMLInputElement).value)" />
+          @input="setOwnName(($event.target as HTMLInputElement).value)" />
         <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight disabled:opacity-30" :disabled="ownName === null"
           title="Back to the name the terminology gives" data-name="terminologyNameReset" @click="ownName = null"><RotateCcw :size="14" /></button>
         <span class="text-muted-foreground">Color</span>

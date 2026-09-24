@@ -79,8 +79,9 @@ def _fetch_then_retry(slot, args, owner, required):
     _set_progress(owner, 0.0, f"Downloading {name}")
 
     def progress(received, total):
-        _set_progress(owner, (received / total) if total else 0.0,
-                      f"Downloading {name}" + (f" ({int(100 * received / total)}%)" if total else ""))
+        # the announced size may be that of the compressed transfer, which what arrives outgrows
+        fraction = min(1.0, received / total) if total else 0.0
+        _set_progress(owner, fraction, f"Downloading {name}" + (f" ({int(100 * fraction)}%)" if total else ""))
 
     def done(path):
         _set_progress(owner, None, None)

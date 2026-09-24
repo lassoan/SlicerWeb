@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
-import { FolderOpen, FileUp, Link, Database, Save, Trash2 } from "@lucide/vue";
+import { FolderOpen, FolderPlus, FileUp, Link, Database, MoreHorizontal, Save, Trash2 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { formatBytes, type SlicerRuntime } from "@/core/runtime";
 import { store } from "../store";
 import ShTree from "../components/ShTree.vue";
+import PopupMenu from "../components/PopupMenu.vue";
 import { SAMPLE_DATA } from "../sampleData";
 import SampleFinder, { type SampleEntry } from "../components/SampleFinder.vue";
 
@@ -40,9 +41,12 @@ const moduleSamples = ref<SampleDataSource[]>([]);
 function downloadOptions(what: string) {
   return {
     onProgress(received: number, total: number) {
+      // The size a server announces may be that of the compressed transfer, which what arrives
+      // outgrows: never more than all of it
+      if (total) received = Math.min(received, total);
       const done = formatBytes(received);
       busy.value = total
-        ? `Downloading ${what} — ${done} of ${formatBytes(total)} (${Math.round((received / total) * 100)}%)`
+        ? `Downloading ${what} — ${done} of ${formatBytes(total)} (${Math.min(100, Math.round((received / total) * 100))}%)`
         : `Downloading ${what} — ${done}`;
     },
     // A data set of this size needs about as much again to be read into the scene, which is more
@@ -230,6 +234,13 @@ async function saveScene() {
 async function closeScene() {
   if (confirm("Close the scene? Unsaved data will be lost.")) await bridge.call("closeScene");
 }
+
+/** A folder at the top of the subject hierarchy, named as asked (desktop Slicer's "Create new folder"). */
+async function createFolder() {
+  const name = window.prompt("Name of the new folder", "New folder");
+  if (name === null) return;
+  await bridge.call("createSubjectHierarchyFolder", [name.trim() || null]);
+}
 </script>
 
 <template>
@@ -250,7 +261,18 @@ async function closeScene() {
       <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" @change="onFiles" />
     </div>
     <div v-if="busy" class="mx-2 mb-2 rounded bg-accent px-2 py-1 text-[12px] text-accent-foreground">{{ busy }}…</div>
-    <div class="px-2 pb-1 text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Subject hierarchy</div>
+    <div class="flex items-center justify-between px-2 pb-1">
+      <div class="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Subject hierarchy</div>
+      <PopupMenu align="right">
+        <template #trigger="{ open, toggle }">
+          <button type="button" data-name="subjectHierarchyMenu" class="text-muted-foreground hover:text-highlight"
+            :class="open ? 'text-highlight' : ''" title="More for the subject hierarchy" @click.stop="toggle()"><MoreHorizontal :size="14" /></button>
+        </template>
+        <button type="button" role="menuitem" data-name="menu:createFolder"
+          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          @click="createFolder"><FolderPlus :size="14" />Create new folder</button>
+      </PopupMenu>
+    </div>
     <div class="sw-panel-scroll min-h-0 flex-1 px-1 pb-2">
       <ShTree v-if="store.subjectHierarchy.length" :items="store.subjectHierarchy" :depth="0" />
       <div v-else class="px-3 py-6 text-center text-[12px] text-muted-foreground">

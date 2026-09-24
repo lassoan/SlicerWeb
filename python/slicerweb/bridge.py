@@ -669,6 +669,22 @@ def getSubjectHierarchy(layoutName=None):
 
 
 @method()
+def createSubjectHierarchyFolder(name=None):
+    """Create a folder at the top of the subject hierarchy; returns its item ID.
+
+    The name is made unique among the items, as desktop Slicer's "Create new folder" does.
+    """
+    import slicer
+
+    shNode = slicer.vtkMRMLSubjectHierarchyNode.GetSubjectHierarchyNode(_scene())
+    folderName = shNode.GenerateUniqueItemName(name or "New folder")
+    itemID = shNode.CreateFolderItem(shNode.GetSceneItemID(), folderName)
+    # a folder is an item, not a node: the page's tree is not told of it by the scene
+    host.emit("scene-changed", {"event": "folder-created"})
+    return int(itemID)
+
+
+@method()
 def setSubjectHierarchyItemVisibility(itemID, visible, layoutName=None):
     """Show or hide an item; a volume in the selected view (*layoutName*) only."""
     import slicer

@@ -41,6 +41,15 @@ export interface SlicerBridge {
   readonly events: EventBus;
   /** Call a slicerweb.bridge method. Arguments are positional or a single keyword object. */
   call<T = unknown>(method: string, args?: unknown[] | Record<string, unknown>): Promise<T>;
+  /**
+   * Like call(), for calls that may run long (a self test, code typed in the Python console): where
+   * the browser has JavaScript Promise Integration and the application settings allow it, the
+   * Python code may be suspended - processEvents() lets the page draw a frame and answer the
+   * pointer, as it lets Qt on the desktop (see slicerweb/yielding.py). Elsewhere, the same as call().
+   */
+  callYielding<T = unknown>(method: string, args?: unknown[] | Record<string, unknown>): Promise<T>;
+  /** Whether callYielding() can suspend Python code in this browser, with these settings. */
+  readonly canYield: boolean;
   /** Call a method of an object: target is "app", "layout", "scene", "node:<id>", "logic:<Module>". */
   invoke<T = unknown>(target: string, name: string, args?: unknown[]): Promise<T>;
   /** Run Python code in the application namespace. */
@@ -58,6 +67,15 @@ abstract class BridgeBase implements SlicerBridge {
 
   protected abstract rawCall(method: string, argsJson: string): Promise<string>;
 
+  /** A call that Python code may be suspended in (JSPI); by default a plain one. */
+  protected rawCallYielding(method: string, argsJson: string): Promise<string> {
+    return this.rawCall(method, argsJson);
+  }
+
+  get canYield() {
+    return false;
+  }
+
   /**
    * Installs a missing Python package (import or distribution name). Set by the runtime: calls that
    * fail with ModuleNotFoundError install the package and run again (packages are loaded on demand,
@@ -65,11 +83,19 @@ abstract class BridgeBase implements SlicerBridge {
    */
   missingModuleHandler: ((name: string) => Promise<boolean>) | null = null;
 
-  async call<T = unknown>(method: string, args: unknown[] | Record<string, unknown> = []): Promise<T> {
+  call<T = unknown>(method: string, args: unknown[] | Record<string, unknown> = []): Promise<T> {
+    return this.callWith<T>(method, args, false);
+  }
+
+  callYielding<T = unknown>(method: string, args: unknown[] | Record<string, unknown> = []): Promise<T> {
+    return this.callWith<T>(method, args, this.canYield);
+  }
+
+  private async callWith<T>(method: string, args: unknown[] | Record<string, unknown>, yielding: boolean): Promise<T> {
     const argsJson = JSON.stringify(args);
     const tried = new Set<string>();
     for (;;) {
-      const response = JSON.parse(await this.rawCall(method, argsJson));
+      const response = JSON.parse(await (yielding ? this.rawCallYielding(method, argsJson) : this.rawCall(method, argsJson)));
       if (!("error" in response)) return response.result as T;
       const missing = response.type === "ModuleNotFoundError" ? /No module named '([^']+)'/.exec(response.error)?.[1] : undefined;
       if (missing && this.missingModuleHandler && !tried.has(missing) && tried.size < 5) {
@@ -103,14 +129,34 @@ abstract class BridgeBase implements SlicerBridge {
 /** Bridge to Slicer running in this page through Pyodide. */
 export class PyodideBridge extends BridgeBase {
   private pyCall: ((method: string, args: string) => string) | null = null;
+  private pyCallPromising: ((method: string, args: string) => Promise<string>) | null = null;
+  /** Whether Python code may be suspended at all (the "Allow JavaScript Promise Integration" setting). */
+  allowYielding: () => boolean = () => true;
 
-  attach(pyCall: (method: string, args: string) => string) {
+  /** pyCallPromising: the same call with stack switching, where the browser has JSPI (else null). */
+  attach(pyCall: (method: string, args: string) => string,
+         pyCallPromising: ((method: string, args: string) => Promise<string>) | null = null) {
     this.pyCall = pyCall;
+    this.pyCallPromising = pyCallPromising;
+  }
+
+  /** Whether the browser has JavaScript Promise Integration (whatever the settings say). */
+  get jspiSupported() {
+    return !!this.pyCallPromising;
+  }
+
+  get canYield() {
+    return this.jspiSupported && this.allowYielding();
   }
 
   protected async rawCall(method: string, argsJson: string): Promise<string> {
     if (!this.pyCall) throw new BridgeError("Slicer is not loaded yet", "NotReady");
     return this.pyCall(method, argsJson);
+  }
+
+  protected async rawCallYielding(method: string, argsJson: string): Promise<string> {
+    if (!this.pyCallPromising) return this.rawCall(method, argsJson);
+    return this.pyCallPromising(method, argsJson);
   }
 }
 

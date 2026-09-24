@@ -37,15 +37,21 @@ const panel = page.locator(".sw-panel-scroll").last();
 await panel.getByText("Reload and Test", { exact: true }).first().click();   // open the section
 await page.waitForTimeout(500);
 const t0 = Date.now();
-// A test runs in the page's thread and holds it until it is done: it is started from a timer, so
-// that the click returns, and the page is waited for however long it takes
+// A test runs in the page's thread: where Python cannot be suspended (no JSPI, or the setting off)
+// it holds the thread until it is done, so it is started from a timer, so that the click returns,
+// and the page is waited for however long it takes. Where it can, the page goes on drawing and
+// says what the test is doing (slicer.util.delayDisplay), which is listed here.
 await panel.locator("button.sw-button", { hasText: "Reload and Test" }).evaluate((b) => setTimeout(() => b.click(), 0));
 page.setDefaultTimeout(0);
-for (let i = 0; i < 180; i++) {
+const statuses = [];
+for (let i = 0; i < 900; i++) {
   const text = await panel.innerText();
   if (/Test passed|Error|error:|Failed|failed/.test(text)) break;
-  await page.waitForTimeout(5000);
+  const status = await page.locator("[data-name=testStatus]").first().innerText().catch(() => "");
+  if (status && statuses[statuses.length - 1] !== status) statuses.push(status);
+  await page.waitForTimeout(1000);
 }
+console.log(`while it ran, the page showed ${statuses.length} statuses${statuses.length ? ": " + statuses.slice(0, 8).join(" | ") : ""}`);
 console.log(`after ${((Date.now() - t0) / 1000).toFixed(0)} s: ${(await panel.innerText()).split("\n").filter((l) => /passed|Error|error|Failed|failed|s\)$/.test(l)).slice(0, 6).join(" | ")}`);
 // how much of the log to show: LOG_COUNT entries of up to LOG_CHARS characters
 const [logCount, logChars] = [Number(process.env.LOG_COUNT ?? 12), Number(process.env.LOG_CHARS ?? 1200)];

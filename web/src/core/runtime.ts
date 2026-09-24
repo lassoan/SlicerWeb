@@ -218,6 +218,19 @@ export class SlicerRuntime {
       installPackage: (name: string) => {
         void this.ensurePythonPackage(name);
       },
+      // processEvents() of Python code that may be suspended (slicerweb/yielding.py): resolved once
+      // the browser has drawn a frame - the views render in it and the page is painted after it -
+      // and then milliseconds more. A hidden page draws no frames: a timer stands in for the frame.
+      waitForFrame: (milliseconds: number) => new Promise<void>((resolve) => {
+        let done = false;
+        const drawn = () => {
+          if (done) return;
+          done = true;
+          setTimeout(resolve, milliseconds);
+        };
+        requestAnimationFrame(drawn);
+        setTimeout(drawn, 100);
+      }),
     });
 
     await this.mountPersistentStorage();
@@ -260,7 +273,11 @@ slicerweb.initialize(json.loads(${JSON.stringify(JSON.stringify({
     }))}))
 bridge.call
 `);
-    this.bridge.attach((method: string, args: string) => init(method, args));
+    // Calls that may run long are started so that Python can be suspended while the page draws,
+    // where the browser has JavaScript Promise Integration (see bridge.ts callYielding)
+    const jspi = !!(pyodide as any)._module?.jspiSupported;
+    this.bridge.attach((method: string, args: string) => init(method, args),
+      jspi ? (method: string, args: string) => init.callPromising(method, args) : null);
     this.bridge.missingModuleHandler = (name) => this.ensurePythonPackage(name);
     await this.loadExtensionPackages();
     await this.loadModulesWithPackages();

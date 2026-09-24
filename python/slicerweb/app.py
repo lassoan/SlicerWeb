@@ -123,6 +123,11 @@ class SlicerWebApplication:
 
         install_module_selector()
 
+        # processEvents() and delayDisplay() let the page draw, where the code may be suspended
+        from . import yielding
+
+        yielding.install()
+
         # Python console namespace, as in the desktop Python interactor
         import __main__
 
@@ -327,7 +332,11 @@ class SlicerWebApplication:
         return _CommandOptions()
 
     def processEvents(self, *args):
-        """Nothing to do: the browser processes events when Python returns control."""
+        """Let the page draw a frame and answer, where the code may be suspended (see yielding.py);
+        elsewhere nothing to do: the browser processes events when Python returns control."""
+        from . import yielding
+
+        yielding.process_events()
 
     def pauseRender(self):
         self._pauseRenderCount += 1

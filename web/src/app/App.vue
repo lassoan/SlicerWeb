@@ -18,6 +18,8 @@ import { SAMPLE_DATA } from "./sampleData";
 
 const runtime = inject<SlicerRuntime>("runtime")!;
 provide("bridge", runtime.bridge);
+// Python code may be suspended while the page draws only if the settings allow it (Developer section)
+runtime.bridge.allowYielding = () => store.settings["Developer/AllowJSPI"] !== false;
 
 const events = runtime.bridge.events;
 events.on<{ layout: number; description: LayoutTreeNode; maximized: string | null }>("layout-changed", (p) => {

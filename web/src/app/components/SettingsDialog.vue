@@ -1,12 +1,16 @@
 <script setup lang="ts">
 // Application settings: what Slicer's settings dialog offers, in sections. The settings are
 // Slicer's own, by their Qt key (see core/settings.ts): a module reads them as on the desktop.
-import { ref } from "vue";
+import { inject, ref } from "vue";
 import { X } from "@lucide/vue";
+import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox } from "@/widgets";
 import { setSetting, store } from "../store";
 
 const emit = defineEmits<{ close: [] }>();
+// Whether this browser has JavaScript Promise Integration (the Developer section says so if not)
+const bridge = inject<SlicerBridge>("bridge");
+const jspiSupported = !!(bridge as { jspiSupported?: boolean } | undefined)?.jspiSupported;
 
 interface Section { id: string; title: string }
 const sections: Section[] = [{ id: "rendering", title: "Rendering" }, { id: "developer", title: "Developer" }];
@@ -52,6 +56,16 @@ const section = ref(sections[0].id);
             <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
               Show in the top right corner of every view how many times it rendered in the last second, and how long
               its last render took.
+            </div>
+            <SwCheckBox text="Allow JavaScript Promise Integration (JSPI)" class="mt-3" data-name="allowJSPI"
+              :checked="store.settings['Developer/AllowJSPI']"
+              @toggled="setSetting('Developer/AllowJSPI', $event)" />
+            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+              Let Python code that runs for a while - a module's self test, code typed in the Python console - pause
+              whenever it processes events, so that the views are drawn and the page responds meanwhile, as on the
+              desktop. Turn it off to see the application as in a browser without JSPI, where nothing is drawn until the
+              code is done.
+              <template v-if="!jspiSupported"><br />This browser does not support JSPI: the setting has no effect.</template>
             </div>
           </template>
         </div>

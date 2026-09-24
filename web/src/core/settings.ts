@@ -13,6 +13,13 @@ export interface AppSettings {
   /** Show in the corner of every view how many times it rendered in the last second, and how long it took. */
   "Developer/ShowRenderingFPS": boolean;
   /**
+   * Let Python code that runs long (a self test, the Python console) be suspended while the page
+   * draws, where the browser has JavaScript Promise Integration: processEvents() then lets the
+   * views render and the page answer, as on the desktop. Off, the page behaves as in a browser
+   * without JSPI: nothing is drawn until the code is done.
+   */
+  "Developer/AllowJSPI": boolean;
+  /**
    * Draw every view into one canvas with one WebGL context, instead of giving each its own.
    *
    * A browser allows only so many contexts at a time - about eight on a phone, sixteen on a
@@ -26,6 +33,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   "Developer/DeveloperMode": true,
   "Developer/ShowRenderingFPS": false,
+  "Developer/AllowJSPI": true,
   "Rendering/SharedWebGLContext": false,
 };
 

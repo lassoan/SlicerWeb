@@ -40,13 +40,14 @@ async function run() {
   try {
     const isExpression = !code.includes("\n") && !/^\s*(import|from|def|class|for|while|if|with|try|[\w.\[\]'"]+\s*=[^=])/.test(code);
     if (isExpression) {
-      const result = await bridge.evalPython(code, "eval").catch(async (e) => {
-        if (String(e).includes("SyntaxError")) return bridge.evalPython(code, "exec");
+      // code typed here may run long: it is let process events (see bridge.callYielding)
+      const result = await bridge.callYielding<string | null>("evalPython", [code, "eval"]).catch(async (e) => {
+        if (String(e).includes("SyntaxError")) return bridge.callYielding<string | null>("evalPython", [code, "exec"]);
         throw e;
       });
       if (result !== null && result !== "None") append("out", String(result));
     } else {
-      await bridge.evalPython(code, "exec");
+      await bridge.callYielding("evalPython", [code, "exec"]);
     }
   } catch (e: any) {
     append("err", e.message ?? String(e));

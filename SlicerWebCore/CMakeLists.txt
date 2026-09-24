@@ -8,6 +8,7 @@ set(SlicerWebCore_SRCS
   vtkSlicerFileWriter.cxx
   vtkSlicerFileIOManager.cxx
   vtkSlicerWebView.cxx
+  vtkSlicerWebCanvas.cxx
   vtkSlicerWebSliceView.cxx
   vtkSlicerWebThreeDView.cxx
   vtkSlicerWebSegmentEditorWidgetRepresentation.cxx

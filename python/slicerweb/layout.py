@@ -61,6 +61,7 @@ class LayoutManager(QObject):
                       slicer.vtkMRMLScene.EndBatchProcessEvent, slicer.vtkMRMLScene.EndRestoreEvent):
             self._scene.AddObserver(event, self._onSceneUpdated)
         self._views = {}           # layout name -> vtkSlicerWebView
+        self._sharedCanvas = None  # vtkSlicerWebCanvas, when the views share one WebGL context
         self._volumeQuality = {}   # layout name -> AdaptiveVolumeQuality, for the 3D views
         self._widgets = {}  # layout name -> SliceWidget / ThreeDWidget proxy
         self._lastLayoutJson = None
@@ -365,13 +366,63 @@ class LayoutManager(QObject):
             yield from self._visibleViews(child)
 
     # ------------------------------------------------------------------ views
-    def attachView(self, layoutName, canvasSelector, width=0, height=0, className=None):
-        """Create the browser view for a view node when its <canvas> exists in the page.
+    # ------------------------------------------------------------------ shared canvas
+    def attachSharedCanvas(self, canvasSelector, width, height):
+        """The canvas the views share, with one WebGL context for all of them.
 
-        Called by the web page (``#slicer-view-<layoutName>`` canvases). Returns True on success.
+        A browser allows only so many contexts at a time - about eight on a phone - so a layout of
+        nine views cannot give each of them one. Views of a shared canvas are renderers of one
+        render window, each with its own rectangle of it (see vtkSlicerWebCanvas).
         """
         import slicer
 
+        if self._sharedCanvas is not None:
+            if self._sharedCanvas.GetCanvasSelector() == canvasSelector:
+                self._sharedCanvas.SetSize(int(width), int(height))
+                return True
+            self.detachSharedCanvas()
+        canvas = slicer.vtkSlicerWebCanvas()
+        canvas.SetCanvasSelector(canvasSelector)
+        if not canvas.Initialize():
+            logger.error("attachSharedCanvas: failed to initialize %s", canvasSelector)
+            return False
+        canvas.SetSize(int(width), int(height))
+        canvas.Start()
+        self._sharedCanvas = canvas
+        return True
+
+    def detachSharedCanvas(self):
+        """Let the shared canvas go, once the views of it have gone."""
+        if self._sharedCanvas is None:
+            return False
+        for name in [name for name, view in self._views.items() if view.GetCanvas() is not None]:
+            self.detachView(name)
+        self._sharedCanvas.Finalize()
+        self._sharedCanvas = None
+        return True
+
+    def sharedCanvas(self):
+        return self._sharedCanvas
+
+    def setViewRect(self, layoutName, x, y, width, height):
+        """Where a view of the shared canvas sits on it, in device pixels from the top left."""
+        view = self._views.get(layoutName)
+        if view is None or self._sharedCanvas is None or view.GetCanvas() is None:
+            return False
+        self._sharedCanvas.SetViewRect(view, int(x), int(y), int(width), int(height))
+        return True
+
+    def attachView(self, layoutName, canvasSelector, width=0, height=0, className=None, rect=None):
+        """Create the browser view for a view node when its <canvas> exists in the page.
+
+        Called by the web page (``#slicer-view-<layoutName>`` canvases). With *rect* (x, y, width,
+        height in device pixels) the view draws in that rectangle of the shared canvas instead of
+        a canvas of its own. Returns True on success.
+        """
+        import slicer
+
+        if rect is not None and self._sharedCanvas is None:
+            return False   # the page has not made the shared canvas yet: it will ask again
         if layoutName in self._views:
             view = self._views[layoutName]
             if view.GetCanvasSelector() == canvasSelector:
@@ -404,11 +455,16 @@ class LayoutManager(QObject):
             logger.warning("attachView: views of type %s are displayed by the web page", viewNode.GetClassName())
             return False
 
-        view.SetCanvasSelector(canvasSelector)
+        if rect is not None:
+            view.SetCanvas(self._sharedCanvas)
+        else:
+            view.SetCanvasSelector(canvasSelector)
         if not view.Initialize(self._app.applicationLogic(), self._scene, layoutName):
             logger.error("attachView: failed to initialize view %s", layoutName)
             return False
-        if width and height:
+        if rect is not None:
+            self._sharedCanvas.SetViewRect(view, *(int(v) for v in rect))
+        elif width and height:
             view.SetSize(int(width), int(height))
         view.Start()
         self._views[layoutName] = view

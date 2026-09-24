@@ -10,10 +10,20 @@ export const SETTINGS_KEY = "slicerweb.settings";
 export interface AppSettings {
   /** Show what a module developer needs: the Reload and Test section of a scripted module. */
   "Developer/DeveloperMode": boolean;
+  /**
+   * Draw every view into one canvas with one WebGL context, instead of giving each its own.
+   *
+   * A browser allows only so many contexts at a time - about eight on a phone, sixteen on a
+   * desktop - so a layout of nine views cannot give each of them one; and a context costs a few
+   * megabytes of graphics memory and its own copy of every shader. Sharing lifts the limit, at
+   * the price of drawing every view of the canvas whenever any of them changes.
+   */
+  "Rendering/SharedWebGLContext": boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   "Developer/DeveloperMode": true,
+  "Rendering/SharedWebGLContext": false,
 };
 
 /** The settings kept in the browser, with the defaults for whatever is not kept. */

@@ -5,6 +5,7 @@
 ==============================================================================*/
 
 #include "vtkSlicerWebView.h"
+#include "vtkSlicerWebCanvas.h"
 #include "vtkSlicerWebRenderWindowInteractor.h"
 
 // MRML includes
@@ -44,6 +45,8 @@ public:
   vtkWeakPointer<vtkMRMLAbstractViewNode> ViewNode;
   vtkWeakPointer<vtkMRMLScene> Scene;
   vtkWeakPointer<vtkMRMLApplicationLogic> AppLogic;
+  /// The canvas this view shares with others, or none: then it has a canvas of its own
+  vtkWeakPointer<vtkSlicerWebCanvas> Canvas;
   int PauseRenderCount{ 0 };
   vtkNew<vtkCallbackCommand> SceneCallback;
   vtkNew<vtkCallbackCommand> RenderRequestCallback;
@@ -131,9 +134,24 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
   }
 
   vtkInternal* d = this->Internal;
+  d->Renderer = vtkSmartPointer<vtkRenderer>::New();
+  if (d->Canvas)
+  {
+    // A shared canvas brings the render window, its context and the interactor; this view is one
+    // renderer of it, drawing in a rectangle the canvas gives it.
+    if (!d->Canvas->GetInitialized())
+    {
+      vtkErrorMacro("Initialize: the shared canvas is not initialized");
+      return false;
+    }
+    d->RenderWindow = d->Canvas->GetRenderWindow();
+    d->Interactor = d->Canvas->GetInteractor();
+    d->Canvas->AddView(this);
+  }
+  else
+  {
   d->RenderWindow = vtkSmartPointer<vtkRenderWindow>::New();
   d->Interactor.TakeReference(vtkSlicerWebRenderWindowInteractor::New());
-  d->Renderer = vtkSmartPointer<vtkRenderer>::New();
 
 #ifdef __EMSCRIPTEN__
   if (!this->CanvasSelector)
@@ -163,6 +181,7 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
   d->Interactor->AddObserver(vtkCommand::LeftButtonPressEvent, d->ButtonPressCallback, 100.0);
   d->Interactor->AddObserver(vtkCommand::StartPanEvent, d->GestureCallback, 100.0);
   d->Interactor->AddObserver(vtkCommand::PanEvent, d->GestureCallback, 100.0);
+  }   // a canvas of this view's own
 
   d->Scene = scene;
   scene->AddObserver(vtkMRMLScene::StartBatchProcessEvent, d->SceneCallback);
@@ -183,7 +202,8 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
   {
     d->DisplayableManagerGroup->AddObserver(vtkCommand::UpdateEvent, d->RenderRequestCallback);
   }
-  if (d->InteractorObserver)
+  // On a shared canvas the interactor is given to the view the pointer is over, one at a time
+  if (d->InteractorObserver && !d->Canvas)
   {
     d->InteractorObserver->SetInteractor(d->Interactor);
   }
@@ -191,8 +211,11 @@ bool vtkSlicerWebView::Initialize(vtkMRMLApplicationLogic* appLogic, vtkMRMLScen
   this->Initialized = true;
   this->RenderEnabled = !scene->IsBatchProcessing();
 
-  // Create the WebGL context now: hardware picking and other operations fail without a context.
-  d->Interactor->Initialize();
+  if (!d->Canvas)
+  {
+    // Create the WebGL context now: hardware picking and other operations fail without a context.
+    d->Interactor->Initialize();
+  }
   this->Render();
   return true;
 }
@@ -206,6 +229,11 @@ void vtkSlicerWebView::Start()
     return;
   }
   d->Started = true;
+  if (d->Canvas)
+  {
+    d->Canvas->Start();   // one event loop for every view of the canvas
+    return;
+  }
 #ifdef __EMSCRIPTEN__
   // Each view processes its queued input events in its own requestAnimationFrame loop.
   // (vtkRenderWindowInteractor::Start() would use Emscripten's single global main loop, which
@@ -219,7 +247,7 @@ void vtkSlicerWebView::Start()
 bool vtkSlicerWebView::ProcessInteractorEvents()
 {
   vtkInternal* d = this->Internal;
-  if (!this->Initialized || !d->Started || !d->Interactor)
+  if (!this->Initialized || !d->Started || !d->Interactor || d->Canvas)
   {
     return false;
   }
@@ -257,17 +285,24 @@ void vtkSlicerWebView::Finalize()
   this->FinalizeView();
   d->DisplayableManagerGroup = nullptr;
   d->InteractorObserver = nullptr;
-  if (d->Interactor)
+  if (d->Canvas)
   {
-    if (d->Started)
-    {
-      d->Interactor->TerminateApp();
-    }
-    d->Interactor->SetRenderWindow(nullptr);
+    d->Canvas->RemoveView(this);   // the canvas keeps its window and context for the other views
   }
-  if (d->RenderWindow)
+  else
   {
-    d->RenderWindow->Finalize(); // releases the WebGL context
+    if (d->Interactor)
+    {
+      if (d->Started)
+      {
+        d->Interactor->TerminateApp();
+      }
+      d->Interactor->SetRenderWindow(nullptr);
+    }
+    if (d->RenderWindow)
+    {
+      d->RenderWindow->Finalize(); // releases the WebGL context
+    }
   }
   d->Started = false;
   d->Interactor = nullptr;
@@ -289,10 +324,14 @@ void vtkSlicerWebView::SetSize(int width, int height)
   }
   // The render window may already have the canvas size (it is read from the canvas when the window
   // is initialized), but the views must still update for it (e.g. slice node dimensions).
-  const int* current = d->RenderWindow->GetSize();
-  if (current[0] != width || current[1] != height)
+  // A view of a shared canvas is given the size of its own rectangle; the window is the canvas's
+  if (!d->Canvas)
   {
-    d->Interactor->UpdateSize(width, height);
+    const int* current = d->RenderWindow->GetSize();
+    if (current[0] != width || current[1] != height)
+    {
+      d->Interactor->UpdateSize(width, height);
+    }
   }
   this->OnSizeChanged(width, height);
   this->ScheduleRender();
@@ -308,6 +347,11 @@ void vtkSlicerWebView::ScheduleRender()
   if (!this->RenderEnabled)
   {
     this->RenderPendingWhileDisabled = true;
+    return;
+  }
+  if (this->Internal->Canvas)
+  {
+    this->Internal->Canvas->ScheduleRender();   // one frame for every view of the canvas
     return;
   }
 #ifdef __EMSCRIPTEN__
@@ -341,8 +385,32 @@ void vtkSlicerWebView::Render()
   {
     return;
   }
-  d->RenderWindow->Render();
+  if (d->Canvas)
+  {
+    d->Canvas->Render();   // the whole canvas: every view of it is drawn
+  }
+  else
+  {
+    d->RenderWindow->Render();
+  }
   ++this->RenderCount;
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebView::SetCanvas(vtkSlicerWebCanvas* canvas)
+{
+  if (this->Initialized)
+  {
+    vtkErrorMacro("SetCanvas: the canvas must be set before the view is initialized");
+    return;
+  }
+  this->Internal->Canvas = canvas;
+}
+
+//----------------------------------------------------------------------------
+vtkSlicerWebCanvas* vtkSlicerWebView::GetCanvas()
+{
+  return this->Internal->Canvas;
 }
 
 //----------------------------------------------------------------------------

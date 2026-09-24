@@ -23,6 +23,7 @@ class vtkMRMLViewInteractorStyle;
 class vtkRenderWindow;
 class vtkRenderWindowInteractor;
 class vtkRenderer;
+class vtkSlicerWebCanvas;
 
 /// \brief Base class of browser views: render window + renderer + interactor + displayable managers.
 ///
@@ -44,6 +45,12 @@ public:
   /// Must be set before Initialize().
   vtkSetStringMacro(CanvasSelector);
   vtkGetStringMacro(CanvasSelector);
+
+  /// Draw into a canvas shared with other views (one WebGL context for all of them) instead of
+  /// one of this view's own. Set before Initialize(); the canvas then gives the view its
+  /// rectangle (vtkSlicerWebCanvas::SetViewRect) and sends it the input meant for it.
+  void SetCanvas(vtkSlicerWebCanvas* canvas);
+  vtkSlicerWebCanvas* GetCanvas();
 
   /// Create rendering pipeline, instantiate displayable managers and create/get the view node
   /// with the given layout name (e.g. "Red", "1").

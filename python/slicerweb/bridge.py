@@ -558,10 +558,33 @@ def getLayoutDescription():
 
 
 @method()
-def attachView(layoutName, canvasSelector, width=0, height=0):
+def attachView(layoutName, canvasSelector, width=0, height=0, rect=None):
     import slicer
 
-    return slicer.app.layoutManager().attachView(layoutName, canvasSelector, width, height)
+    return slicer.app.layoutManager().attachView(layoutName, canvasSelector, width, height, None, rect)
+
+
+@method()
+def attachSharedCanvas(canvasSelector, width, height):
+    """The canvas whose one WebGL context the views share (see slicerweb.layout)."""
+    import slicer
+
+    return slicer.app.layoutManager().attachSharedCanvas(canvasSelector, width, height)
+
+
+@method()
+def detachSharedCanvas():
+    import slicer
+
+    return slicer.app.layoutManager().detachSharedCanvas()
+
+
+@method()
+def setViewRect(layoutName, x, y, width, height):
+    """Where a view sits on the shared canvas, in device pixels from its top left corner."""
+    import slicer
+
+    return slicer.app.layoutManager().setViewRect(layoutName, x, y, width, height)
 
 
 @method()

@@ -9,7 +9,7 @@ import { setSetting, store } from "../store";
 const emit = defineEmits<{ close: [] }>();
 
 interface Section { id: string; title: string }
-const sections: Section[] = [{ id: "developer", title: "Developer" }];
+const sections: Section[] = [{ id: "rendering", title: "Rendering" }, { id: "developer", title: "Developer" }];
 const section = ref(sections[0].id);
 </script>
 
@@ -29,6 +29,17 @@ const section = ref(sections[0].id);
           </button>
         </nav>
         <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <template v-if="section === 'rendering'">
+            <SwCheckBox text="Share one WebGL context between the views" data-name="sharedWebGLContext"
+              :checked="store.settings['Rendering/SharedWebGLContext']"
+              @toggled="setSetting('Rendering/SharedWebGLContext', $event)" />
+            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+              Every view is drawn into one canvas rather than one of its own. A browser allows only so many WebGL
+              contexts at a time - about eight on a phone - so a layout of nine views cannot give each of them one;
+              a context also costs a few megabytes of graphics memory and its own copy of every shader. The price is
+              that a change in one view redraws all of them. The views are rebuilt when this is changed.
+            </div>
+          </template>
           <template v-if="section === 'developer'">
             <SwCheckBox text="Developer mode" :checked="store.settings['Developer/DeveloperMode']"
               @toggled="setSetting('Developer/DeveloperMode', $event)" />

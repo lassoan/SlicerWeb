@@ -72,6 +72,9 @@ export const store = reactive({
   layout: { layout: 0, description: { type: "empty", children: [] } as LayoutTreeNode, maximized: null as string | null },
   availableLayouts: {} as Record<string, number>,
   activeView: "" as string,
+  /** Where each view is on the page (CSS pixels), while the views share one canvas: what
+   *  the grid uses to tell which view a pointer is over (see components/sharedCanvas.ts). */
+  viewRects: {} as Record<string, { left: number; top: number; width: number; height: number }>,
   subjectHierarchy: [] as SubjectHierarchyItem[],
   // What the application starts in (see app.py: Scroll on a touch screen); the scene's word follows
   interactionMode: (typeof window !== "undefined" && window.matchMedia?.("(hover: none) and (pointer: coarse)").matches ? "Scroll" : "ViewTransform") as string,

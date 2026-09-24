@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { Eye, EyeOff, Link2, Link2Off, Pin, ScanSearch, Maximize2, Minimize2 } from "@lucide/vue";
 import PopupMenu from "./PopupMenu.vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
@@ -7,6 +7,7 @@ import TableView from "./TableView.vue";
 import PlotView from "./PlotView.vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store, type LayoutTreeNode } from "../store";
+import { SHARED_CANVAS_ID, rectOnSharedCanvas, sharedCanvas, sharedCanvasLayout, sharedRendering } from "./sharedCanvas";
 
 const props = defineProps<{ view: LayoutTreeNode }>();
 const bridge = inject<SlicerBridge>("bridge")!;
@@ -57,9 +58,28 @@ function deviceSize() {
   return [Math.max(1, Math.round(rect.width * dpr)), Math.max(1, Math.round(rect.height * dpr))];
 }
 
+/** Where this view is: on the shared canvas for the renderer, on the page for the pointer. */
+function reportRect() {
+  if (!sharedRendering.value || !container.value) return null;
+  const onPage = container.value.getBoundingClientRect();
+  store.viewRects[props.view.layoutName ?? ""] = { left: onPage.left, top: onPage.top, width: onPage.width, height: onPage.height };
+  return rectOnSharedCanvas(container.value);
+}
+
 async function attach() {
   const [w, h] = deviceSize();
-  attached = await bridge.call<boolean>("attachView", [props.view.layoutName, "#" + canvasId.value, w, h]);
+  if (sharedRendering.value) {
+    // One canvas for every view: this one draws in its own rectangle of it. The grid makes the
+    // canvas; until it has, there is nothing to draw into and the attempt is made again.
+    const rect = reportRect();
+    if (!rect || !sharedCanvas.value) {
+      attached = false;
+      return;
+    }
+    attached = await bridge.call<boolean>("attachView", [props.view.layoutName, "#" + SHARED_CANVAS_ID, rect[2], rect[3], rect]);
+  } else {
+    attached = await bridge.call<boolean>("attachView", [props.view.layoutName, "#" + canvasId.value, w, h]);
+  }
   if (!attached) return;
   if (props.view.nodeID) await bridge.call("observeNode", [props.view.nodeID, true]);
   await refreshSliceState();
@@ -246,6 +266,11 @@ function onResize() {
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(async () => {
     if (!attached || !container.value) return;
+    if (sharedRendering.value) {
+      const rect = reportRect();
+      if (rect) await bridge.call("setViewRect", [props.view.layoutName, ...rect]);
+      return;
+    }
     const [w, h] = deviceSize();
     await bridge.call("resizeView", [props.view.layoutName, w, h]);
   });
@@ -281,8 +306,11 @@ onMounted(async () => {
       window.setTimeout(reattach, 0);
     }),
   );
-  await attach();
+  await reattach();   // the shared canvas may not be there yet on the first try
 });
+
+// The grid says the canvas moved or was resized: every view sends its rectangle again
+watch(sharedCanvasLayout, () => onResize());
 
 onBeforeUnmount(async () => {
   container.value?.removeEventListener("touchstart", onTouchStart);
@@ -291,6 +319,7 @@ onBeforeUnmount(async () => {
   resizeObserver?.disconnect();
   document.removeEventListener("visibilitychange", onVisible);
   offs.forEach((off) => off());
+  delete store.viewRects[props.view.layoutName ?? ""];
   if (attached) await bridge.call("detachView", [props.view.layoutName]);
 });
 
@@ -349,11 +378,15 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
 </script>
 
 <template>
-  <div class="flex min-h-0 min-w-0 flex-col rounded-[4px] border bg-black"
-    :class="isActive ? 'border-highlight' : 'border-input/60 hover:border-input'"
+  <!-- Where the views share a canvas, the cell must not cover it: what is drawn is behind this -->
+  <div class="flex min-h-0 min-w-0 flex-col rounded-[4px] border"
+    :class="[isActive ? 'border-highlight' : 'border-input/60 hover:border-input',
+             sharedRendering ? 'bg-transparent pointer-events-none' : 'bg-black']"
     @pointerdown="store.activeView = view.layoutName ?? ''">
     <!-- Slice / 3D view controller bar (Slicer's colored view controller, OHIF styling) -->
-    <div v-if="!isTable && !isPlot" class="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-input/40 bg-card px-1.5 text-[12px]">
+    <!-- the bar keeps its buttons where the cell lets the pointer through to the shared canvas -->
+    <div v-if="!isTable && !isPlot" class="flex h-[26px] shrink-0 items-center gap-1.5 border-b border-input/40 bg-card px-1.5 text-[12px]"
+      :class="{ 'pointer-events-auto': sharedRendering }">
       <PopupMenu v-if="isSlice || isThreeD">
         <template #trigger="{ open, toggle }">
           <button type="button" data-name="viewMenu" class="flex h-5 items-center gap-1.5 rounded px-1 hover:bg-accent/60"
@@ -403,10 +436,13 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
         @click="maximize"><Minimize2 v-if="maximized" :size="13" /><Maximize2 v-else :size="13" /></button>
       <Pin v-if="false" :size="13" />
     </div>
-    <div ref="container" class="relative min-h-0 flex-1 overflow-hidden">
-      <canvas v-if="isSlice || isThreeD" :id="canvasId" :key="canvasKey" ref="viewCanvas" class="sw-view-canvas" tabindex="-1"
+    <!-- Where the views share a canvas, the pointer must reach it through this one -->
+    <div ref="container" class="relative min-h-0 flex-1 overflow-hidden" :class="{ 'pointer-events-none': sharedRendering }">
+      <canvas v-if="(isSlice || isThreeD) && !sharedRendering" :id="canvasId" :key="canvasKey" ref="viewCanvas" class="sw-view-canvas" tabindex="-1"
         @contextmenu.prevent @pointerdown="onCanvasPointerDown" @pointerup="onCanvasPointerUp"
         @pointercancel="onCanvasPointerUp" @webglcontextlost="onContextLost" @webglcontextrestored="remakeView" />
+      <!-- In shared mode the view is drawn on the grid's canvas, behind this space -->
+      <div v-else-if="isSlice || isThreeD" class="h-full w-full" />
       <TableView v-else-if="isTable" :layout-name="view.layoutName ?? ''" />
       <PlotView v-else-if="isPlot" :layout-name="view.layoutName ?? ''" />
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">

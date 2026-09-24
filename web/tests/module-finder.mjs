@@ -43,6 +43,23 @@ await page.waitForTimeout(200);
 console.log("after PageDown: ", await highlighted());
 if (shot) await page.screenshot({ path: shot });
 
+// Ctrl+F opens the finder; a module chosen elsewhere - the toolbar, a script - closes it
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+await page.keyboard.press("Control+f");
+await page.waitForTimeout(400);
+console.log("finder open after Ctrl+F:", (await page.getByPlaceholder("Search modules").count()) > 0);
+await page.getByRole("button", { name: "Segment Editor" }).first().click();
+await page.waitForTimeout(500);
+console.log("finder open after a toolbar module:", (await page.getByPlaceholder("Search modules").count()) > 0, "(false expected)");
+await page.keyboard.press("Control+f");
+await page.waitForTimeout(400);
+await page.evaluate(() => { window.slicerWeb.store.activeModule = "Volumes"; });
+await page.waitForTimeout(500);
+console.log("finder open after a module set from a script:", (await page.getByPlaceholder("Search modules").count()) > 0, "(false expected)");
+await open();
+await page.keyboard.type("centerline");
+await page.waitForTimeout(400);
 // a single click opens a module (a phone has no keyboard, and no second tap should be needed)
 await page.locator("[data-highlighted]").last().click();
 await page.waitForTimeout(600);

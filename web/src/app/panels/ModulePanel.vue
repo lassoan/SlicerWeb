@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { openModule, store } from "../store";
 import { modulePanels } from "../modules";
 import { moduleList, webOnlyModules } from "../modules/list";
@@ -30,6 +30,21 @@ function select(name: string) {
   openModule(name);
   store.moduleFinderOpen = false;
 }
+
+// A module chosen from anywhere - the toolbar, the history, a script - is what the finder was
+// for: it closes.
+watch(() => store.activeModule, () => { store.moduleFinderOpen = false; });
+
+// Ctrl+F (Cmd+F on a Mac) opens the finder, as on the desktop; the panel it lives in opens with it
+function onKeyDown(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "f") {
+    event.preventDefault();
+    store.rightPanelOpen = true;
+    store.moduleFinderOpen = true;
+  }
+}
+onMounted(() => window.addEventListener("keydown", onKeyDown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKeyDown));
 </script>
 
 <template>

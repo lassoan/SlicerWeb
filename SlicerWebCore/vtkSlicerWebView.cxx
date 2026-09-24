@@ -588,6 +588,13 @@ void vtkSlicerWebView::SyncLayerCameras()
   renderers->InitTraversal(it);
   while (vtkRenderer* renderer = renderers->GetNextRenderer(it))
   {
+    // Except the orientation marker's layer: its camera is its own, which its displayable manager
+    // turns and places around the marker - were it the view's, placing the marker would move the
+    // view (as switching the marker to a heart model did, to a few millimetres from the origin).
+    if (renderer->GetLayer() == OrientationMarkerLayer)
+    {
+      continue;
+    }
     if (renderer != d->Renderer && renderer->IsActiveCameraCreated() && renderer->GetActiveCamera() != camera)
     {
       renderer->SetActiveCamera(camera);

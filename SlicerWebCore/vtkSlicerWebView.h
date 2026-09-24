@@ -127,6 +127,9 @@ protected:
   /// left looking through a camera that never moves again, so what they draw is sized and placed
   /// for a view that is not the one on the screen.
   void SyncLayerCameras();
+  /// The layer of the orientation marker's renderer (RENDERER_LAYER of
+  /// vtkMRMLOrientationMarkerDisplayableManager), which keeps a camera of its own
+  static constexpr int OrientationMarkerLayer = 2;
 
   void SetViewNode(vtkMRMLAbstractViewNode* viewNode);
   void SetInteractorObserverInternal(vtkMRMLViewInteractorStyle* style);

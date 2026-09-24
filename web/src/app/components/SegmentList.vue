@@ -1,16 +1,26 @@
 <script setup lang="ts">
 // The segments of a segmentation, as the Segmentations module and the Segment Editor both list
 // them: a click chooses one, a double-click on the name renames it, the colour opens the
-// terminology selector (what the segment is), the eye shows or hides it, and what else can be
-// done - the terminology, renaming, deleting - is behind a ... button (or a right-click, or a
-// long press), as in the data tree.
+// terminology selector (what the segment is), the status icon steps the segment's status, the
+// eye shows or hides it, and what else can be done - the terminology, renaming, jumping the slices
+// to it, the status, clearing, deleting - is behind a ... button (or a right-click, or a long
+// press), as in the data tree.
 import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Eye, EyeOff, MoreHorizontal, Pencil, Tag, Trash2 } from "@lucide/vue";
+import { Circle, CircleCheck, CircleDashed, Crosshair, Eraser, Eye, EyeOff, Flag, MoreHorizontal, Pencil, Tag, Trash2 } from "@lucide/vue";
 import PopupMenu from "./PopupMenu.vue";
 import TerminologySelector from "./TerminologySelector.vue";
 import { useNodeState } from "../modules/useNodeState";
 
-interface Segment { id: string; name: string; color: string; visible: boolean; opacity: number }
+interface Segment { id: string; name: string; color: string; visible: boolean; opacity: number; status: number }
+
+// The segment's status, as vtkSlicerSegmentationsModuleLogic keeps it on the segment: a click on
+// the icon steps to the next (flagged goes back to completed), as on the desktop
+const STATUS = [
+  { name: "Not started", icon: Circle, class: "text-muted-foreground/60" },
+  { name: "In progress", icon: CircleDashed, class: "text-amber-300" },
+  { name: "Completed", icon: CircleCheck, class: "text-emerald-300" },
+  { name: "Flagged", icon: Flag, class: "text-red-400" },
+];
 interface SegmentationInfo { segments: Segment[] }
 
 const props = defineProps<{ segmentationNodeId: string | null; currentId?: string | null }>();
@@ -34,6 +44,16 @@ async function rename(id: string, name: string) {
   renaming.value = null;
   if (name.trim()) await set(id, { name: name.trim() });
 }
+
+const call = async (method: string, id: string, ...args: unknown[]) => {
+  if (!nodeID.value) return;
+  await bridge.call(method, [nodeID.value, id, ...args]);
+  refresh();
+  emit("changed");
+};
+const setStatus = (id: string, status: number | null = null) => call("setSegmentStatus", id, status);
+const clear = (id: string) => call("clearSegment", id);
+const jumpSlices = (id: string) => bridge.call("jumpSlicesToSegment", [nodeID.value, id]);
 
 async function remove(id: string) {
   if (!nodeID.value) return;
@@ -101,9 +121,22 @@ onBeforeUnmount(off);
           data-name="segmentTerminology" @click="terminologyFor = { id: s.id, name: s.name }"><Tag :size="14" />What is it…</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           data-name="segmentRename" @click="startRenaming(s.id)"><Pencil :size="14" />Rename</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="segmentJump" @click="jumpSlices(s.id)"><Crosshair :size="14" />Jump slices</button>
+        <div class="my-1 border-t border-input" />
+        <button v-for="(st, i) in STATUS" :key="st.name" type="button" role="menuitem"
+          class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          :class="s.status === i ? 'text-highlight' : ''" :data-name="`segmentStatus${i}`" @click="setStatus(s.id, i)">
+          <component :is="st.icon" :size="14" :class="st.class" />{{ st.name }}</button>
+        <div class="my-1 border-t border-input" />
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="segmentClear" @click="clear(s.id)"><Eraser :size="14" />Clear</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] text-red-300 hover:bg-accent/60"
           data-name="segmentRemove" @click="remove(s.id)"><Trash2 :size="14" />Delete</button>
       </PopupMenu>
+      <button type="button" class="sw-row-action shrink-0 hover:text-highlight" :class="STATUS[s.status]?.class"
+        :title="`${STATUS[s.status]?.name ?? 'Status'} (click for the next)`" data-name="segmentStatus" :data-status="s.status"
+        @click.stop="setStatus(s.id)"><component :is="STATUS[s.status]?.icon ?? Circle" :size="14" /></button>
       <button type="button" class="sw-row-action shrink-0 text-muted-foreground hover:text-highlight" :title="s.visible ? 'Hide' : 'Show'" data-name="segmentVisible"
         @click.stop="set(s.id, { visible: !s.visible })">
         <Eye v-if="s.visible" :size="14" /><EyeOff v-else :size="14" class="opacity-60" />

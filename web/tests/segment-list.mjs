@@ -56,7 +56,7 @@ await page.waitForTimeout(800);
 await rows.nth(2).locator("[data-name=segmentMore]").click();
 await page.waitForTimeout(300);
 const menu = page.locator("[role=menu]");
-check("the ... button opens a menu with the terminology, renaming and deleting", (await menu.locator("[role=menuitem]").allInnerTexts()).map((t) => t.trim()).join(", "), "What is it…, Rename, Delete");
+check("the ... button opens a menu with the terminology, renaming, the slices, the status, clearing and deleting", (await menu.locator("[role=menuitem]").allInnerTexts()).map((t) => t.trim()).join(", "), "What is it…, Rename, Jump slices, Not started, In progress, Completed, Flagged, Clear, Delete");
 await menu.locator("[data-name=segmentRename]").click();
 await page.waitForTimeout(300);
 const renameBox = rows.nth(2).locator("[data-name=segmentNameInput]");
@@ -70,6 +70,52 @@ await page.locator("[role=menu] [data-name=segmentRemove]").click();
 await page.waitForTimeout(800);
 check("Delete in the menu takes the segment away", await names(), "['Tumor', 'Segment_2']");
 check("the eye is always there, on the right", await rows.nth(0).locator("[data-name=segmentVisible]").isVisible(), true);
+
+// the status icon steps the status as on the desktop: not started, in progress, completed, flagged, then back to completed
+const statusOf = () => rows.nth(0).locator("[data-name=segmentStatus]").getAttribute("data-status");
+check("a segment starts as not started", await statusOf(), "0");
+const seen = [];
+for (let i = 0; i < 4; i++) {
+  await rows.nth(0).locator("[data-name=segmentStatus]").click();
+  await page.waitForTimeout(500);
+  seen.push(await statusOf());
+}
+check("clicking the status icon steps it round, flagged going back to completed", seen.join(","), "1,2,3,2");
+check("as the segment carries it", await py('str(slicer.vtkSlicerSegmentationsModuleLogic.GetSegmentStatus(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegment(0)))'), "2");
+await rows.nth(0).locator("[data-name=segmentMore]").click();
+await page.waitForTimeout(300);
+await page.locator("[role=menu] [data-name=segmentStatus3]").click();
+await page.waitForTimeout(500);
+check("the menu sets a status outright", await statusOf(), "3");
+
+// Clear empties a segment; Jump slices centres the slice views on it
+await page.evaluate(() => window.slicerWeb.bridge.evalPython(`
+import vtk, slicer
+seg = slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0]
+seg.SetReferenceImageGeometryParameterFromVolumeNode(slicer.util.getNode("MR-head"))
+sphere = vtk.vtkSphereSource(); sphere.SetCenter(20.0, -30.0, 40.0); sphere.SetRadius(10.0); sphere.Update()
+# a sphere as the segment's surface, and the labelmap the editor works on made from it
+seg.GetSegmentation().SetSourceRepresentationName("Closed surface")
+seg.GetSegmentation().GetNthSegment(0).AddRepresentation("Closed surface", sphere.GetOutput())
+seg.GetSegmentation().CreateRepresentation("Binary labelmap", True)
+seg.GetSegmentation().SetSourceRepresentationName("Binary labelmap")
+`, "exec"));
+await page.waitForTimeout(800);
+const voxels = () => py('(lambda r: int((__import__("vtk.util.numpy_support", fromlist=["x"]).vtk_to_numpy(r.GetPointData().GetScalars()) > 0).sum()) if r is not None and r.GetPointData().GetScalars() is not None else 0)(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegment(0).GetRepresentation("Binary labelmap"))');
+check("the segment has content to clear", Number(await voxels()) > 0, true);
+await rows.nth(0).locator("[data-name=segmentMore]").click();
+await page.waitForTimeout(300);
+await page.locator("[role=menu] [data-name=segmentJump]").click();
+await page.waitForTimeout(800);
+const jumped = Number(await py('slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetSliceOffset()'));
+console.log(`     Red slice offset after the jump: ${jumped.toFixed(1)} mm (the segment is at 40)`);
+check("Jump slices centres the slice views on the segment (within a voxel)", Math.abs(jumped - 40) < 2, true);
+await rows.nth(0).locator("[data-name=segmentMore]").click();
+await page.waitForTimeout(300);
+await page.locator("[role=menu] [data-name=segmentClear]").click();
+await page.waitForTimeout(800);
+check("Clear empties the segment", await voxels(), "0");
+check("and keeps it", await names(), "['Tumor', 'Segment_2']");
 
 await rows.nth(1).click();
 await page.waitForTimeout(300);

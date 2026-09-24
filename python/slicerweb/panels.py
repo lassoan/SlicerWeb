@@ -261,6 +261,8 @@ def markupsControlPoint(nodeID, index, action, value=None):
 # --------------------------------------------------------------------------- Segmentations
 @method()
 def segmentationInfo(nodeID):
+    import slicer
+
     node = _node(nodeID)
     seg = node.GetSegmentation()
     d = node.GetDisplayNode()
@@ -274,6 +276,8 @@ def segmentationInfo(nodeID):
             "color": _color_hex(s.GetColor()),
             "visible": bool(d.GetSegmentVisibility(sid)) if d else True,
             "opacity": d.GetSegmentOpacity3D(sid) if d else 1.0,
+            # 0 not started, 1 in progress, 2 completed, 3 flagged (vtkSlicerSegmentationsModuleLogic)
+            "status": int(slicer.vtkSlicerSegmentationsModuleLogic.GetSegmentStatus(s)),
         })
     return {
         "id": nodeID,
@@ -430,6 +434,51 @@ def setSegmentationSourceRepresentation(nodeID, representationName):
         node.GetSegmentation().SetSourceRepresentationName(representationName)
     finally:
         node.EndModify(wasModified)
+    return True
+
+
+@method()
+def setSegmentStatus(nodeID, segmentID, status=None):
+    """Set a segment's status (0 not started, 1 in progress, 2 completed, 3 flagged); with none
+    given, step to the next as a click on the desktop's status icon does: flagged goes back to
+    completed, the others go round."""
+    import slicer
+
+    logic = slicer.vtkSlicerSegmentationsModuleLogic
+    node = _node(nodeID)
+    segment = node.GetSegmentation().GetSegment(segmentID)
+    if segment is None:
+        return False
+    if status is None:
+        current = logic.GetSegmentStatus(segment)
+        status = logic.Completed if current == logic.Flagged else (current + 1) % logic.LastStatus
+    logic.SetSegmentStatus(segment, int(status))
+    node.Modified()
+    return True
+
+
+@method()
+def clearSegment(nodeID, segmentID):
+    """Empty a segment, keeping it (the desktop's "Clear selected segments")."""
+    import slicer
+
+    node = _node(nodeID)
+    ok = bool(slicer.vtkSlicerSegmentationsModuleLogic.ClearSegment(node, segmentID))
+    node.Modified()
+    return ok
+
+
+@method()
+def jumpSlicesToSegment(nodeID, segmentID):
+    """Centre the slice views on the segment (the desktop's "Jump slices")."""
+    import slicer
+
+    node = _node(nodeID)
+    center = node.GetSegmentCenterRAS(segmentID)
+    if not center:
+        return False
+    slicer.vtkMRMLSliceNode.JumpAllSlices(slicer.mrmlScene, center[0], center[1], center[2],
+                                          slicer.vtkMRMLSliceNode.CenteredJumpSlice)
     return True
 
 

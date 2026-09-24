@@ -135,6 +135,12 @@ class SlicerWebApplication:
 
         self._moduleManager.loadModules(self._config.get("modules"))
         self._layoutManager.setLayout(self._config.get("layout", "FourUp"))
+        # What a click-and-drag in a slice view does to begin with: browse the slices. The desktop
+        # starts in view transform mode, where such a drag does nothing in a slice view; here a
+        # finger on a phone is the usual pointer, and browsing is what it is most often for.
+        interaction = self.applicationLogic().GetInteractionNode()
+        if interaction is not None and hasattr(slicer.vtkMRMLInteractionNode, "Scroll"):
+            interaction.SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.Scroll)
         self._startupCompleted = True
         self._moduleManager.connect("modulesLoaded(QStringList)", lambda *args: self._flushStartupSlots())
         self._flushStartupSlots()

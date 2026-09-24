@@ -35,13 +35,18 @@ async function drag(dy) {
   await page.waitForTimeout(400);
 }
 
+check("Scroll is the mode the application starts in", await mode(), "Scroll");
+check("the slice bar has its offset slider on a wide view", await page.locator("[data-name=sliceOffsetSlider]").count() > 0, true);
 const start = await offset();
+await page.getByRole("button", { name: "Rotate / Pan / Zoom" }).first().click();
+await page.waitForTimeout(500);
+check("the toolbar enters the view transform mode", await mode(), "ViewTransform");
 await drag(-100);
-check("in the usual mode a drag does not scroll", await offset(), start);
+check("in which a drag does not scroll", await offset(), start);
 
 await page.getByRole("button", { name: "Scroll slices" }).first().click();
 await page.waitForTimeout(500);
-check("the toolbar enters Scroll mode", await mode(), "Scroll");
+check("and back to Scroll mode", await mode(), "Scroll");
 check("as the interaction node says", await py('slicer.app.applicationLogic().GetInteractionNode().GetInteractionModeAsString(slicer.app.applicationLogic().GetInteractionNode().GetCurrentInteractionMode())'), "Scroll");
 await drag(-100);
 const up = await offset();

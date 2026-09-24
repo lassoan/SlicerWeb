@@ -57,8 +57,10 @@ class SubjectHierarchyPluginLogic:
             scene.AddObserver(slicer.vtkMRMLScene.NodeAddedEvent, self._onNodeAdded),
             scene.AddObserver(slicer.vtkMRMLScene.NodeRemovedEvent, self._onNodeRemoved),
             scene.AddObserver(slicer.vtkMRMLScene.EndImportEvent, self._onSceneImportEnded),
+            scene.AddObserver(slicer.vtkMRMLScene.EndBatchProcessEvent, self._onSceneBatchEnded),
             scene.AddObserver(slicer.vtkMRMLScene.EndCloseEvent, self._onSceneCloseEnded),
         ]
+        self._importPending = False
         slicer.vtkMRMLSubjectHierarchyNode.ResolveSubjectHierarchy(scene)
         self._itemNames = {}
         self._shTag = None
@@ -116,6 +118,10 @@ class SubjectHierarchyPluginLogic:
         return itemID
 
     def addSupportedDataNodesToSubjectHierarchy(self):
+        # Not while a scene is coming in: its items are still unresolved then, and an item made
+        # here for a node would be joined by the node's own item once they are resolved.
+        if self._scene.IsImporting() or self._scene.IsBatchProcessing():
+            return
         nodes = self._scene.GetNodes()
         for i in range(nodes.GetNumberOfItems()):
             node = nodes.GetItemAsObject(i)
@@ -160,6 +166,21 @@ class SubjectHierarchyPluginLogic:
         self._watchNames()
 
     def _onSceneImportEnded(self, caller, event):
+        # A scene loaded with clearing (a bundle, the kept session) is imported inside a batch:
+        # the subject hierarchy items it brings stay unresolved until the batch ends, so items
+        # for its nodes are only made once it has - otherwise each node ended up with two, its
+        # own from the file and one made here.
+        if self._scene.IsBatchProcessing():
+            self._importPending = True
+            return
+        self._resolveAfterImport()
+
+    def _onSceneBatchEnded(self, caller, event):
+        if self._importPending:
+            self._importPending = False
+            self._resolveAfterImport()
+
+    def _resolveAfterImport(self):
         import slicer
 
         slicer.vtkMRMLSubjectHierarchyNode.ResolveSubjectHierarchy(self._scene)

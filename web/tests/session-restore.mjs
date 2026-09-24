@@ -30,8 +30,10 @@ await page.waitForTimeout(6000);
 await page.evaluate(() => window.slicerWeb.bridge.evalPython(
   'n = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", "Measurement"); n.AddControlPoint(0, 0, 0); n.AddControlPoint(10, 0, 0)', "exec"));
 await page.waitForTimeout(500);
+const rows = (page) => page.locator(".sw-row").count();
 const before = await nodes(page);
-console.log("scene:", before);
+const rowsBefore = await rows(page);
+console.log("scene:", before, `(${rowsBefore} rows in the data tree)`);
 
 // Going into the background keeps it
 const t0 = Date.now();
@@ -63,6 +65,9 @@ console.log("asked:", offered.replace(/\s+/g, " "));
 const after = await nodes(page);
 check("and brings it back whole", JSON.stringify(after), JSON.stringify(before));
 check("rather than the sample the address names as well", (after.match(/CT-chest/g) ?? []).length, 1);
+// A bundle comes in inside a batch, and its subject hierarchy items are resolved only once the
+// batch has ended: nothing must make items for its nodes before then, or each is listed twice.
+check("and the data tree lists each node once", await rows(page), rowsBefore);
 await page.close();
 
 // Declining forgets it

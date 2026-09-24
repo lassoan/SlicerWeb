@@ -231,8 +231,16 @@ async function reattach() {
   }
 }
 
+// A view too narrow for the whole of its bar - a phone held upright - does without the slice
+// offset slider (the slices are browsed by dragging in the view); what is left is the
+// orientation, the offset and the volume.
+const narrow = ref(false);
+function measureWidth() {
+  if (container.value) narrow.value = container.value.getBoundingClientRect().width < 360;
+}
 let resizeFrame = 0;
 function onResize() {
+  measureWidth();
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(async () => {
     if (!attached || !container.value) return;
@@ -248,6 +256,7 @@ async function refreshVolumes() {
 }
 
 onMounted(async () => {
+  measureWidth();
   resizeObserver = new ResizeObserver(onResize);
   resizeObserver.observe(container.value!);
   document.addEventListener("visibilitychange", onVisible);
@@ -371,11 +380,11 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
           :value="slice.orientation" @change="setOrientation(($event.target as HTMLSelectElement).value)">
           <option v-for="o in orientations" :key="o" :value="o">{{ o }}</option>
         </select>
-        <input type="range" class="h-1 min-w-10 flex-1 cursor-pointer accent-highlight"
+        <input v-if="!narrow" type="range" class="h-1 min-w-10 flex-1 cursor-pointer accent-highlight" data-name="sliceOffsetSlider"
           :min="slice.offsetRange?.[0] ?? 0" :max="slice.offsetRange?.[1] ?? 0"
           :step="slice.offsetResolution || 0.1" :value="slice.offset ?? 0"
           @input="setOffset(Number(($event.target as HTMLInputElement).value))" />
-        <span class="w-[74px] shrink-0 text-right text-[11px] text-muted-foreground tabular-nums">{{ offsetText }}</span>
+        <span class="shrink-0 text-right text-[11px] text-muted-foreground tabular-nums" :class="narrow ? 'flex-1' : 'w-[74px]'">{{ offsetText }}</span>
         <select class="h-5 max-w-[110px] shrink rounded bg-input/60 px-1 text-[11px] text-foreground outline-none"
           title="Background volume" :value="slice.backgroundVolumeID ?? ''"
           @change="setLayer('background', ($event.target as HTMLSelectElement).value)">

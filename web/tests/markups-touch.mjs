@@ -1,6 +1,6 @@
 // Touch: tap places a control point, and dragging with a finger moves it (phone screen).
 import { chromium } from "playwright-core";
-const base = "http://localhost:5173/";
+const base = process.argv[2] ?? "http://localhost:5173/";
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
 const page = await context.newPage();

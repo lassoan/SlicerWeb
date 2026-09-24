@@ -37,6 +37,8 @@ for (const name of [/mouse mode/i, /^modules$/i]) {
   await page.keyboard.press("Escape");
   await page.waitForTimeout(200);
 }
+// a slice view too narrow for the whole of its bar does without the offset slider
+console.log("offset sliders on the phone:", await page.locator("[data-name=sliceOffsetSlider]").count(), "(none expected)");
 // the layout list, hung under its button, in view
 await page.getByRole("button", { name: "Layout" }).first().tap();
 await page.waitForTimeout(400);

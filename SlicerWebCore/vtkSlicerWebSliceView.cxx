@@ -8,10 +8,12 @@
 
 // MRML includes
 #include <vtkMRMLApplicationLogic.h>
+#include <vtkMRMLCrosshairNode.h>
 #include <vtkMRMLCrosshairDisplayableManager.h>
 #include "vtkSlicerWebSegmentEditorDisplayableManager.h"
 
 #include <vtkMRMLDisplayableManagerGroup.h>
+#include <vtkMRMLInteractionNode.h>
 #include <vtkMRMLScene.h>
 #include <vtkMRMLSliceIntersectionWidget.h>
 #include <vtkMRMLSliceLogic.h>
@@ -24,6 +26,7 @@
 #include <vtkCallbackCommand.h>
 #include <vtkCamera.h>
 #include <vtkCollection.h>
+#include <vtkEvent.h>
 #include <vtkImageMapper.h>
 #include <vtkInteractorStyleUser.h>
 #include <vtkNew.h>
@@ -46,7 +49,72 @@ public:
   vtkSmartPointer<vtkImageMapper> ImageMapper;
   vtkSmartPointer<vtkActor2D> ImageActor;
   vtkNew<vtkCallbackCommand> SliceLogicCallback;
+
+  /// A plain left-click-and-drag pans the slice in the rotate/pan/zoom mouse mode, or moves the
+  /// crosshair while it is shown (see UpdateLeftButtonDrag)
+  vtkWeakPointer<vtkMRMLSliceIntersectionWidget> SliceIntersectionWidget;
+  vtkWeakPointer<vtkMRMLInteractionNode> InteractionNode;
+  vtkWeakPointer<vtkMRMLCrosshairNode> CrosshairNode;
+  vtkNew<vtkCallbackCommand> InteractionModeCallback;
+  /// What the left drag was last set up for: -1 not yet, 0 Slicer's own, 1 pan, 2 move the crosshair
+  int LeftButtonDrag{ -1 };
+  void UpdateLeftButtonDrag();
+  static void OnInteractionModeChanged(vtkObject*, unsigned long, void* clientData, void*)
+  {
+    static_cast<vtkSliceInternal*>(clientData)->UpdateLeftButtonDrag();
+  }
 };
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebSliceView::vtkSliceInternal::UpdateLeftButtonDrag()
+{
+  vtkMRMLSliceIntersectionWidget* widget = this->SliceIntersectionWidget;
+  if (!widget)
+  {
+    return;
+  }
+  // Slicer's own mapping, where a plain left drag is kept for the Scroll mouse mode
+  int drag = 0;
+  if (this->InteractionNode && this->InteractionNode->GetCurrentInteractionMode() == vtkMRMLInteractionNode::ViewTransform)
+  {
+    const bool crosshairShown = this->CrosshairNode && this->CrosshairNode->GetCrosshairMode() != vtkMRMLCrosshairNode::NoCrosshair;
+    drag = crosshairShown ? 2 : 1;
+  }
+  if (drag == this->LeftButtonDrag)
+  {
+    return; // the crosshair node is modified at every move of the crosshair: nothing to do then
+  }
+  this->LeftButtonDrag = drag;
+  widget->UpdateInteractionEventMapping();
+  if (drag == 0)
+  {
+    return;
+  }
+  // In the rotate/pan/zoom mode a plain left drag pans the slice, as it rotates a 3D view - a
+  // trackpad or a finger has no middle button, and the shift key is out of reach on a phone -
+  // or, while the crosshair is shown, moves the crosshair.
+  // (The first translation that matches is used: the one for scrolling is taken out first.)
+  widget->SetEventTranslation(vtkMRMLSliceIntersectionWidget::WidgetStateIdle, vtkCommand::LeftButtonPressEvent, vtkEvent::NoModifier,
+                              vtkMRMLSliceIntersectionWidget::WidgetEventNone);
+  if (drag == 2)
+  {
+    widget->SetEventTranslationClickAndDrag(vtkMRMLSliceIntersectionWidget::WidgetStateIdle,
+                                            vtkCommand::LeftButtonPressEvent,
+                                            vtkEvent::NoModifier,
+                                            vtkMRMLSliceIntersectionWidget::WidgetStateMoveCrosshair,
+                                            vtkMRMLSliceIntersectionWidget::WidgetEventMoveCrosshairStart,
+                                            vtkMRMLSliceIntersectionWidget::WidgetEventMoveCrosshairEnd);
+  }
+  else
+  {
+    widget->SetEventTranslationClickAndDrag(vtkMRMLSliceIntersectionWidget::WidgetStateIdle,
+                                            vtkCommand::LeftButtonPressEvent,
+                                            vtkEvent::NoModifier,
+                                            vtkMRMLSliceIntersectionWidget::WidgetStateTranslateSlice,
+                                            vtkMRMLSliceIntersectionWidget::WidgetEventTranslateSliceStart,
+                                            vtkMRMLSliceIntersectionWidget::WidgetEventTranslateSliceEnd);
+  }
+}
 
 vtkStandardNewMacro(vtkSlicerWebSliceView);
 
@@ -56,6 +124,8 @@ vtkSlicerWebSliceView::vtkSlicerWebSliceView()
 {
   this->SliceInternal->SliceLogicCallback->SetClientData(this);
   this->SliceInternal->SliceLogicCallback->SetCallback(&vtkSlicerWebSliceView::OnSliceLogicModified);
+  this->SliceInternal->InteractionModeCallback->SetClientData(this->SliceInternal);
+  this->SliceInternal->InteractionModeCallback->SetCallback(&vtkSliceInternal::OnInteractionModeChanged);
 }
 
 //----------------------------------------------------------------------------
@@ -168,6 +238,19 @@ bool vtkSlicerWebSliceView::InitializeView(vtkMRMLApplicationLogic* appLogic, vt
     if (vtkMRMLSliceIntersectionWidget* sliceWidget = crosshairManager->GetSliceIntersectionWidget())
     {
       sliceWidget->SetTouchRotationThreshold(30.0);
+      d->SliceIntersectionWidget = sliceWidget;
+      d->InteractionNode = appLogic->GetInteractionNode();
+      if (d->InteractionNode)
+      {
+        d->InteractionNode->AddObserver(vtkMRMLInteractionNode::InteractionModeChangedEvent, d->InteractionModeCallback);
+      }
+      d->CrosshairNode = vtkMRMLCrosshairNode::SafeDownCast(scene->GetFirstNodeByClass("vtkMRMLCrosshairNode"));
+      if (d->CrosshairNode)
+      {
+        d->CrosshairNode->AddObserver(vtkCommand::ModifiedEvent, d->InteractionModeCallback);
+      }
+      d->LeftButtonDrag = -1;
+      d->UpdateLeftButtonDrag();
     }
   }
   this->SetDisplayableManagerGroupInternal(group);
@@ -181,6 +264,17 @@ bool vtkSlicerWebSliceView::InitializeView(vtkMRMLApplicationLogic* appLogic, vt
 void vtkSlicerWebSliceView::FinalizeView()
 {
   vtkSliceInternal* d = this->SliceInternal;
+  if (d->InteractionNode)
+  {
+    d->InteractionNode->RemoveObserver(d->InteractionModeCallback);
+  }
+  if (d->CrosshairNode)
+  {
+    d->CrosshairNode->RemoveObserver(d->InteractionModeCallback);
+  }
+  d->InteractionNode = nullptr;
+  d->CrosshairNode = nullptr;
+  d->SliceIntersectionWidget = nullptr;
   if (d->SliceLogic)
   {
     d->SliceLogic->RemoveObserver(d->SliceLogicCallback);

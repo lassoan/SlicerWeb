@@ -100,6 +100,7 @@ const DOUBLE_TAP_MS = 350;
 const DOUBLE_TAP_DISTANCE = 30;
 let lastTap: { time: number; x: number; y: number } | null = null;
 function onTouchEnd(event: TouchEvent) {
+  if (event.target !== canvasElement.value) return; // on a view's bar, say
   if (event.changedTouches.length !== 1 || event.touches.length > 0) {
     lastTap = null;
     return;
@@ -120,11 +121,13 @@ function onTouchEnd(event: TouchEvent) {
 </script>
 
 <template>
-  <div ref="grid" class="relative flex h-full w-full p-[2px]">
+  <!-- A double tap is told apart here, as the touch end bubbles up from the canvas: after the canvas
+       has taken it (queued for the view), so that the view gets the release before the double click -->
+  <div ref="grid" class="relative flex h-full w-full p-[2px]" @touchend="onTouchEnd">
     <!-- Behind the views, covering all of them: what every view of the layout is drawn into -->
     <canvas v-if="sharedRendering" :id="SHARED_CANVAS_ID" ref="canvasElement" class="absolute inset-0 h-full w-full"
       tabindex="-1" @contextmenu.prevent @pointerdown="onPointerDown" @pointerup="onPointerUp"
-      @pointercancel="onPointerUp" @touchend="onTouchEnd" />
+      @pointercancel="onPointerUp" />
     <!-- Over the canvas: the frames and bars of the views. Where they share the canvas the pointer
          goes through them to it, and only the bars take it back (Viewport.vue). -->
     <LayoutNode :node="node" class="relative h-full w-full" :class="{ 'pointer-events-none': sharedRendering }" />

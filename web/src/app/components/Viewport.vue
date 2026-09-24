@@ -130,6 +130,44 @@ function onVisible() {
 // Magnifier: a fingertip covers the point it touches, so while control points are placed or moved,
 // the image under the finger is shown enlarged above it.
 const magnifierPosition = ref<{ x: number; y: number } | null>(null);
+const magnifierOffset = ref<{ x: number; y: number } | undefined>(undefined);
+
+/** Where this view's space is on the shared canvas, in CSS pixels from its top left. */
+function containerOnSharedCanvas() {
+  const canvas = sharedCanvas.value;
+  if (!canvas || !container.value) return undefined;
+  const view = container.value.getBoundingClientRect();
+  const whole = canvas.getBoundingClientRect();
+  return { x: view.left - whole.left, y: view.top - whole.top };
+}
+
+// Where the views share a canvas, touches land on it, not on this view's space (which lets them
+// through): the view follows the touches that start in its rectangle, as it follows those on a
+// canvas of its own - for the magnifier. (The grid tells double taps apart, see ViewportGrid.)
+function touchesThisView(touch: Touch) {
+  const rect = container.value?.getBoundingClientRect();
+  return !!rect && touch.clientX >= rect.left && touch.clientX < rect.right && touch.clientY >= rect.top && touch.clientY < rect.bottom;
+}
+function onSharedTouchStart(event: TouchEvent) {
+  if (event.touches.length === 1 && touchesThisView(event.touches[0])) onTouchStart(event);
+  else hideMagnifier();
+}
+function onSharedTouchMove(event: TouchEvent) {
+  if (magnifierTouch !== null) onTouchMove(event);
+}
+function onSharedTouchEnd() {
+  if (magnifierTouch !== null || magnifierPosition.value) hideMagnifier();
+}
+watch(sharedCanvas, (canvas, previous) => {
+  previous?.removeEventListener("touchstart", onSharedTouchStart);
+  previous?.removeEventListener("touchmove", onSharedTouchMove);
+  previous?.removeEventListener("touchend", onSharedTouchEnd);
+  previous?.removeEventListener("touchcancel", onSharedTouchEnd);
+  canvas?.addEventListener("touchstart", onSharedTouchStart, { passive: true });
+  canvas?.addEventListener("touchmove", onSharedTouchMove, { passive: true });
+  canvas?.addEventListener("touchend", onSharedTouchEnd, { passive: true });
+  canvas?.addEventListener("touchcancel", onSharedTouchEnd, { passive: true });
+}, { immediate: true });
 const viewCanvas = ref<HTMLCanvasElement | null>(null);
 let magnifierTouch: number | null = null;
 let magnifierChecked = false; // the view has been asked whether a control point is placed or moved
@@ -145,7 +183,9 @@ async function updateMagnifier(touch: Touch) {
     magnifierChecked = true;
     // the press is processed by the view before this answer arrives (it starts moving a control point)
     magnifierEnabled = await bridge.call<boolean>("markupsInteractionActive").catch(() => false);
-    viewCanvas.value = (container.value?.querySelector("canvas") as HTMLCanvasElement) ?? null;
+    // on the canvas the views share, the view is read from its rectangle of it
+    viewCanvas.value = sharedRendering.value ? sharedCanvas.value : ((container.value?.querySelector("canvas") as HTMLCanvasElement) ?? null);
+    magnifierOffset.value = sharedRendering.value ? containerOnSharedCanvas() : undefined;
   }
   if (!magnifierEnabled || !viewCanvas.value || magnifierTouch !== touch.identifier) return;
   magnifierPosition.value = touchInContainer(touch);
@@ -316,6 +356,10 @@ onBeforeUnmount(async () => {
   container.value?.removeEventListener("touchstart", onTouchStart);
   container.value?.removeEventListener("touchmove", onTouchMove);
   container.value?.removeEventListener("touchend", onTouchEnd);
+  sharedCanvas.value?.removeEventListener("touchstart", onSharedTouchStart);
+  sharedCanvas.value?.removeEventListener("touchmove", onSharedTouchMove);
+  sharedCanvas.value?.removeEventListener("touchend", onSharedTouchEnd);
+  sharedCanvas.value?.removeEventListener("touchcancel", onSharedTouchEnd);
   resizeObserver?.disconnect();
   document.removeEventListener("visibilitychange", onVisible);
   offs.forEach((off) => off());
@@ -448,7 +492,7 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">
         {{ view.className }} is shown in the module panel
       </div>
-      <TouchMagnifier :canvas="viewCanvas" :position="magnifierPosition" :render="renderView" />
+      <TouchMagnifier :canvas="viewCanvas" :position="magnifierPosition" :render="renderView" :offset="magnifierOffset" />
     </div>
   </div>
 </template>

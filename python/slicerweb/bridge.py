@@ -898,6 +898,10 @@ def renderView(layoutName):
     if view is None:
         return False
     view.Render()
+    if view.GetCanvas() is not None:
+        # on a shared canvas the frame is shown when the canvas copies it there: now, so that the
+        # page reads it in this task, before the canvas is composited and cleared
+        view.GetCanvas().Present()
     return True
 
 
@@ -934,8 +938,13 @@ def viewDoubleClick(layoutName, x, y):
         return False
     interactor = view.GetInteractor()
     # Process the queued browser events first (the taps): the widgets act on a double click only
-    # when they are not interacting (e.g. the camera widget of a 3D view).
-    interactor.ProcessEvents()
+    # when they are not interacting (e.g. the camera widget of a 3D view). On a shared canvas they
+    # are queued by the canvas, which passes them on; the view's own interactor listens to nothing.
+    canvas = view.GetCanvas()
+    if canvas is not None:
+        canvas.GetInteractor().ProcessEvents()
+    else:
+        interactor.ProcessEvents()
     interactor.SetEventPositionFlipY(int(x), int(y))
     interactor.InvokeEvent(vtk.vtkCommand.LeftButtonDoubleClickEvent)
     return True

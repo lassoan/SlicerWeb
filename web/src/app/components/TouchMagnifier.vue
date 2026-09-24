@@ -15,6 +15,11 @@ const props = defineProps<{
   region?: number;
   /** Renders the view before the pixels are read (the drawing buffer is not preserved). */
   render: () => Promise<unknown>;
+  /**
+   * Where the container is on the canvas (CSS pixels from its top left): a view drawn on the
+   * canvas the views share is read from its rectangle of it. None for a canvas of the view's own.
+   */
+  offset?: { x: number; y: number };
 }>();
 
 const SIZE = 132; // diameter of the magnifier in CSS pixels
@@ -42,8 +47,8 @@ async function update(x: number, y: number) {
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / (rect.width * dpr);
-    const centerX = Math.round(x * dpr * scaleX);
-    const centerY = Math.round(y * dpr * scaleX);
+    const centerX = Math.round((x + (props.offset?.x ?? 0)) * dpr * scaleX);
+    const centerY = Math.round((y + (props.offset?.y ?? 0)) * dpr * scaleX);
     const left = Math.max(0, Math.min(canvas.width - region, centerX - region / 2));
     const bottom = Math.max(0, Math.min(canvas.height - region, canvas.height - centerY - region / 2));
     const pixels = new Uint8Array(region * region * 4);

@@ -1,9 +1,10 @@
 // Magnifier: while control points are placed or moved with a finger, the image under the finger is
-// shown enlarged above it.
+// shown enlarged above it. With --shared, the views share one WebGL context (Rendering settings).
 import { chromium } from "playwright-core";
 
 const base = process.argv[2] ?? "http://localhost:5173/";
 const shot = process.argv.find((a) => a.endsWith(".png"));
+const shared = process.argv.includes("--shared");
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
 const page = await context.newPage();
@@ -12,8 +13,15 @@ page.on("console", (m) => { if (m.type() === "error" && !/GL Driver/.test(m.text
 await page.goto(base + "?sample=CTChest");
 await page.waitForFunction(() => /CT-chest/.test(document.body.innerText) && document.querySelector("#slicer-view-Red"), null, { timeout: 300000 });
 await page.waitForTimeout(3000);
+if (shared) {
+  await page.evaluate(() => { window.slicerWeb.store.settings = { ...window.slicerWeb.store.settings, "Rendering/SharedWebGLContext": true }; });
+  await page.waitForTimeout(8000);
+  console.log("views sharing a context:", await page.evaluate(() => window.slicerWeb.bridge.evalPython("slicer.app.layoutManager().sharedCanvas().GetNumberOfViews()", "eval")));
+}
 const cdp = await context.newCDPSession(page);
-const box = await page.locator("#slicer-view-Red").boundingBox();
+const box = shared
+  ? await page.evaluate(() => { const r = window.slicerWeb.store.viewRects.Red; return { x: r.left, y: r.top, width: r.width, height: r.height }; })
+  : await page.locator("#slicer-view-Red").boundingBox();
 const point = (x, y) => ({ x, y, id: 1, radiusX: 12, radiusY: 12, force: 1 });
 const cx = box.x + box.width * 0.5, cy = box.y + box.height * 0.55;
 const magnifier = () => page.evaluate(() => {

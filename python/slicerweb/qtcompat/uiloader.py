@@ -87,7 +87,36 @@ class QUiLoader:
         if widget_el is None:
             return None
         widget = self._create_widget(widget_el, parentWidget)
+        self._connect(root, widget)
         return widget
+
+    def _connect(self, root, widget):
+        """The signal-slot connections made in Qt Designer (<connections>), as Qt's loader makes
+        them: a node selector that passes its node to a markups place widget, the module widget's
+        mrmlSceneChanged that gives its selectors the scene. A slot is given as many of the signal's
+        arguments as it takes; one the web widgets do not have is left out."""
+        def find(name):
+            if widget.objectName == name:
+                return widget
+            return next(iter(widget.findChildren(None, name)), None)
+
+        for connection in root.findall("connections/connection"):
+            senderName, signal = connection.findtext("sender"), connection.findtext("signal")
+            receiverName, slotSignature = connection.findtext("receiver"), connection.findtext("slot")
+            sender, receiver = find(senderName), find(receiverName)
+            if sender is None or receiver is None or not signal or not slotSignature:
+                logger.debug("Connection %s.%s -> %s.%s: object not found", senderName, signal, receiverName, slotSignature)
+                continue
+            slot = getattr(receiver, slotSignature.split("(")[0].strip(), None)
+            if not callable(slot):
+                logger.debug("Connection %s.%s -> %s.%s: no such slot here", senderName, signal, receiverName, slotSignature)
+                continue
+            parameters = slotSignature[slotSignature.find("(") + 1:slotSignature.rfind(")")].strip()
+            argumentCount = len([p for p in parameters.split(",") if p.strip()]) if parameters else 0
+            try:
+                sender._signal(signal).connect(slot, argumentCount=argumentCount)
+            except Exception:
+                logger.debug("Connection %s.%s -> %s.%s failed", senderName, signal, receiverName, slotSignature, exc_info=True)
 
     def _create_widget(self, element, parent):
         from .widgets import QLabel, QWidget

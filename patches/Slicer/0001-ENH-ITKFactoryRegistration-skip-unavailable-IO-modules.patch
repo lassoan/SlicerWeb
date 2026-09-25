@@ -1,18 +1,20 @@
-From ae5bf3e10491a98b5127323396f597da303f0d38 Mon Sep 17 00:00:00 2001
-From: SlicerWeb <slicerweb@localhost>
-Date: Sat, 19 Sep 2026 12:01:06 -0400
+From 5d5fbb972535b93978172304f03dbb5472c7ee38 Mon Sep 17 00:00:00 2001
+From: Andras Lasso <lasso@queensu.ca>
+Date: Fri, 25 Sep 2026 14:58:28 -0400
 Subject: [PATCH] ENH: Allow skipping unavailable ITK IO modules in
  ITKFactoryRegistration
 
-Add ITKFactoryRegistration_SKIP_UNAVAILABLE_IO_MODULES option so that
+Add ITKFactoryRegistration_SKIP_IO_MODULES option so that
 ITKFactoryRegistration can be built against ITK builds that do not include
 all IO modules (for example WebAssembly builds without HDF5 or DCMTK).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
  Libs/ITKFactoryRegistration/CMakeLists.txt | 12 ++++++++++++
  1 file changed, 12 insertions(+)
 
 diff --git a/Libs/ITKFactoryRegistration/CMakeLists.txt b/Libs/ITKFactoryRegistration/CMakeLists.txt
-index 338dd63183..5c28c8d251 100644
+index 338dd63183..1ef3f62182 100644
 --- a/Libs/ITKFactoryRegistration/CMakeLists.txt
 +++ b/Libs/ITKFactoryRegistration/CMakeLists.txt
 @@ -35,6 +35,18 @@ if(Slicer_BUILD_DICOM_SUPPORT)
@@ -21,7 +23,7 @@ index 338dd63183..5c28c8d251 100644
  
 +# Optionally skip IO modules that are not available in the ITK build (for example, WebAssembly builds
 +# of ITK do not include IO modules that depend on HDF5 or DCMTK).
-+if(ITKFactoryRegistration_SKIP_UNAVAILABLE_IO_MODULES)
++if(ITKFactoryRegistration_SKIP_IO_MODULES)
 +  find_package(ITK 4.6 REQUIRED)
 +  foreach(_module IN LISTS ITK_IO_MODULES_USED)
 +    if(NOT _module IN_LIST ITK_MODULES_ENABLED)

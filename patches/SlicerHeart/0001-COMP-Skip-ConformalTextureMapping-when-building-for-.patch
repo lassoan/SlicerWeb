@@ -4,7 +4,8 @@ Date: Fri, 25 Sep 2026 13:46:48 -0400
 Subject: [PATCH] COMP: Skip ConformalTextureMapping when building for
  WebAssembly
 
-The module installs a native executable (lscm), which cannot run in a web browser.
+The module installs the lscm executable, which SlicerHeart's SuperBuild builds; a WebAssembly
+build made without the SuperBuild has no lscm to install.
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
 ---
@@ -21,7 +22,7 @@ index f0e6679..3af80d5 100644
  endif()
 -add_subdirectory(ConformalTextureMapping)
 +if(NOT EMSCRIPTEN)
-+  # A command-line module running a native executable (lscm): not available in a web browser
++  # Installs the lscm executable built by the SuperBuild, which a WebAssembly build is made without
 +  add_subdirectory(ConformalTextureMapping)
 +endif()
  if (WIN32)

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch } from "vue";
 import type { SlicerRuntime } from "@/core/runtime";
+import { openNodeModule } from "./nodeModules";
 import { openModule, setSetting, store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
 import { reportGLToApplication } from "../core/glDiagnostics";
 import ViewerHeader from "./components/ViewerHeader.vue";
@@ -40,9 +41,14 @@ function scheduleSubjectHierarchyRefresh() {
 events.on("scene-changed", scheduleSubjectHierarchyRefresh);
 // A module selected from Python (slicer.util.selectModule): it has been entered there already
 events.on<{ name: string }>("select-module", ({ name }) => openModule(name));
+// A node opened in its module from Python (slicer.app.openNodeModule), a segment with it
+events.on<{ nodeID: string | null; className: string; role: string; context: string }>("open-node-module",
+  ({ nodeID, className, role, context }) => { if (nodeID) openNodeModule(nodeID, className, role, context); });
 // The eye of a volume shows whether it is shown in the selected view: another view selected, or
 // the volumes the views show changed (from a slice controller, say), and the eyes follow.
 events.on("views-shown-changed", scheduleSubjectHierarchyRefresh);
+// The segments of the segmentations are listed too
+events.on("segments-changed", scheduleSubjectHierarchyRefresh);
 watch(() => store.activeView, scheduleSubjectHierarchyRefresh);
 
 // What a click in a view does is the scene's to say: a module may change it, and place mode ends

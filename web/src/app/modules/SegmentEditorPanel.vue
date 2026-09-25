@@ -5,6 +5,7 @@ import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, 
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider, SwButton, SwComboBox } from "@/widgets";
 import SegmentList from "../components/SegmentList.vue";
+import { store } from "../store";
 
 interface EditorState {
   segmentationNodeID: string | null;
@@ -48,6 +49,26 @@ async function run<T>(method: string, args: unknown[] = []) {
 
 async function setup(segmentationID: string | null, volumeID: string | null) {
   state.value = await bridge.call<EditorState>("segmentEditorSetup", [segmentationID, volumeID]);
+}
+
+// A segment picked in the Data tree while the editor is open is the one edited: its segmentation
+// is taken (with the volume being segmented) and the segment selected
+async function takePickedSegment() {
+  const [segmentationID, segmentID] = [store.selectedNodeID, store.selectedSegmentID];
+  if (!state.value || !segmentID || !segmentationID || store.selectedNodeClass !== "vtkMRMLSegmentationNode") return;
+  if (state.value.segmentationNodeID !== segmentationID) await setup(segmentationID, state.value.sourceVolumeNodeID);
+  if (state.value?.currentSegmentID !== segmentID) await run("segmentEditorSelectSegment", [segmentID]);
+}
+watch(() => [store.selectedSegmentID, store.selectedNodeID], takePickedSegment);
+
+/** A segment chosen in the editor's list is also the one the tree shows as selected. */
+async function selectSegment(segmentID: string) {
+  await run("segmentEditorSelectSegment", [segmentID]);
+  if (state.value?.segmentationNodeID) {
+    store.selectedNodeClass = "vtkMRMLSegmentationNode";
+    store.selectedNodeID = state.value.segmentationNodeID;
+    store.selectedSegmentID = segmentID;
+  }
 }
 
 // What the threshold effect offers is the values of the volume being segmented, so the slider
@@ -143,6 +164,7 @@ const off = bridge.events.on("segment-editor-changed", () => refresh());
 // makes one when it is opened - the Segment Editor of the desktop offers to, this does it.
 onMounted(async () => {
   state.value = await bridge.call<EditorState>("segmentEditorEnsureSegmentation");
+  await takePickedSegment();
 });
 onBeforeUnmount(() => {
   off();
@@ -175,7 +197,7 @@ onBeforeUnmount(() => {
       </div>
       <!-- The same list as the Segmentations module's: choose, rename, colour and terminology, show, remove -->
       <SegmentList :segmentation-node-id="state.segmentationNodeID" :current-id="state.currentSegmentID"
-        @select="run('segmentEditorSelectSegment', [$event])" @changed="refresh">
+        @select="selectSegment($event)" @changed="refresh">
         <template #empty>Add a segment to start editing.</template>
       </SegmentList>
       <div class="grid grid-cols-4 gap-1">

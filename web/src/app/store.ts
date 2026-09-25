@@ -66,6 +66,9 @@ export const store = reactive({
   moduleHelpOpen: false,
   /** Node picked in the subject hierarchy or in a module panel (both follow it). */
   selectedNodeID: null as string | null,
+  /** The segment picked in the Data tree (of the segmentation selectedNodeID), which the
+   *  Segmentations and Segment Editor modules select; null when a node itself was picked. */
+  selectedSegmentID: null as string | null,
   /** Class of that node, so that a panel can tell whether the selection is one of its own. */
   selectedNodeClass: null as string | null,
   // maximized: layout name of the view shown alone (view controller "maximize" button)

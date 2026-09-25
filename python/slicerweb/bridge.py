@@ -463,6 +463,43 @@ def install_scene_observers():
             watchShown(node)
 
     onNodeAdded.CallDataType = vtk.VTK_OBJECT
+
+    def watchSegments(node):
+        """The Data tree lists the segments of a segmentation: it is told when they change."""
+        events = [slicer.vtkSegmentation.SegmentAdded, slicer.vtkSegmentation.SegmentRemoved,
+                  slicer.vtkSegmentation.SegmentModified, slicer.vtkSegmentation.SegmentsOrderModified]
+        for event in events:
+            node.AddObserver(event, lambda caller, e: host.emit("segments-changed", {"id": caller.GetID()}))
+        visibility = {}
+
+        def onDisplayModified(caller, event):
+            segmentation = node.GetSegmentation()
+            if segmentation is None:
+                return
+            now = tuple(bool(caller.GetSegmentVisibility(segmentation.GetNthSegmentID(i)))
+                        for i in range(segmentation.GetNumberOfSegments()))
+            if visibility.get("now") != now:
+                visibility["now"] = now
+                host.emit("segments-changed", {"id": node.GetID()})
+
+        def onDisplayNodes(caller=None, event=None):
+            displayNode = node.GetDisplayNode()
+            if displayNode is not None and not visibility.get(displayNode.GetID()):
+                visibility[displayNode.GetID()] = True
+                displayNode.AddObserver(vtk.vtkCommand.ModifiedEvent, onDisplayModified)
+
+        node.AddObserver(slicer.vtkMRMLDisplayableNode.DisplayModifiedEvent, onDisplayNodes)
+        node.AddObserver(vtk.vtkCommand.ModifiedEvent, onDisplayNodes)
+        onDisplayNodes()
+
+    def onSegmentationAdded(caller, event, node=None):
+        if node is not None and node.IsA("vtkMRMLSegmentationNode"):
+            watchSegments(node)
+
+    onSegmentationAdded.CallDataType = vtk.VTK_OBJECT
+    _scene_observers.append(scene.AddObserver(slicer.vtkMRMLScene.NodeAddedEvent, onSegmentationAdded))
+    for node in _nodesByClass("vtkMRMLSegmentationNode"):
+        watchSegments(node)
     _scene_observers.append(scene.AddObserver(slicer.vtkMRMLScene.NodeAddedEvent, onNodeAdded))
     for className in ("vtkMRMLSliceCompositeNode", "vtkMRMLVolumeRenderingDisplayNode"):
         for node in _nodesByClass(className):
@@ -632,6 +669,11 @@ def getSubjectHierarchy(layoutName=None):
 
     With *layoutName* (the selected view) a volume is visible if it is shown in that view (see
     _volumeVisibleInView), as its eye in the Data tree shows.
+
+    The segments of a segmentation are listed under it, as the Data module of desktop Slicer lists
+    them: {id, name, nodeID: None, className: "Segment", segmentationNodeID, segmentID, visible}.
+    They are read from the segmentation - desktop Slicer's Qt plugin keeps subject hierarchy items
+    for them, which a scene saved there brings along; those are left out in favour of these.
     """
     import slicer
 
@@ -642,15 +684,46 @@ def getSubjectHierarchy(layoutName=None):
 
     viewNode = _viewNodeByLayoutName(layoutName)
 
+    segmentIDAttribute = slicer.vtkMRMLSegmentationNode.GetSegmentIDAttributeName()
+
+    def segments(itemID, segmentationNode):
+        """The segments of a segmentation, as items of the tree."""
+        segmentation = segmentationNode.GetSegmentation()
+        displayNode = segmentationNode.GetDisplayNode()
+        result = []
+        for index in range(segmentation.GetNumberOfSegments() if segmentation else 0):
+            segmentID = segmentation.GetNthSegmentID(index)
+            savedItem = segmentationNode.GetSegmentSubjectHierarchyItem(segmentID, shNode)
+            result.append({
+                # the item desktop Slicer keeps for the segment, if there is one; else one of the
+                # tree's own, below zero so that it is no subject hierarchy item's
+                "id": int(savedItem) if savedItem else -(int(itemID) * 10000 + index + 1),
+                "name": segmentation.GetNthSegment(index).GetName(),
+                "nodeID": None,
+                "className": "Segment",
+                "level": "Segment",
+                "segmentationNodeID": segmentationNode.GetID(),
+                "segmentID": segmentID,
+                "color": "#%02x%02x%02x" % tuple(int(max(0.0, min(1.0, c)) * 255 + 0.5)
+                                                 for c in segmentation.GetNthSegment(index).GetColor()),
+                "visible": bool(displayNode.GetSegmentVisibility(segmentID)) if displayNode else True,
+                "children": [],
+            })
+        return result
+
     def build(itemID):
         children = vtk.vtkIdList()
         shNode.GetItemChildren(itemID, children, False)
         result = []
+        parentNode = shNode.GetItemDataNode(itemID) if itemID != shNode.GetSceneItemID() else None
         for i in range(children.GetNumberOfIds()):
             child = children.GetId(i)
             dataNode = shNode.GetItemDataNode(child)
             if dataNode is not None and dataNode.GetHideFromEditors():
                 continue
+            if (dataNode is None and parentNode is not None and parentNode.IsA("vtkMRMLSegmentationNode")
+                    and shNode.GetItemAttribute(child, segmentIDAttribute)):
+                continue  # a segment's item kept by desktop Slicer: the segments are listed below
             entry = {
                 "id": int(child),
                 "name": shNode.GetItemName(child),
@@ -662,10 +735,21 @@ def getSubjectHierarchy(layoutName=None):
                             else bool(shNode.GetItemDisplayVisibility(child))),
                 "children": build(child),
             }
+            if dataNode is not None and dataNode.IsA("vtkMRMLSegmentationNode"):
+                entry["children"] = entry["children"] + segments(child, dataNode)
             result.append(entry)
         return result
 
     return build(shNode.GetSceneItemID())
+
+
+@method()
+def openNodeModule(nodeID, role="", context=""):
+    """slicer.app.openNodeModule(node, role, context), for the page (a segment clicked in the tree)."""
+    import slicer
+
+    slicer.app.openNodeModule(_node(nodeID), role, context)
+    return True
 
 
 @method()

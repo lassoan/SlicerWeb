@@ -9,7 +9,7 @@ import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwNodeSelec
 import type { SlicerRuntime } from "@/core/runtime";
 import PopupMenu from "../components/PopupMenu.vue";
 import SegmentList from "../components/SegmentList.vue";
-import { openModule } from "../store";
+import { openModule, store } from "../store";
 import { useNodeState } from "./useNodeState";
 import { useSelectedNode } from "./useSelectedNode";
 
@@ -50,6 +50,16 @@ const setDisplay = (props: Record<string, unknown>) => nodeID.value && bridge.ca
 // ------------------------------------------------------------------ segments
 // The segment chosen in the list; Add chooses the new one, Remove takes the chosen one away
 const currentSegment = ref<string | null>(null);
+// A segment picked in the Data tree is the one chosen here, and the one chosen here is the one the
+// tree shows as selected
+function takePickedSegment() {
+  if (store.selectedSegmentID && store.selectedNodeID === nodeID.value) currentSegment.value = store.selectedSegmentID;
+}
+takePickedSegment();
+watch(() => [store.selectedSegmentID, nodeID.value], takePickedSegment);
+watch(currentSegment, (id) => {
+  if (nodeID.value && nodeID.value === store.selectedNodeID) store.selectedSegmentID = id;
+});
 async function addSegment() {
   if (!nodeID.value) return;
   currentSegment.value = await bridge.call<string>("addSegment", [nodeID.value]);

@@ -359,9 +359,14 @@ class SlicerWebApplication:
         return self._pauseRenderCount > 0
 
     def openNodeModule(self, node, role="", context=""):
+        """qSlicerApplication::openNodeModule: open the module that shows the node and select it
+        there; role "SegmentID" with a segment ID as context selects that segment too."""
         from . import host
 
-        host.emit("select-module-for-node", {"nodeID": node.GetID() if node else None})
+        if node is None:
+            return
+        host.emit("open-node-module", {"nodeID": node.GetID(), "className": node.GetClassName(),
+                                       "role": role or "", "context": context or ""})
 
     @property
     def applicationName(self):

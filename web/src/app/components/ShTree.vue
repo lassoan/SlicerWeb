@@ -5,7 +5,8 @@ import { ChevronDown, ChevronRight, Eye, EyeOff, Box, Layers, Image, MapPin, Sha
 import PopupMenu from "./PopupMenu.vue";
 import type { SlicerBridge, SubjectHierarchyItem } from "@/core/bridge";
 import type { SlicerRuntime } from "@/core/runtime";
-import { openModule, store } from "../store";
+import { store } from "../store";
+import { openNodeModule } from "../nodeModules";
 
 defineProps<{ items: SubjectHierarchyItem[]; depth: number }>();
 const bridge = inject<SlicerBridge>("bridge")!;
@@ -37,6 +38,10 @@ const inSelectedView = (item: SubjectHierarchyItem) => !!store.activeView && ite
 
 async function setVisible(item: SubjectHierarchyItem) {
   item.visible = !item.visible;
+  if (item.segmentID && item.segmentationNodeID) {
+    await bridge.call("setSegment", [item.segmentationNodeID, item.segmentID, { visible: item.visible }]);
+    return;
+  }
   await bridge.call("setSubjectHierarchyItemVisibility", [item.id, item.visible, store.activeView || null]);
 }
 
@@ -45,29 +50,29 @@ function visibilityTitle(item: SubjectHierarchyItem) {
   return inSelectedView(item) ? `${action} in view ${store.activeView}` : action;
 }
 
-// Which module shows a node of this kind, as the subject hierarchy plugins of desktop Slicer
-// decide it: clicking a node opens the module that node belongs to. A sequence and the browser
-// that plays it both belong to Sequences, which is where the playback controls are.
-const MODULE_FOR_CLASS: [string, string][] = [
-  ["Sequence", "Sequences"],
-  ["Segmentation", "Segmentations"],
-  ["Volume", "Volumes"],
-  ["Model", "Models"],
-  ["Markups", "Markups"],
-  ["Transform", "Transforms"],
-  ["Table", "Tables"],
-  ["PlotChart", "Plots"],
-  ["PlotSeries", "Plots"],
-  ["Text", "Texts"],
-];
-
+// Clicking a node opens the module that node belongs to, and selects it there (see nodeModules.ts)
 function select(item: SubjectHierarchyItem) {
+  if (item.segmentID && item.segmentationNodeID) {
+    if (store.activeModule === "SegmentEditor") {
+      // Painting goes on with the segment picked: the Segment Editor on screen takes it
+      store.selectedNodeClass = "vtkMRMLSegmentationNode";
+      store.selectedNodeID = item.segmentationNodeID;
+      store.selectedSegmentID = item.segmentID;
+      return;
+    }
+    // As the segments plugin of desktop Slicer opens a segment: the module of its segmentation,
+    // told which segment (slicer.app.openNodeModule(segmentation, "SegmentID", segmentID))
+    void bridge.call("openNodeModule", [item.segmentationNodeID, "SegmentID", item.segmentID]);
+    return;
+  }
   if (!item.nodeID) return;
-  const c = item.className;
-  const module = MODULE_FOR_CLASS.find(([name]) => c.includes(name))?.[1] ?? store.activeModule;
-  openModule(module);
-  store.selectedNodeClass = item.className;
-  store.selectedNodeID = item.nodeID;
+  openNodeModule(item.nodeID, item.className);
+}
+
+/** What the tree shows as selected: the segment picked, or the node picked. */
+function isSelected(item: SubjectHierarchyItem) {
+  if (item.segmentID) return store.selectedSegmentID === item.segmentID && store.selectedNodeID === item.segmentationNodeID;
+  return !!store.selectedNodeID && store.selectedNodeID === item.nodeID && !store.selectedSegmentID;
 }
 
 async function rename(item: SubjectHierarchyItem) {
@@ -133,7 +138,7 @@ function clicked(item: SubjectHierarchyItem) {
   <ul class="text-[13px]">
     <li v-for="item in items" :key="item.id">
       <div class="sw-row group flex h-7 items-center gap-1 rounded pr-1 hover:bg-accent/60 [@media(hover:none)]:h-9"
-        :class="{ 'bg-accent': store.selectedNodeID && store.selectedNodeID === item.nodeID }"
+        :class="{ 'bg-accent': isSelected(item) }" data-name="shItem" :data-segment="item.segmentID" :data-selected="isSelected(item)"
         :style="{ paddingLeft: depth * 14 + 4 + 'px' }" @click="clicked(item)" @dblclick="rename(item)"
         @contextmenu.prevent="openMenu(item)" @pointerdown="holdStart(item, $event)"
         @pointerup="holdEnd" @pointercancel="holdEnd" @pointermove="holdEnd">
@@ -141,7 +146,8 @@ function clicked(item: SubjectHierarchyItem) {
           <ChevronRight v-if="collapsed.has(item.id)" :size="14" /><ChevronDown v-else :size="14" />
         </button>
         <span v-else class="w-[14px]" />
-        <component :is="icon(item)" :size="14" class="shrink-0 text-muted-foreground" />
+        <span v-if="item.segmentID" class="mx-[2px] h-2.5 w-2.5 shrink-0 rounded-sm border border-black/30" :style="{ background: item.color ?? '#888' }" />
+        <component :is="icon(item)" v-else :size="14" class="shrink-0 text-muted-foreground" />
         <span class="min-w-0 flex-1 truncate" :title="item.name">{{ item.name }}</span>
         <!-- What else can be done with this node, behind one button rather than beside the name:
              a row holding every action is a cluttered row, and the two that matter most - deleting

@@ -35,6 +35,11 @@ export interface SubjectHierarchyItem {
   level: string;
   visible: boolean;
   children: SubjectHierarchyItem[];
+  /** A segment (className "Segment"): the segmentation it is of, and its ID in it */
+  segmentationNodeID?: string;
+  segmentID?: string;
+  /** A segment's colour (#rrggbb) */
+  color?: string;
 }
 
 export interface SlicerBridge {

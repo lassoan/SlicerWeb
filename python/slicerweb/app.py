@@ -358,6 +358,12 @@ class SlicerWebApplication:
     def isRenderPaused(self):
         return self._pauseRenderCount > 0
 
+    def extensionsManagerModel(self):
+        """The extensions of SlicerWeb's index, installed and installable (see extensions_manager.py)."""
+        from . import extensions_manager
+
+        return extensions_manager.model()
+
     def openNodeModule(self, node, role="", context=""):
         """qSlicerApplication::openNodeModule: open the module that shows the node and select it
         there; role "SegmentID" with a segment ID as context selects that segment too."""

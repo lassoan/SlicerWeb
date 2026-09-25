@@ -658,7 +658,16 @@ def create_scripted_module_widget(moduleName):
     if widget_cls is None:
         raise RuntimeError(f"{moduleName} does not define a {moduleName}Widget class")
     instance = widget_cls(parent)
-    instance.setup()
+    # An error in setup() leaves the GUI built so far, as on the desktop (the Qt widgets are there
+    # already): it is reported, and the page shows it above the GUI (show_scripted_module_widget)
+    module._setupError = None
+    try:
+        instance.setup()
+    except Exception as error:
+        import traceback
+
+        logger.exception("Error in the setup of module %s", moduleName)
+        module._setupError = f"{type(error).__name__}: {error}\n\n{traceback.format_exc()}"
     module._widget = instance
     module._hostWidget = parent
     setattr(slicer.modules, moduleName + "Widget", instance)
@@ -690,7 +699,9 @@ def show_scripted_module_widget(moduleName, containerSelector):
         module._enteredBeforeShown = False
     elif hasattr(module._widget, "enter"):
         module._widget.enter()
-    return True
+    # what went wrong in setup(), for the page to show above the GUI
+    setupError = getattr(module, "_setupError", None)
+    return {"setupError": setupError} if setupError else True
 
 
 _selectedModule = [None]

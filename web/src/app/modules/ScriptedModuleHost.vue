@@ -28,7 +28,9 @@ const offDelayDisplay = bridge.events.on<{ message: string }>("delay-display", (
 async function show() {
   error.value = "";
   try {
-    await bridge.call("showScriptedModuleWidget", [props.module, "#" + containerId]);
+    // An error in the module's setup() is shown above the GUI it built so far, as the desktop logs it
+    const shown = await bridge.call<true | { setupError?: string }>("showScriptedModuleWidget", [props.module, "#" + containerId]);
+    if (shown !== true && shown?.setupError) error.value = shown.setupError;
   } catch (e: any) {
     error.value = e.message ?? String(e);
   }
@@ -76,8 +78,9 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
+    <!-- what went wrong (in setup(), or reloading), above the GUI so that it is seen -->
+    <pre v-if="error" class="mb-2 max-h-48 overflow-auto rounded bg-destructive/40 p-2 text-[12px] whitespace-pre-wrap" data-name="moduleError">{{ error }}</pre>
     <div :id="containerId" class="sw-scripted-module flex flex-col gap-1.5" />
-    <pre v-if="error" class="mt-2 rounded bg-destructive/40 p-2 text-[12px] whitespace-pre-wrap">{{ error }}</pre>
     <!-- What a module developer needs, shown in Developer mode (Application settings), as on the desktop -->
     <SwCollapsible v-if="store.settings['Developer/DeveloperMode']" text="Reload and Test" collapsed class="mt-2">
       <div class="flex flex-wrap items-center gap-1">

@@ -5,7 +5,7 @@
 import type { PyodideAPI } from "pyodide";
 import { PyodideBridge, setBridge } from "./bridge";
 import { jobRunner } from "./jobs";
-import { EXTENSIONS_KEY, extensionIndexUrl, loadExtensionIndex, resolveExtensionWheels } from "./extensions";
+import { EXTENSIONS_KEY, extensionIndexUrl, loadExtensionIndex, resolveExtensionWheels, type ExtensionIndex } from "./extensions";
 import { loadSettings } from "./settings";
 
 export interface RuntimeConfig {
@@ -218,6 +218,12 @@ export class SlicerRuntime {
       installPackage: (name: string) => {
         void this.ensurePythonPackage(name);
       },
+      // slicer.app.extensionsManagerModel() (slicerweb/extensions_manager.py)
+      extensionState: () => JSON.stringify(this.extensionState()),
+      installExtension: (name: string) => this.installExtensionByName(name).catch((e) => {
+        console.warn(`Installing ${name} failed`, e);
+        return false;
+      }),
       // processEvents() of Python code that may be suspended (slicerweb/yielding.py): resolved once
       // the browser has drawn a frame - the views render in it and the page is painted after it -
       // and then milliseconds more. A hidden page draws no frames: a timer stands in for the frame.
@@ -282,6 +288,9 @@ bridge.call
     await this.loadExtensionPackages();
     await this.loadModulesWithPackages();
     this.started = true;
+    // modules may ask which extensions there are (slicer.app.extensionsManagerModel()): the index
+    // is fetched now, while nothing waits for it
+    void this.extensionIndex();
     await this.dropLoadedLibraryFiles();
     this.progress("ready", "Ready", 1);
   }
@@ -409,6 +418,74 @@ bridge.call
       await this.ensurePythonPackage(name);
     }
     return missing;
+  }
+
+  // ---------------------------------------------------------------- extensions asked for by modules
+  private extensionIndexLoaded: { url: string; index: ExtensionIndex } | null = null;
+
+  /** The extension index, fetched once (null where it is not available). */
+  async extensionIndex(): Promise<{ url: string; index: ExtensionIndex } | null> {
+    if (this.extensionIndexLoaded) return this.extensionIndexLoaded;
+    try {
+      const url = extensionIndexUrl();
+      this.extensionIndexLoaded = { url, index: await loadExtensionIndex(url) };
+    } catch (e) {
+      console.warn("The extension index is not available", e);
+    }
+    return this.extensionIndexLoaded;
+  }
+
+  /** The wheels of the installed extensions, as the Extensions Manager keeps them. */
+  private installedExtensionWheels(): string[] {
+    try {
+      return JSON.parse(localStorage.getItem(EXTENSIONS_KEY) ?? "null") ?? this.config.extensionWheels;
+    } catch {
+      return this.config.extensionWheels;
+    }
+  }
+
+  /**
+   * What slicer.app.extensionsManagerModel() tells modules (slicerweb/extensions_manager.py): the
+   * extensions of the index, and which of them are installed. `indexLoaded` is false until the
+   * index has been fetched (it is, shortly after startup).
+   */
+  extensionState(): { indexLoaded: boolean; available: string[]; installed: string[] } {
+    const loaded = this.extensionIndexLoaded;
+    if (!loaded) return { indexLoaded: false, available: [], installed: [] };
+    const wheels = this.installedExtensionWheels();
+    const entries = loaded.index.extensions;
+    return {
+      indexLoaded: true,
+      available: entries.map((e) => e.name),
+      installed: entries.filter((e) => wheels.includes(new URL(e.wheel, loaded.url).href)).map((e) => e.name),
+    };
+  }
+
+  /**
+   * Install an extension of the index by its name, with what it depends on and requires, as the
+   * Extensions Manager does, and load its modules. False if the index does not have it.
+   */
+  async installExtensionByName(name: string): Promise<boolean> {
+    const loaded = await this.extensionIndex();
+    if (!loaded) return false;
+    const { wheels, unknown } = await resolveExtensionWheels([name], loaded.index, loaded.url, (base) => this.baseWheelUrl(base));
+    if (unknown.some((n) => n.toLowerCase() === name.toLowerCase())) return false;
+    let installed = this.installedExtensionWheels();
+    const missing = wheels.filter((url) => !installed.includes(url));
+    for (const url of missing) {
+      await this.installWheel(url);
+      installed = [...installed, url];
+      try {
+        localStorage.setItem(EXTENSIONS_KEY, JSON.stringify(installed));
+      } catch {
+        // a private window, say: installed for this page
+      }
+    }
+    if (missing.length) {
+      await this.loadExtensionPackages();
+      await this.loadModulesWithPackages(true);
+    }
+    return true;
   }
 
   async installWheel(url: string): Promise<void> {

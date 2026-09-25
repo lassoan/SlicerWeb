@@ -1086,19 +1086,54 @@ def setInteractionMode(mode, placeNodeClassName=None, persistent=False):
 
 @method()
 def placeMarkup(className, name=None, persistent=False):
-    """Create a markups node and enter place mode (Markups toolbar buttons)."""
+    """Enter place mode for markups of a kind (Markups toolbar buttons), as desktop Slicer does.
+
+    The points are added to the active place node of the selection node if it is of this kind and
+    can take more (a line has two); otherwise the markups displayable manager makes a new node at
+    the first click, as it does on the desktop. Only a caller that names the node (*name*) has it
+    made now, when the active one cannot be added to. Returns the node the points go to, if known.
+    """
     import slicer
 
     scene = _scene()
-    node = scene.AddNewNodeByClass(className, name or "")
-    node.CreateDefaultDisplayNodes()
     selection = slicer.app.applicationLogic().GetSelectionNode()
+    active = scene.GetNodeByID(selection.GetActivePlaceNodeID() or "")
+    if not _canAddControlPoints(active, className):
+        active = None
+    if active is None and name:
+        active = scene.AddNewNodeByClass(className, name)
+        active.CreateDefaultDisplayNodes()
     selection.SetReferenceActivePlaceNodeClassName(className)
-    selection.SetActivePlaceNodeID(node.GetID())
+    if active is not None:
+        selection.SetReferenceActivePlaceNodeID(active.GetID())
     interaction = slicer.app.applicationLogic().GetInteractionNode()
     interaction.SetPlaceModePersistence(1 if persistent else 0)
     interaction.SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.Place)
-    return node
+    return active
+
+
+def _canAddControlPoints(node, className):
+    """Whether points placed for markups of this class can go to this node (as
+    vtkMRMLMarkupsDisplayableManager::GetWidgetForPlacement decides it): of that class, and not
+    holding as many points as it can."""
+    if node is None or node.GetClassName() != className:
+        return False
+    maximum = node.GetMaximumNumberOfControlPoints()
+    return maximum < 0 or node.GetNumberOfDefinedControlPoints() < maximum
+
+
+@method()
+def setActivePlaceNode(nodeID):
+    """The markups node that placed points go to (the one chosen in the Markups module)."""
+    import slicer
+
+    node = _node(nodeID)
+    if node is None or not node.IsA("vtkMRMLMarkupsNode"):
+        return False
+    selection = slicer.app.applicationLogic().GetSelectionNode()
+    selection.SetReferenceActivePlaceNodeClassName(node.GetClassName())
+    selection.SetReferenceActivePlaceNodeID(node.GetID())
+    return True
 
 
 # --------------------------------------------------------------------------- data

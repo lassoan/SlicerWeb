@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { Crosshair, Trash2, Lock, Unlock } from "@lucide/vue";
 import { SwCheckBox, SwCollapsible, SwColorPicker, SwFormRow, SwNodeSelector, SwSlider, SwButton } from "@/widgets";
 import { store } from "../store";
@@ -21,6 +21,9 @@ interface MarkupsInfo {
 
 const nodeID = useSelectedNode("Markups");
 const { state, bridge } = useNodeState<MarkupsInfo>("markupsInfo", nodeID);
+// The markup chosen here is the one that placed points go to, as in the Markups module of desktop
+// Slicer: placing a point then adds to it rather than making a new one
+watch(nodeID, (id) => { if (id) bridge.call("setActivePlaceNode", [id]).catch(() => {}); }, { immediate: true });
 
 const set = (props: Record<string, unknown>) => nodeID.value && bridge.call("setMarkupsDisplay", [nodeID.value, props]);
 const point = (index: number, action: string, value?: unknown) => nodeID.value && bridge.call("markupsControlPoint", [nodeID.value, index, action, value]);

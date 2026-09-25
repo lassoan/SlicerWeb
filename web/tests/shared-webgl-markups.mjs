@@ -121,7 +121,8 @@ for (const name of VIEWS) {
 
 // a point placed with a click lands under the pointer, in a view that is not the first on the canvas
 {
-  await page.evaluate(() => window.slicerWeb.bridge.call("placeMarkup", ["vtkMRMLMarkupsFiducialNode", "Placed", false]));
+  // the point goes to the point list that is the active place node (P, the last one made), as on the desktop
+  await page.evaluate(() => window.slicerWeb.bridge.call("placeMarkup", ["vtkMRMLMarkupsFiducialNode"]));
   await page.waitForTimeout(300);
   const r = await page.evaluate(() => window.slicerWeb.store.viewRects.Yellow);
   const [x, y] = [Math.round(r.left + r.width * 0.37), Math.round(r.top + r.height * 0.62)];
@@ -132,7 +133,7 @@ for (const name of VIEWS) {
   await page.waitForTimeout(800);
   await exec(`
 import json, vtk
-node = slicer.mrmlScene.GetFirstNodeByName("Placed")
+node = slicer.mrmlScene.GetNodeByID(slicer.app.applicationLogic().GetSelectionNode().GetActivePlaceNodeID())
 rasToXY = vtk.vtkMatrix4x4()
 vtk.vtkMatrix4x4.Invert(slicer.mrmlScene.GetNodeByID("vtkMRMLSliceNodeYellow").GetXYToRAS(), rasToXY)
 slicer._placedXY = json.dumps(rasToXY.MultiplyPoint(list(node.GetNthControlPointPositionWorld(node.GetNumberOfControlPoints() - 1)) + [1.0])[:2])
@@ -142,7 +143,9 @@ slicer._placedXY = json.dumps(rasToXY.MultiplyPoint(list(node.GetNthControlPoint
   const off = Math.hypot(xy[0] - expected[0], xy[1] - expected[1]);
   check("a point placed with a click in the Yellow view lands under the pointer", off < 3, `${off.toFixed(1)} px away`);
   await page.evaluate(() => window.slicerWeb.bridge.call("setInteractionMode", ["ViewTransform"]));
-  await exec('slicer.mrmlScene.RemoveNode(slicer.mrmlScene.GetFirstNodeByName("Placed"))');
+  // the point placed is taken away again, so that the views are compared as they were
+  await exec(`n = slicer.mrmlScene.GetNodeByID(slicer.app.applicationLogic().GetSelectionNode().GetActivePlaceNodeID())
+n.RemoveNthControlPoint(n.GetNumberOfControlPoints() - 1)`);
 }
 
 // and back: the views made anew with contexts of their own draw as they did at first

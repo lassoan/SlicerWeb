@@ -85,7 +85,7 @@ check("the views tell the grid where they are", !!box && box.width > 10, true);
 const sharedDrag = await dragInRed();
 console.log(`     the same drag browses ${sharedDrag.moved.toFixed(1)} mm with one shared context`);
 check("dragging in a view browses that view's slices", Math.abs(sharedDrag.moved) > 2, true);
-check("by as much as it did before (the gestures go by the view's size, not the canvas's)",
+check("by as much as it did before (each view has a window of its own, the size of the view)",
   Math.abs(sharedDrag.moved - own.moved) < Math.abs(own.moved) * 0.1, true);
 check("and leaves the other views alone", await offset("Slice9"), otherBefore);
 

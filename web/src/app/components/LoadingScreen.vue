@@ -13,7 +13,7 @@ import { store } from "../store";
       <div class="h-1 w-72 overflow-hidden rounded bg-card">
         <div class="h-full bg-primary transition-all duration-300" :style="{ width: Math.round(store.progress.fraction * 100) + '%' }" />
       </div>
-      <div class="text-[12px] text-muted-foreground">Python, VTK, ITK and 3D Slicer are running in your browser as WebAssembly.</div>
+      <div class="text-[12px] text-muted-foreground">3D Slicer, extensions, VTK, ITK, and Python are running in your browser.</div>
     </template>
   </div>
 </template>

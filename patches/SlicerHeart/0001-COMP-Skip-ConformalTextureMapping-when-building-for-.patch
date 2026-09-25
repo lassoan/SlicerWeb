@@ -1,0 +1,32 @@
+From e550310c3cfe4d2b36adb16520b15cec179835a7 Mon Sep 17 00:00:00 2001
+From: Andras Lasso <andras.lasso@radixlabmedical.com>
+Date: Fri, 25 Sep 2026 13:46:48 -0400
+Subject: [PATCH] COMP: Skip ConformalTextureMapping when building for
+ WebAssembly
+
+The module installs a native executable (lscm), which cannot run in a web browser.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ CMakeLists.txt | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index f0e6679..3af80d5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -70,7 +70,10 @@ add_subdirectory(OrificeArea)
+ if (SlicerHeart_BUILD_ITK_FILTERS)
+   add_subdirectory(PhaseSymmetryFilter)
+ endif()
+-add_subdirectory(ConformalTextureMapping)
++if(NOT EMSCRIPTEN)
++  # A command-line module running a native executable (lscm): not available in a web browser
++  add_subdirectory(ConformalTextureMapping)
++endif()
+ if (WIN32)
+   # Image3dAPI only works on Windows
+   # (see https://github.com/MedicalUltrasound/Image3dAPI)
+-- 
+2.44.0.windows.1
+

@@ -172,7 +172,13 @@ set(MRML_APPLICATION_REVISION "${Slicer_MAIN_PROJECT_REVISION}" CACHE STRING "" 
 set(MRML_APPLICATION_SUPPORT_VERSION "0x030000" CACHE STRING "" FORCE)
 set(MRML_APPLICATION_OPENGL_PROFILE_ENV "SLICER_OPENGL_PROFILE")
 set(MRML_TEST_DATA_DIR ${Slicer_SOURCE_DIR}/Libs/MRML/Core/Testing/TestData)
-set(VTKITK_BUILD_DICOM_SUPPORT OFF)
+# vtkITK reads DICOM with ITK's GDCM image IO, which is built (see cmake/itk/wasm.cmake), and
+# offers DCMTK's as an alternative, which is not. Slicer guarded both with one option, so
+# patches/Slicer/0004 separates them: the GDCM reader is had without DCMTK, and with it the
+# archetype reader again detects a DICOM archetype and groups a series by UID, orientation and
+# echo number. Slicer_BUILD_DICOM_SUPPORT stays off: that one brings CTK and Qt with it.
+set(VTKITK_BUILD_DICOM_SUPPORT ON)
+set(VTKITK_BUILD_DICOM_SUPPORT_DCMTK OFF)
 
 set(_slicerweb_libs
   ITKFactoryRegistration:${Slicer_SOURCE_DIR}/Libs/ITKFactoryRegistration

@@ -27,8 +27,8 @@ const py = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, 
 const resize = async (width) => { await page.setViewportSize({ width, height: 900 }); await page.waitForTimeout(900); };
 
 check("every button is its own where there is room", await buttons(), [
-  "Layout", "Reset views", "Crosshair", "Rotate / Pan / Zoom", "Window / Level", "Place points",
-  "New markup", "Segment Editor", "Volume Rendering", "Transforms", "Scene Views"]);
+  "Layout", "Reset views", "Crosshair", "Rotate / Pan / Zoom", "Window / Level", "Scroll slices",
+  "Place points", "New markup", "Segment Editor", "Volume Rendering", "Transforms", "Scene Views"]);
 
 // Making a markup is something done, not a state: the button holds nothing to switch off, and that
 // a click in a view now places points is said by the mouse mode instead.
@@ -64,7 +64,7 @@ await page.getByLabel("Mouse mode").click();
 await page.waitForTimeout(400);
 const modeItems = await page.locator("[role=menuitem]").allInnerTexts();
 check("what a click can do is in it, placing included", modeItems,
-      ["Rotate / Pan / Zoom", "Window / Level", "Place points"]);
+      ["Rotate / Pan / Zoom", "Window / Level", "Scroll slices", "Place points"]);
 await page.locator("[role=menuitem]", { hasText: "Window / Level" }).first().click();
 await page.waitForTimeout(600);
 check("choosing one sets the mode", await page.evaluate(() => window.slicerWeb.store.interactionMode), "AdjustWindowLevel");
@@ -100,7 +100,7 @@ check("and framing the views again", await page.locator("[role=menuitem]", { has
 await page.keyboard.press("Escape");
 
 await resize(1500);
-check("room again brings every button back", (await buttons()).length, 11);
+check("room again brings every button back", (await buttons()).length, 12);
 
 await browser.close();
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");

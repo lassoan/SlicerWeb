@@ -30,8 +30,10 @@ const openDialog = async () => {
   await page.getByLabel("Application menu").click();
   await page.locator("[role=menuitem]", { hasText: /application settings/i }).first().click();
   await page.locator("[data-name=settings-dialog]").waitFor({ timeout: 10000 });
+  // the dialog opens on its first section (Rendering)
+  await page.locator("[data-name=settings-dialog] nav").getByText("Developer", { exact: true }).click();
 };
-const developerMode = () => page.locator("[data-name=settings-dialog] input[type=checkbox]").first();
+const developerMode = () => page.locator("[data-name=settings-dialog] label", { hasText: "Developer mode" }).locator("input[type=checkbox]").first();
 
 await context.clearCookies();
 await start();

@@ -43,7 +43,8 @@ const loadedWith = await fieldOfView();
 
 // A finger cannot hover, so what a row of the data tree offers has to be there to be tapped: one
 // button per row, and the same menu under a press held on the row.
-const more = phone.locator("[title^='More for']").first();
+// (a row's button, not the one of the subject hierarchy's header)
+const more = phone.locator(".sw-row-action[title^='More for']").first();
 check("the row of a node offers its menu without hovering", await more.isVisible(), true);
 const target = await more.boundingBox();
 check("with something a finger can hit", target.width >= 24 && target.height >= 24, true);

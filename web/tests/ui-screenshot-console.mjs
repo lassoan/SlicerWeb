@@ -1,4 +1,4 @@
-// The screenshot button saves what the view shows, and the Python console offers its completions in
+// Save picture (Scene Views) saves what the view shows, and the Python console offers its completions in
 // a list above the prompt.
 // Usage: node tests/ui-screenshot-console.mjs [url]
 import fs from "node:fs";
@@ -17,8 +17,11 @@ await page.waitForTimeout(3000);
 // screenshot of the active view
 await page.locator("#slicer-view-Red").click({ position: { x: 20, y: 20 } });
 await page.waitForTimeout(400);
+// saving a picture of the view is in the Scene Views module, which its toolbar button opens
+await page.getByRole("button", { name: "Scene Views" }).first().click();
+await page.waitForTimeout(1500);
 const download = page.waitForEvent("download", { timeout: 30000 });
-await page.getByRole("button", { name: /screenshot/i }).first().click();
+await page.getByRole("button", { name: /save picture/i }).first().click();
 const file = await download;
 const saved = path.join(os.tmpdir(), await file.suggestedFilename());
 await file.saveAs(saved);
@@ -30,7 +33,9 @@ for (let i = 1000; i < Math.min(bytes.length, 200000); i += 37) distinct.add(byt
 console.log(`screenshot: ${await file.suggestedFilename()}, ${(bytes.length / 1024).toFixed(0)} kB, PNG: ${png}, distinct bytes: ${distinct.size}`);
 
 // completions in the console
-await page.getByRole("button", { name: /python console/i }).first().click();
+// the console is in the application menu
+await page.getByLabel("Application menu").click();
+await page.locator("[data-name='menu:python']").click();
 await page.waitForTimeout(800);
 const input = page.locator("textarea");
 await input.click();

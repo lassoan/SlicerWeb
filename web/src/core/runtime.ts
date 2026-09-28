@@ -257,9 +257,18 @@ os.environ["LD_LIBRARY_PATH"] = ":".join(_dirs + [os.environ.get("LD_LIBRARY_PAT
 `);
     const total = wheels.length || 1;
     for (let i = 0; i < wheels.length; i++) {
-      const { name, url } = wheels[i];
+      const { name, url, extension } = wheels[i];
       this.progress("wheels", `Loading ${name}`, 0.1 + (0.75 * i) / total);
-      await this.installWheel(url);
+      try {
+        await this.installWheel(url);
+      } catch (e) {
+        // Without the application's own wheels there is nothing to start; an extension that
+        // cannot be installed (its wheel is gone from where it was installed from, say) is left
+        // out, and forgotten, so that the application starts without it
+        if (!extension) throw e;
+        console.error(`The extension ${name} could not be installed, and is removed: ${e}`);
+        this.forgetExtensionWheel(url);
+      }
     }
 
     this.progress("startup", "Starting 3D Slicer", 0.9);
@@ -534,7 +543,15 @@ bridge.call
       const { wheels, unknown } = await resolveExtensionWheels(
         [...installed, ...this.config.extensions], index, indexUrl, (name) => this.baseWheelUrl(name));
       if (unknown.length) console.warn(`Extensions not in ${indexUrl}: ${unknown.join(", ")}`);
-      const resolved = [...wheels, ...this.config.extensionWheels.filter((url) => !wheels.includes(url))];
+      // A wheel of the index's own folder that the index no longer names belonged to an extension
+      // it has dropped or renamed, and is gone from there: it is forgotten. Wheels installed from
+      // anywhere else stay.
+      const indexFolder = new URL(".", indexUrl).href;
+      const stale = (url: string) => url.startsWith(indexFolder) && !index.extensions.some((e) => new URL(e.wheel, indexUrl).href === url);
+      for (const url of this.config.extensionWheels.filter(stale)) {
+        console.warn(`The installed extension ${url.split("/").pop()} is no longer in ${indexUrl}, and is removed`);
+      }
+      const resolved = [...wheels, ...this.config.extensionWheels.filter((url) => !wheels.includes(url) && !stale(url))];
       if (JSON.stringify(resolved) === JSON.stringify(this.config.extensionWheels)) return;
       this.config.extensionWheels = resolved;
       try {
@@ -547,7 +564,7 @@ bridge.call
     }
   }
 
-  private async resolveWheels(): Promise<{ name: string; url: string }[]> {
+  private async resolveWheels(): Promise<{ name: string; url: string; extension?: boolean }[]> {
     let index: WheelIndex = { packages: [] };
     try {
       const response = await fetch(this.config.wheelsURL + "index.json");
@@ -555,16 +572,26 @@ bridge.call
     } catch (e) {
       console.warn("Wheel index not available", e);
     }
-    const result: { name: string; url: string }[] = [];
+    const result: { name: string; url: string; extension?: boolean }[] = [];
     for (const name of this.config.startupPackages) {
       const entry = index.packages.find((p) => p.name === name);
       if (entry) result.push({ name, url: this.config.wheelsURL + entry.file });
       else console.warn(`Wheel ${name} not found in ${this.config.wheelsURL}index.json`);
     }
     for (const url of this.config.extensionWheels) {
-      result.push({ name: url.split("/").pop() ?? url, url });
+      result.push({ name: url.split("/").pop() ?? url, url, extension: true });
     }
     return result;
+  }
+
+  /** Remove a wheel from the installed extensions, for this start and the next ones. */
+  private forgetExtensionWheel(url: string) {
+    this.config.extensionWheels = this.config.extensionWheels.filter((u) => u !== url);
+    try {
+      localStorage.setItem(EXTENSIONS_KEY, JSON.stringify(this.config.extensionWheels));
+    } catch {
+      // a private window, say
+    }
   }
 
   /** Settings and user data survive page reloads (IndexedDB). */

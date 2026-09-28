@@ -49,6 +49,179 @@ class Qt:
     MatchExactly, MatchContains = 0, 1
 
 
+class QEvent:
+    """An event and its type, as event filters receive them (Qt's QEvent::Type values)."""
+
+    None_, Timer, MouseButtonPress, MouseButtonRelease, MouseButtonDblClick, MouseMove = 0, 1, 2, 3, 4, 5
+    KeyPress, KeyRelease, FocusIn, FocusOut, Enter, Leave, Paint, Move, Resize = 6, 7, 8, 9, 10, 11, 12, 13, 14
+    Show, Hide, Close, Wheel = 17, 18, 19, 31
+    DragEnter, DragMove, DragLeave, Drop = 60, 61, 62, 63
+    ToolTip, ContextMenu = 110, 82
+
+    def __init__(self, type=0, *args):
+        self._type = int(type)
+        self._accepted = True
+
+    def type(self):
+        return self._type
+
+    def accept(self):
+        self._accepted = True
+
+    def ignore(self):
+        self._accepted = False
+
+    def isAccepted(self):
+        return self._accepted
+
+
+class QMouseEvent(QEvent):
+    def __init__(self, type=0, *args):
+        super().__init__(type)
+
+
+class QVector3D:
+    def __init__(self, x=0.0, y=0.0, z=0.0):
+        self._v = [float(x), float(y), float(z)]
+
+    def x(self):
+        return self._v[0]
+
+    def y(self):
+        return self._v[1]
+
+    def z(self):
+        return self._v[2]
+
+    def setX(self, value):
+        self._v[0] = float(value)
+
+    def setY(self, value):
+        self._v[1] = float(value)
+
+    def setZ(self, value):
+        self._v[2] = float(value)
+
+    def length(self):
+        return sum(c * c for c in self._v) ** 0.5
+
+    def distanceToPoint(self, point):
+        return (self - point).length()
+
+    def __add__(self, other):
+        return QVector3D(*(a + b for a, b in zip(self._v, other._v)))
+
+    def __sub__(self, other):
+        return QVector3D(*(a - b for a, b in zip(self._v, other._v)))
+
+    def __mul__(self, factor):
+        return QVector3D(*(a * factor for a in self._v))
+
+    def __eq__(self, other):
+        return isinstance(other, QVector3D) and self._v == other._v
+
+    def __repr__(self):
+        return f"QVector3D({self._v[0]}, {self._v[1]}, {self._v[2]})"
+
+
+class QUrlQuery:
+    """The query of a URL (?key=value&...)."""
+
+    def __init__(self, query=""):
+        from urllib.parse import parse_qsl, urlsplit
+
+        if isinstance(query, QUrl):
+            query = urlsplit(query.toString()).query
+        elif "?" in str(query):
+            query = str(query).split("?", 1)[1]
+        self._items = parse_qsl(str(query), keep_blank_values=True)
+
+    def hasQueryItem(self, key):
+        return any(k == key for k, _ in self._items)
+
+    def queryItemValue(self, key, *args):
+        return next((v for k, v in self._items if k == key), "")
+
+    def allQueryItemValues(self, key, *args):
+        return [v for k, v in self._items if k == key]
+
+    def queryItems(self, *args):
+        return list(self._items)
+
+    def addQueryItem(self, key, value):
+        self._items.append((str(key), str(value)))
+
+    def isEmpty(self):
+        return not self._items
+
+    def toString(self, *args):
+        from urllib.parse import urlencode
+
+        return urlencode(self._items)
+
+
+class QHostInfo:
+    """The name of the computer: a web page is not told it, so it is the page's host."""
+
+    @staticmethod
+    def localHostName():
+        try:
+            from js import location
+
+            return str(location.hostname) or "localhost"
+        except Exception:
+            return "localhost"
+
+    @staticmethod
+    def localDomainName():
+        return ""
+
+
+class QRegExp:
+    """A regular expression, as QRegExpValidator takes one (a line edit's validator is not enforced in
+    the browser; the pattern is kept)."""
+
+    def __init__(self, pattern="", *args):
+        self._pattern = str(pattern)
+
+    def pattern(self):
+        return self._pattern
+
+    def setPattern(self, pattern):
+        self._pattern = str(pattern)
+
+
+class QRegExpValidator:
+    def __init__(self, regexp=None, parent=None):
+        self._regexp = regexp if isinstance(regexp, QRegExp) else QRegExp()
+
+    def regExp(self):
+        return self._regexp
+
+    def setRegExp(self, regexp):
+        self._regexp = regexp
+
+
+class QAbstractItemView:
+    """The enums of Qt's item views, which modules pass to setEditTriggers, setSelectionMode,
+    setSelectionBehavior and the scroll modes of tables, lists and trees."""
+
+    NoEditTriggers, CurrentChanged, DoubleClicked, SelectedClicked = 0, 1, 2, 4
+    EditKeyPressed, AnyKeyPressed, AllEditTriggers = 8, 16, 31
+    NoSelection, SingleSelection, MultiSelection, ExtendedSelection, ContiguousSelection = 0, 1, 2, 3, 4
+    SelectItems, SelectRows, SelectColumns = 0, 1, 2
+    ScrollPerItem, ScrollPerPixel = 0, 1
+
+
+class QListView(QAbstractItemView):
+    """The enums of list views (QListWidget.setViewMode, setFlow, setResizeMode, setMovement)."""
+
+    ListMode, IconMode = 0, 1
+    LeftToRight, TopToBottom = 0, 1
+    Fixed, Adjust = 0, 1
+    Static, Free, Snap = 0, 1, 2
+
+
 class QSizePolicy:
     Fixed, Minimum, Maximum, Preferred, Expanding, MinimumExpanding, Ignored = 0, 1, 4, 5, 7, 3, 13
 
@@ -208,15 +381,69 @@ class QIcon:
         return QPixmap()
 
 
-class QPixmap:
+class QImage:
+    """An image: here the vtkImageData it was made from (qMRMLUtils.vtkImageDataToQImage), which
+    QPixmap.save writes."""
+
     def __init__(self, *args):
-        pass
+        self._vtkImage = None
+        self._dotsPerMeter = [0, 0]
 
     def isNull(self):
-        return True
+        return self._vtkImage is None
+
+    def width(self):
+        return self._vtkImage.GetDimensions()[0] if self._vtkImage is not None else 0
+
+    def height(self):
+        return self._vtkImage.GetDimensions()[1] if self._vtkImage is not None else 0
+
+    def setDotsPerMeterX(self, value):
+        self._dotsPerMeter[0] = value
+
+    def setDotsPerMeterY(self, value):
+        self._dotsPerMeter[1] = value
+
+    def dotsPerMeterX(self):
+        return self._dotsPerMeter[0]
+
+    def dotsPerMeterY(self):
+        return self._dotsPerMeter[1]
+
+    def save(self, fileName, *args):
+        return QPixmap.fromImage(self).save(fileName, *args)
+
+
+class QPixmap:
+    def __init__(self, *args):
+        self._image = None
+
+    def isNull(self):
+        return self._image is None or self._image.isNull()
 
     def scaled(self, *args):
         return self
+
+    @staticmethod
+    def fromImage(image, *args):
+        pixmap = QPixmap()
+        pixmap._image = image
+        return pixmap
+
+    def toImage(self):
+        return self._image if self._image is not None else QImage()
+
+    def save(self, fileName, *args):
+        """Written as a PNG file (the image's vtkImageData, see QImage)."""
+        if self.isNull():
+            return False
+        import vtk
+
+        writer = vtk.vtkPNGWriter()
+        writer.SetFileName(str(fileName))
+        writer.SetInputData(self._image._vtkImage)
+        writer.Write()
+        return True
 
 
 class QFont:
@@ -351,6 +578,9 @@ class QTimer(QObject):
 
     def isActive(self):
         return self._active
+
+    # PythonQt offers Qt's properties: modules test timer.active as well as isActive()
+    active = property(isActive)
 
     @property
     def remainingTime(self):

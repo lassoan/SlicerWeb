@@ -7,7 +7,8 @@ element. User interaction on the element updates the Python state and emits the 
 import logging
 
 from . import dom
-from .core import QObject, QProp, Signal
+from .core import QObject, QProp, Signal, count_property
+from .types import QAbstractItemView
 
 logger = logging.getLogger("slicerweb.qt")
 
@@ -294,6 +295,11 @@ class QFrame(QWidget):
     def setLineWidth(self, w):
         pass
 
+    def setFrameStyle(self, style):
+        """Shape and shadow in one value, as Qt takes them (e.g. StyledPanel | Sunken)."""
+        self.setFrameShape(style & 0x0F)
+        self.setFrameShadow(style & 0xF0)
+
 
 # --------------------------------------------------------------------------- layouts
 class QLayout(QObject):
@@ -348,6 +354,14 @@ class QLayout(QObject):
     def addStretch(self, stretch=1):
         spacer = dom.create("div", "flex-1")
         self._el.appendChild(spacer)
+
+    def addStrut(self, size):
+        """At least this size across the layout's direction (the height of a row, the width of a
+        column)."""
+        try:
+            self._el.style.minHeight = f"{int(size)}px"
+        except Exception:
+            pass
 
     def addSpacing(self, size):
         spacer = dom.create("div", "")
@@ -427,6 +441,17 @@ class QFormLayout(QLayout):
     LabelRole, FieldRole, SpanningRole = 0, 1, 2
 
     def addRow(self, label, field=None):
+        self._el.appendChild(self._row(label, field))
+
+    def insertRow(self, index, label, field=None):
+        rows = list(self._el.children)
+        row = self._row(label, field)
+        if 0 <= int(index) < len(rows):
+            self._el.insertBefore(row, rows[int(index)])
+        else:
+            self._el.appendChild(row)
+
+    def _row(self, label, field=None):
         # sw-form-row: label and field side by side, stacked when the panel is narrow (main.css)
         row = dom.create("div", "sw-form-row min-w-0")
         if field is None:
@@ -444,7 +469,7 @@ class QFormLayout(QLayout):
             cell = dom.create("div", "min-w-0")
             self._appendItem(cell, field)
             row.appendChild(cell)
-        self._el.appendChild(row)
+        return row
 
     def _appendItem(self, container, item):
         if isinstance(item, QWidget):
@@ -646,6 +671,9 @@ class QAbstractButton(_ElementWidget):
     def setMenu(self, menu):
         self._menu = menu
 
+    def menu(self):
+        return getattr(self, "_menu", None)
+
     def setPopupMode(self, mode):
         pass
 
@@ -661,6 +689,83 @@ class QAbstractButton(_ElementWidget):
 
 class QPushButton(QAbstractButton):
     pass
+
+
+class QDialogButtonBox(QWidget):
+    """A row of dialog buttons: standard ones (Apply, Restore Defaults, ...) or ones with a text and a
+    role. The box says which role was clicked through accepted/rejected/clicked, as in Qt."""
+
+    # Qt's StandardButton values
+    NoButton, Ok, Save, SaveAll, Open, Yes, YesToAll, No, NoToAll = 0, 0x400, 0x800, 0x1000, 0x2000, 0x4000, 0x8000, 0x10000, 0x20000
+    Abort, Retry, Ignore, Close, Cancel, Discard, Help = 0x40000, 0x80000, 0x100000, 0x200000, 0x400000, 0x800000, 0x1000000
+    Apply, Reset, RestoreDefaults = 0x2000000, 0x4000000, 0x8000000
+    # ButtonRole
+    InvalidRole, AcceptRole, RejectRole, DestructiveRole, ActionRole, HelpRole = -1, 0, 1, 2, 3, 4
+    YesRole, NoRole, ResetRole, ApplyRole = 5, 6, 7, 8
+
+    _STANDARD = {
+        0x400: ("OK", 0), 0x800: ("Save", 0), 0x1000: ("Save All", 0), 0x2000: ("Open", 0), 0x4000: ("Yes", 5),
+        0x8000: ("Yes to All", 5), 0x10000: ("No", 6), 0x20000: ("No to All", 6), 0x40000: ("Abort", 1),
+        0x80000: ("Retry", 0), 0x100000: ("Ignore", 0), 0x200000: ("Close", 1), 0x400000: ("Cancel", 1),
+        0x800000: ("Discard", 2), 0x1000000: ("Help", 4), 0x2000000: ("Apply", 8), 0x4000000: ("Reset", 7),
+        0x8000000: ("Restore Defaults", 7),
+    }
+
+    accepted = Signal("accepted()")
+    rejected = Signal("rejected()")
+    clicked = Signal("clicked(QAbstractButton*)")
+    helpRequested = Signal("helpRequested()")
+
+    def __init__(self, *args):
+        buttons = next((a for a in args if isinstance(a, int)), 0)
+        parent = next((a for a in args if isinstance(a, QWidget)), None)
+        super().__init__(parent)
+        self.setLayout(QHBoxLayout())
+        self._buttons = []  # [(button, role, standard button or None)]
+        self.setStandardButtons(buttons)
+
+    def addButton(self, button, role=None):
+        standard = None
+        if isinstance(button, int):
+            standard = button
+            text, role = self._STANDARD.get(button, ("", self.InvalidRole))
+            button = QPushButton(text)
+        elif isinstance(button, str):
+            button = QPushButton(button)
+        role = self.InvalidRole if role is None else role
+        self._buttons.append((button, role, standard))
+        self.layout().addWidget(button)
+        button.clicked.connect(lambda *a, b=button, r=role: self._onClicked(b, r))
+        return button
+
+    def _onClicked(self, button, role):
+        self.clicked.emit(button)
+        if role in (self.AcceptRole, self.YesRole):
+            self.accepted.emit()
+        elif role in (self.RejectRole, self.NoRole):
+            self.rejected.emit()
+        elif role == self.HelpRole:
+            self.helpRequested.emit()
+
+    def setStandardButtons(self, buttons):
+        for standard in self._STANDARD:
+            if buttons & standard:
+                self.addButton(standard)
+
+    def standardButtons(self):
+        result = 0
+        for _, _, standard in self._buttons:
+            result |= standard or 0
+        return result
+
+    def button(self, which):
+        return next((b for b, _, s in self._buttons if s == which), None)
+
+    def buttons(self):
+        return [b for b, _, _ in self._buttons]
+
+    def buttonRole(self, button):
+        return next((r for b, r, _ in self._buttons if b is button), self.InvalidRole)
 
 
 class QToolButton(QAbstractButton):
@@ -808,8 +913,7 @@ class QComboBox(_ElementWidget):
         self._currentIndex = -1
         self._sync()
 
-    def count(self):
-        return len(self._itemTexts)
+    count = count_property(lambda self: len(self._itemTexts))
 
     def itemText(self, index):
         return self._itemTexts[index] if 0 <= index < len(self._itemTexts) else ""
@@ -939,6 +1043,10 @@ class QTextEdit(_ElementWidget):
     plainText = QProp("", el="plainText", convert=str)
     readOnly = QProp(False, el="readOnly", convert=_bool)
     placeholderText = QProp("", el="placeholderText", convert=str)
+
+    def setTextInteractionFlags(self, flags):
+        # Whether the text can be selected or edited with mouse and keyboard; read-only is readOnly
+        pass
 
     def __init__(self, text="", parent=None):
         if isinstance(text, QWidget):
@@ -1334,8 +1442,7 @@ class QStackedWidget(QWidget):
     def currentWidget(self):
         return self._pages[self._current] if 0 <= self._current < len(self._pages) else None
 
-    def count(self):
-        return len(self._pages)
+    count = count_property(lambda self: len(self._pages))
 
     def widget(self, index):
         return self._pages[index]
@@ -1384,8 +1491,7 @@ class QTabWidget(QWidget):
     def currentIndex(self):
         return self._current
 
-    def count(self):
-        return len(self._tabs)
+    count = count_property(lambda self: len(self._tabs))
 
     def widget(self, index):
         return self._tabs[index][0]
@@ -1474,52 +1580,330 @@ class QMenu(QWidget):
     def clear(self):
         self._actions = []
 
+    def setToolTipsVisible(self, visible):
+        self._toolTipsVisible = bool(visible)
 
-class QListWidget(QWidget):
+    def toolTipsVisible(self):
+        return getattr(self, "_toolTipsVisible", False)
+
+
+class QListWidgetItem:
+    """An item of a QListWidget: a text, a tool tip, data by role."""
+
+    DisplayRole, ToolTipRole, UserRole = 0, 3, 256
+
+    def __init__(self, *args):
+        from .types import QIcon
+
+        texts = [a for a in args if isinstance(a, str)]
+        self._text = texts[0] if texts else ""
+        self._toolTip = ""
+        self._data = {}
+        self._flags = None
+        self._list = None
+        self._icon = None
+        for a in args:
+            if isinstance(a, QListWidget):
+                a.addItem(self)
+            elif isinstance(a, QIcon):
+                self._icon = a
+
+    def _changed(self):
+        if self._list is not None:
+            self._list._render()
+
+    def text(self):
+        return self._text
+
+    def setText(self, text):
+        self._text = str(text)
+        self._changed()
+
+    def toolTip(self):
+        return self._toolTip
+
+    def setToolTip(self, text):
+        self._toolTip = str(text)
+        self._changed()
+
+    def data(self, role):
+        if role == self.DisplayRole:
+            return self._text
+        if role == self.ToolTipRole:
+            return self._toolTip
+        return self._data.get(int(role))
+
+    def setData(self, role, value):
+        if role == self.DisplayRole:
+            self.setText(value)
+        elif role == self.ToolTipRole:
+            self.setToolTip(value)
+        else:
+            self._data[int(role)] = value
+
+    def flags(self):
+        return self._flags
+
+    def setFlags(self, flags):
+        self._flags = flags
+
+    def icon(self):
+        from .types import QIcon
+
+        return self._icon if self._icon is not None else QIcon()
+
+    def setIcon(self, icon):
+        self._icon = icon
+        self._changed()
+
+    def listWidget(self):
+        return self._list
+
+
+class QListWidget(QWidget, QAbstractItemView):
     currentRowChanged = Signal("currentRowChanged(int)")
+    currentItemChanged = Signal("currentItemChanged(QListWidgetItem*,QListWidgetItem*)")
     itemSelectionChanged = Signal("itemSelectionChanged()")
+    itemClicked = Signal("itemClicked(QListWidgetItem*)")
+    itemDoubleClicked = Signal("itemDoubleClicked(QListWidgetItem*)")
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._items = []
+        self._items = []  # QListWidgetItem
         self._current = -1
+        self._selectionCleared = False
+        self._iconSize = 16
+        self._viewMode = 0  # QListView.ListMode
 
-    def addItem(self, text):
-        self._items.append(str(text))
-        row = dom.create("div", "px-2 py-0.5 text-[13px] rounded hover:bg-accent/60 cursor-pointer")
-        row.textContent = str(text)
-        index = len(self._items) - 1
-        dom.listen(row, "click", lambda *a, i=index: self.setCurrentRow(i))
-        self._el.appendChild(row)
+    def setIconSize(self, size):
+        width = getattr(size, "width", None)
+        self._iconSize = int(width()) if callable(width) else int(size)
+        self._render()
+
+    def iconSize(self):
+        from .types import QSize
+
+        return QSize(self._iconSize, self._iconSize)
+
+    def setViewMode(self, mode):
+        """ListMode (rows) or IconMode (a grid of icons with their text below): a QListView enum,
+        or its name as a .ui file gives it ("QListView::IconMode")."""
+        if isinstance(mode, str):
+            mode = 1 if mode.endswith("IconMode") else 0
+        self._viewMode = int(mode)
+        self._render()
+
+    def viewMode(self):
+        return self._viewMode
+
+    def addItem(self, item):
+        if not isinstance(item, QListWidgetItem):
+            item = QListWidgetItem(str(item))
+        item._list = self
+        self._items.append(item)
+        self._render()
 
     def addItems(self, texts):
         for t in texts:
             self.addItem(t)
 
+    def insertItem(self, row, item):
+        self.addItem(item)
+        self._items.insert(int(row), self._items.pop())
+        self._render()
+
+    def item(self, row):
+        row = int(row)
+        return self._items[row] if 0 <= row < len(self._items) else None
+
+    def row(self, item):
+        return self._items.index(item) if item in self._items else -1
+
+    def takeItem(self, row):
+        row = int(row)
+        if not 0 <= row < len(self._items):
+            return None
+        item = self._items.pop(row)
+        item._list = None
+        if self._current >= len(self._items):
+            self._current = len(self._items) - 1
+        self._render()
+        return item
+
+    def findItems(self, text, *args):
+        return [item for item in self._items if item.text() == text]
+
+    def currentItem(self):
+        return self.item(self._current)
+
+    def setCurrentItem(self, item):
+        self.setCurrentRow(self.row(item))
+
+    def selectedItems(self):
+        item = self.currentItem()
+        return [item] if item is not None and not self._selectionCleared else []
+
+    def clearSelection(self):
+        """As in Qt: nothing is selected, the current item stays what it is."""
+        if not self._selectionCleared:
+            self._selectionCleared = True
+            self._render()
+            self.itemSelectionChanged.emit()
+
     def setCurrentRow(self, row):
+        previous = self.currentItem()
         self._current = row
+        self._selectionCleared = False
+        self._render()
         self.currentRowChanged.emit(row)
+        self.currentItemChanged.emit(self.currentItem(), previous)
         self.itemSelectionChanged.emit()
 
     def currentRow(self):
         return self._current
 
-    def count(self):
-        return len(self._items)
+    count = count_property(lambda self: len(self._items))
 
     def clear(self):
         self._items = []
-        self._el.innerHTML = ""
+        self._current = -1
+        self._render()
+
+    def _onRowClicked(self, row):
+        self.setCurrentRow(row)
+        self.itemClicked.emit(self.item(row))
+
+    def _render(self):
+        from . import icons
+
+        el = self._el
+        if el is None:
+            return
+        while el.firstChild:
+            el.removeChild(el.firstChild)
+        iconMode = self._viewMode == 1
+        el.style.display = "flex"
+        el.style.flexDirection = "row" if iconMode else "column"
+        el.style.flexWrap = "wrap" if iconMode else "nowrap"
+        el.style.gap = "4px" if iconMode else "0"
+        for index, item in enumerate(self._items):
+            selected = " bg-accent" if index == self._current and not self._selectionCleared else ""
+            layout = " flex flex-col items-center p-1 text-center" if iconMode else " flex items-center gap-1.5 px-2 py-0.5"
+            row = dom.create("div", "text-[13px] rounded hover:bg-accent/60 cursor-pointer" + layout + selected)
+            path = getattr(item._icon, "_path", None)
+            url = icons.icon_url(path) if path else ""
+            if url:
+                image = dom.create("img", "object-contain shrink-0")
+                image.src = url
+                image.style.width = image.style.height = f"{self._iconSize}px"
+                row.appendChild(image)
+            text = dom.create("span")
+            text.textContent = item.text()
+            if iconMode:
+                text.style.maxWidth = f"{max(self._iconSize, 64)}px"
+            row.appendChild(text)
+            if item.toolTip():
+                row.title = item.toolTip()
+            dom.listen(row, "click", lambda *a, i=index: self._onRowClicked(i))
+            el.appendChild(row)
+
+    def setSelectionMode(self, mode):
+        pass
+
+    def setAlternatingRowColors(self, enabled):
+        pass
+
+    def setSortingEnabled(self, enabled):
+        pass
+
+    def sortItems(self, *args):
+        pass
 
 
-class QTableWidget(QWidget):
-    """Minimal table (read-only display)."""
+class QProgressDialog(QWidget):
+    """Progress of a long computation: its range, value and label are kept. It is not drawn: the
+    page shows the log, and nothing here blocks while it runs. It is never cancelled."""
+
+    canceled = Signal("canceled()")
+
+    minimumDuration = QProp(4000)
+    windowModality = QProp(0)
+    autoClose = QProp(True)
+    autoReset = QProp(True)
+
+    def __init__(self, *args):
+        parent = next((a for a in args if isinstance(a, QWidget)), None)
+        super().__init__(parent)
+        self._minimum, self._maximum, self._value = 0, 100, -1
+        self._labelText = ""
+        texts = [a for a in args if isinstance(a, str)]
+        if texts:
+            self._labelText = texts[0]
+
+    def setLabelText(self, text):
+        self._labelText = str(text)
+
+    def labelText(self):
+        return self._labelText
+
+    def setCancelButton(self, button):
+        pass
+
+    def setCancelButtonText(self, text):
+        pass
+
+    def setRange(self, minimum, maximum):
+        self._minimum, self._maximum = int(minimum), int(maximum)
+
+    def setMinimum(self, value):
+        self._minimum = int(value)
+
+    def setMaximum(self, value):
+        self._maximum = int(value)
+
+    def minimum(self):
+        return self._minimum
+
+    def maximum(self):
+        return self._maximum
+
+    def setValue(self, value):
+        self._value = int(value)
+
+    def value(self):
+        return self._value
+
+    def wasCanceled(self):
+        return False
+
+    def reset(self):
+        self._value = -1
+
+    def cancel(self):
+        self.canceled.emit()
+
+    def setMinimumDuration(self, ms):
+        self.minimumDuration = ms
+
+    def setWindowModality(self, modality):
+        self.windowModality = modality
+
+    def setAutoClose(self, value):
+        self.autoClose = value
+
+    def setAutoReset(self, value):
+        self.autoReset = value
+
+
+class QTableWidget(QWidget, QAbstractItemView):
+    """Minimal table (read-only display). Qt's item view enums are its own (qt.QTableWidget.SelectRows)."""
 
     def __init__(self, *args):
         parent = next((a for a in args if isinstance(a, QWidget)), None)
         super().__init__(parent)
         self._rows, self._cols = 0, 0
         self._data = {}
+        self._cellWidgets = {}  # (row, column) -> widget shown in the cell
         self._headers = []
 
     def setRowCount(self, n):
@@ -1530,11 +1914,9 @@ class QTableWidget(QWidget):
         self._cols = int(n)
         self._render()
 
-    def rowCount(self):
-        return self._rows
-
-    def columnCount(self):
-        return self._cols
+    # properties in PythonQt: modules set them (table.rowCount = n) as well as read them
+    rowCount = count_property(lambda self: self._rows, lambda self, n: self.setRowCount(n))
+    columnCount = count_property(lambda self: self._cols, lambda self, n: self.setColumnCount(n))
 
     def setHorizontalHeaderLabels(self, labels):
         self._headers = list(labels)
@@ -1549,23 +1931,55 @@ class QTableWidget(QWidget):
 
         return QTableWidgetItem(self._data.get((row, col), ""))
 
+    def setCellWidget(self, row, column, widget):
+        """A widget shown in a cell instead of its text (a label, a button)."""
+        self._cellWidgets[(int(row), int(column))] = widget
+        if widget is not None:
+            widget._parent = self
+        self._render()
+
+    def cellWidget(self, row, column):
+        return self._cellWidgets.get((int(row), int(column)))
+
+    def removeCellWidget(self, row, column):
+        self._cellWidgets.pop((int(row), int(column)), None)
+        self._render()
+
+    def setRowHeight(self, row, height):
+        pass  # rows are as high as what is in them
+
     def _render(self):
-        rows = ["<table class='w-full text-[12px]'>"]
+        el = self._el
+        if el is None:
+            return
+        while el.firstChild:
+            el.removeChild(el.firstChild)
+        table = dom.create("table", "w-full text-[12px]")
         if self._headers:
-            rows.append("<tr>" + "".join(f"<th class='text-left text-muted-foreground'>{h}</th>" for h in self._headers) + "</tr>")
+            tr = dom.create("tr")
+            for header in self._headers:
+                th = dom.create("th", "text-left text-muted-foreground")
+                th.textContent = str(header)
+                tr.appendChild(th)
+            table.appendChild(tr)
         for r in range(self._rows):
-            rows.append("<tr>" + "".join(f"<td>{self._data.get((r, c), '')}</td>" for c in range(self._cols)) + "</tr>")
-        rows.append("</table>")
-        try:
-            self._el.innerHTML = "".join(rows)
-        except Exception:
-            pass
+            tr = dom.create("tr")
+            for c in range(self._cols):
+                td = dom.create("td")
+                widget = self._cellWidgets.get((r, c))
+                if widget is not None and widget._el is not None:
+                    td.appendChild(widget._el)
+                else:
+                    td.textContent = str(self._data.get((r, c), ""))
+                tr.appendChild(td)
+            table.appendChild(tr)
+        el.appendChild(table)
 
     def horizontalHeader(self):
-        return _Header()
+        return QHeaderView()
 
     def verticalHeader(self):
-        return _Header()
+        return QHeaderView()
 
     def setEditTriggers(self, t):
         pass
@@ -1618,6 +2032,7 @@ class QTableWidget(QWidget):
 
     def clear(self):
         self._data = {}
+        self._cellWidgets = {}
         self._headers = []
         self._render()
 
@@ -1628,7 +2043,352 @@ class QTableWidget(QWidget):
         pass
 
 
-class _Header:
+class QTableView(QTableWidget):
+    """A table of a model in Qt; here the same read-only table as QTableWidget. Modules mostly use it
+    for Qt's item view enums (qt.QTableView.SelectRows)."""
+
+
+class QTreeWidgetItem:
+    """An item of a QTreeWidget: a text, data and tool tip per column, a check state, children."""
+
+    DisplayRole, ToolTipRole, CheckStateRole, UserRole = 0, 3, 10, 256
+    ShowIndicator, DontShowIndicator, DontShowIndicatorWhenChildless = 0, 1, 2
+
+    def __init__(self, *args):
+        self._texts, self._data, self._toolTips, self._checks = {}, {}, {}, {}
+        self._flags = None
+        self._children = []
+        self._parent = None
+        self._tree = None
+        self._expanded = False
+        for arg in args:
+            if isinstance(arg, QTreeWidget):
+                arg.addTopLevelItem(self)
+            elif isinstance(arg, QTreeWidgetItem):
+                arg.addChild(self)
+            elif isinstance(arg, (list, tuple)):
+                self._texts = {i: str(t) for i, t in enumerate(arg)}
+
+    def _changed(self, column=0):
+        tree = self.treeWidget()
+        if tree is not None:
+            tree._render()
+            tree.itemChanged.emit(self, column)
+
+    def text(self, column=0):
+        return self._texts.get(int(column), "")
+
+    def setText(self, column, text):
+        self._texts[int(column)] = str(text)
+        self._changed(column)
+
+    def data(self, column, role):
+        if role == self.DisplayRole:
+            return self.text(column)
+        if role == self.CheckStateRole:
+            return self.checkState(column)
+        if role == self.ToolTipRole:
+            return self.toolTip(column)
+        return self._data.get((int(column), int(role)))
+
+    def setData(self, column, role, value):
+        if role == self.DisplayRole:
+            self.setText(column, value)
+        elif role == self.CheckStateRole:
+            self.setCheckState(column, value)
+        elif role == self.ToolTipRole:
+            self.setToolTip(column, value)
+        else:
+            self._data[(int(column), int(role))] = value
+
+    def toolTip(self, column=0):
+        return self._toolTips.get(int(column), "")
+
+    def setToolTip(self, column, text):
+        self._toolTips[int(column)] = str(text)
+        self._changed(column)
+
+    def checkState(self, column=0):
+        return self._checks.get(int(column), 0)
+
+    def setCheckState(self, column, state):
+        self._checks[int(column)] = int(state)
+        self._changed(column)
+
+    def flags(self):
+        return self._flags
+
+    def setFlags(self, flags):
+        self._flags = flags
+
+    def columnCount(self):
+        return max(self._texts, default=-1) + 1
+
+    def addChild(self, item):
+        if item._parent is not None:
+            item._parent._children.remove(item)
+        item._parent = self
+        self._children.append(item)
+        tree = self.treeWidget()
+        if tree is not None:
+            tree._render()
+
+    def addChildren(self, items):
+        for item in items:
+            self.addChild(item)
+
+    def insertChild(self, index, item):
+        self.addChild(item)
+        self._children.insert(int(index), self._children.pop())
+        if self.treeWidget() is not None:
+            self.treeWidget()._render()
+
+    def takeChild(self, index):
+        item = self._children.pop(int(index))
+        item._parent = None
+        if self.treeWidget() is not None:
+            self.treeWidget()._render()
+        return item
+
+    def removeChild(self, item):
+        if item in self._children:
+            self.takeChild(self._children.index(item))
+
+    def child(self, index):
+        index = int(index)
+        return self._children[index] if 0 <= index < len(self._children) else None
+
+    def childCount(self):
+        return len(self._children)
+
+    def indexOfChild(self, item):
+        return self._children.index(item) if item in self._children else -1
+
+    def parent(self):
+        # the tree's invisible root is no one's parent, as in Qt
+        return None if self._parent is None or self._parent._tree is not None else self._parent
+
+    def treeWidget(self):
+        item = self
+        while item._parent is not None:
+            item = item._parent
+        return item._tree
+
+    def setExpanded(self, expanded):
+        self._expanded = bool(expanded)
+
+    def isExpanded(self):
+        return self._expanded
+
+    def setChildIndicatorPolicy(self, policy):
+        pass
+
+    def setTextAlignment(self, column, alignment):
+        pass
+
+    def setIcon(self, column, icon):
+        pass
+
+    def setForeground(self, column, brush):
+        pass
+
+    def setBackground(self, column, brush):
+        pass
+
+    def setFont(self, column, font):
+        pass
+
+
+class QTreeWidget(QWidget, QAbstractItemView):
+    """A tree of items in columns, drawn as an indented table; clicking an item makes it current."""
+
+    currentItemChanged = Signal("currentItemChanged(QTreeWidgetItem*,QTreeWidgetItem*)")
+    itemClicked = Signal("itemClicked(QTreeWidgetItem*,int)")
+    itemDoubleClicked = Signal("itemDoubleClicked(QTreeWidgetItem*,int)")
+    itemChanged = Signal("itemChanged(QTreeWidgetItem*,int)")
+    itemSelectionChanged = Signal("itemSelectionChanged()")
+    itemExpanded = Signal("itemExpanded(QTreeWidgetItem*)")
+    itemCollapsed = Signal("itemCollapsed(QTreeWidgetItem*)")
+
+    def __init__(self, *args):
+        parent = next((a for a in args if isinstance(a, QWidget)), None)
+        super().__init__(parent)
+        self._root = QTreeWidgetItem()
+        self._root._tree = self
+        self._columns = 1
+        self._headers = []
+        self._current = None
+        self._headerHidden = False
+
+    columnCount = count_property(lambda self: self._columns, lambda self, n: self.setColumnCount(n))
+    topLevelItemCount = count_property(lambda self: self._root.childCount())
+
+    def setColumnCount(self, n):
+        self._columns = int(n)
+        self._render()
+
+    def setHeaderLabels(self, labels):
+        self._headers = [str(label) for label in labels]
+        self._columns = max(self._columns, len(self._headers))
+        self._render()
+
+    def setHeaderLabel(self, label):
+        self.setHeaderLabels([label])
+
+    def headerItem(self):
+        return QTreeWidgetItem(list(self._headers))
+
+    def header(self):
+        return QHeaderView()
+
+    def setHeaderHidden(self, hidden):
+        self._headerHidden = bool(hidden)
+        self._render()
+
+    def invisibleRootItem(self):
+        return self._root
+
+    def addTopLevelItem(self, item):
+        self._root.addChild(item)
+
+    def addTopLevelItems(self, items):
+        for item in items:
+            self._root.addChild(item)
+
+    def insertTopLevelItem(self, index, item):
+        self._root.insertChild(index, item)
+
+    def topLevelItem(self, index):
+        return self._root.child(index)
+
+    def indexOfTopLevelItem(self, item):
+        return self._root.indexOfChild(item)
+
+    def takeTopLevelItem(self, index):
+        item = self._root.takeChild(index)
+        if item is self._current:
+            self.setCurrentItem(None)
+        return item
+
+    def clear(self):
+        self._root._children = []
+        self._current = None
+        self._render()
+
+    def currentItem(self):
+        return self._current
+
+    def setCurrentItem(self, item, *args):
+        previous, self._current = self._current, item
+        if previous is not item:
+            self._render()
+            self.currentItemChanged.emit(item, previous)
+            self.itemSelectionChanged.emit()
+
+    def selectedItems(self):
+        return [self._current] if self._current is not None else []
+
+    def _onRowClicked(self, item):
+        self.setCurrentItem(item)
+        self.itemClicked.emit(item, 0)
+
+    def _render(self):
+        el = self._el
+        if el is None:
+            return
+        while el.firstChild:
+            el.removeChild(el.firstChild)
+        table = dom.create("table", "w-full text-[12px]")
+        if self._headers and not self._headerHidden:
+            row = dom.create("tr", "")
+            for text in self._headers:
+                cell = dom.create("th", "text-left text-muted-foreground font-normal")
+                cell.textContent = text
+                row.appendChild(cell)
+            table.appendChild(row)
+
+        def add(item, depth):
+            row = dom.create("tr", "cursor-pointer" + (" bg-accent" if item is self._current else ""))
+            for column in range(self._columns):
+                cell = dom.create("td", "")
+                text = item.text(column)
+                if column == 0:
+                    try:
+                        cell.style.paddingLeft = f"{depth * 14}px"
+                    except Exception:
+                        pass
+                    if 0 in item._checks:
+                        text = ("\u2611 " if item.checkState(0) else "\u2610 ") + text
+                cell.textContent = text
+                if item.toolTip(column):
+                    cell.title = item.toolTip(column)
+                row.appendChild(cell)
+            dom.listen(row, "click", lambda *a, i=item: self._onRowClicked(i))
+            table.appendChild(row)
+            for child in item._children:
+                add(child, depth + 1)
+
+        for item in self._root._children:
+            add(item, 0)
+        el.appendChild(table)
+
+    # How the tree is shown: a read-only indented table here
+    def expandAll(self):
+        pass
+
+    def collapseAll(self):
+        pass
+
+    def expandItem(self, item):
+        pass
+
+    def collapseItem(self, item):
+        pass
+
+    def resizeColumnToContents(self, column):
+        pass
+
+    def setColumnWidth(self, column, width):
+        pass
+
+    def setRootIsDecorated(self, show):
+        pass
+
+    def setAlternatingRowColors(self, enabled):
+        pass
+
+    def setSelectionMode(self, mode):
+        pass
+
+    def setSelectionBehavior(self, behavior):
+        pass
+
+    def setSortingEnabled(self, enabled):
+        pass
+
+    def sortItems(self, column, order=0):
+        pass
+
+    def setUniformRowHeights(self, uniform):
+        pass
+
+    def setIndentation(self, indentation):
+        pass
+
+    def setEditTriggers(self, triggers):
+        pass
+
+    def setContextMenuPolicy(self, policy):
+        pass
+
+
+class QHeaderView:
+    """A table's header. Modules pass its resize modes to setSectionResizeMode; the web table sizes
+    its columns itself, so what the header is asked to do has no effect."""
+
+    Interactive, Stretch, Fixed, ResizeToContents = 0, 1, 2, 3
+    Custom = Fixed
+
     def __getattr__(self, name):
         return lambda *a, **k: None
 

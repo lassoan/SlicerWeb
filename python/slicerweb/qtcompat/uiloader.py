@@ -134,6 +134,12 @@ class QUiLoader:
         name = element.get("name")
         if name:
             widget.setObjectName(name)
+        # The items of a combo box or a list written in the .ui file, added before the properties, as
+        # Qt does, so that currentIndex has an item to select
+        if hasattr(widget, "addItem"):
+            for item in element.findall("item"):
+                text = next((p.findtext("string", "") for p in item.findall("property") if p.get("name") == "text"), "")
+                widget.addItem(text)
         for prop in element.findall("property"):
             children = list(prop)
             if children:

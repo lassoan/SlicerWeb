@@ -24,6 +24,7 @@ import os
 import sys
 
 from . import host
+from .qtcompat.core import Signal
 
 logger = logging.getLogger("slicerweb.modules")
 
@@ -658,6 +659,10 @@ def create_scripted_module_widget(moduleName):
     if widget_cls is None:
         raise RuntimeError(f"{moduleName} does not define a {moduleName}Widget class")
     instance = widget_cls(parent)
+    # widgetRepresentation() is the Python widget itself here; on the desktop it is the Qt widget,
+    # whose self() gives the Python one (slicer.modules.<name>.widgetRepresentation().self())
+    if not hasattr(instance, "self"):
+        instance.self = lambda: instance
     # An error in setup() leaves the GUI built so far, as on the desktop (the Qt widgets are there
     # already): it is reported, and the page shows it above the GUI (show_scripted_module_widget)
     module._setupError = None
@@ -693,7 +698,7 @@ def show_scripted_module_widget(moduleName, containerSelector):
     container = dom.query(containerSelector)
     if container is not None:
         container.appendChild(parent.element())
-    _selectedModule[0] = moduleName
+    _set_selected_module(moduleName)
     # Selected from Python (select_module), the module has already been entered
     if getattr(module, "_enteredBeforeShown", False):
         module._enteredBeforeShown = False
@@ -705,6 +710,13 @@ def show_scripted_module_widget(moduleName, containerSelector):
 
 
 _selectedModule = [None]
+
+
+def _set_selected_module(moduleName):
+    changed = _selectedModule[0] != moduleName
+    _selectedModule[0] = moduleName
+    if changed:
+        _moduleSelector.moduleSelected.emit(moduleName)
 
 
 def select_module(moduleName):
@@ -724,12 +736,14 @@ def select_module(moduleName):
         if hasattr(widget, "enter"):
             widget.enter()
             module._enteredBeforeShown = True
-    _selectedModule[0] = moduleName
+    _set_selected_module(moduleName)
     host.emit("select-module", {"name": moduleName})
 
 
 class ModuleSelector:
     """slicer.util.moduleSelector(): the module panel of the page (qSlicerModuleSelectorToolBar)."""
+
+    moduleSelected = Signal("moduleSelected(QString)")
 
     def selectModule(self, moduleName):
         select_module(moduleName)
@@ -737,6 +751,9 @@ class ModuleSelector:
     @property
     def selectedModule(self):
         return _selectedModule[0]
+
+
+_moduleSelector = ModuleSelector()
 
 
 def install_module_selector():
@@ -747,8 +764,7 @@ def install_module_selector():
     """
     import slicer.util
 
-    selector = ModuleSelector()
-    slicer.util.moduleSelector = lambda: selector
+    slicer.util.moduleSelector = lambda: _moduleSelector
     # What a scripted module is on the desktop, for isinstance() checks such as that of
     # slicer.util.getModuleLogic (the logic of a scripted module is its widget's)
     import slicer

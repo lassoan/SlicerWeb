@@ -426,6 +426,12 @@ class SlicerWebApplication:
             return _BoundAppSignal(self, name)
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
+    def installEventFilter(self, obj):
+        """Events of the browser do not go through Qt event filters; nothing to install."""
+
+    def removeEventFilter(self, obj):
+        pass
+
     def connect(self, signal, slot):
         """qSlicerApplication signals (e.g. startupCompleted(), used by scripted modules to finish
         their setup after all modules are loaded)."""

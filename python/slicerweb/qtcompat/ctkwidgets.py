@@ -263,11 +263,74 @@ class ctkComboBox(QComboBox):
         pass
 
 
+class _CheckableModelIndex:
+    """An index of ctkCheckableComboBox's model: the row of an item."""
+
+    def __init__(self, row, column=0):
+        self._row, self._column = int(row), int(column)
+
+    def row(self):
+        return self._row
+
+    def column(self):
+        return self._column
+
+    def isValid(self):
+        return self._row >= 0
+
+
+class _CheckableModel:
+    def __init__(self, combo):
+        self._combo = combo
+
+    def index(self, row, column=0, *args):
+        return _CheckableModelIndex(row, column)
+
+    def rowCount(self, *args):
+        return self._combo.count
+
+
 class ctkCheckableComboBox(QComboBox):
+    """A combo box whose items are checked on and off, each with its own check state. The state is
+    kept per item; the list does not show check boxes yet, so it is set from code."""
+
     checkedIndexesChanged = Signal("checkedIndexesChanged()")
 
+    def _states(self):
+        if not hasattr(self, "_checkStates"):
+            self._checkStates = {}
+        return self._checkStates
+
+    def checkableModel(self):
+        return _CheckableModel(self)
+
+    def model(self):
+        return self.checkableModel()
+
+    def checkState(self, index):
+        from .types import Qt
+
+        return self._states().get(index.row(), Qt.Unchecked)
+
+    def setCheckState(self, index, state):
+        from .types import Qt
+
+        row = index.row()
+        state = int(state)
+        if self._states().get(row, Qt.Unchecked) != state:
+            self._states()[row] = state
+            self.checkedIndexesChanged.emit()
+
     def checkedIndexes(self):
-        return [self._currentIndex] if self._currentIndex >= 0 else []
+        from .types import Qt
+
+        return [_CheckableModelIndex(r) for r, s in sorted(self._states().items()) if s == Qt.Checked]
+
+    def allChecked(self):
+        return len(self.checkedIndexes()) == self.count
+
+    def noneChecked(self):
+        return not self.checkedIndexes()
 
 
 class ctkColorPickerButton(_ElementWidget):
@@ -382,7 +445,14 @@ class ctkCheckBox(QCheckBox):
 
 
 class ctkMenuButton(QPushButton):
-    pass
+    """A button with a menu of its own from the start, as ctkMenuButton has: modules add their options
+    to menu() right away. The menu is not shown on the button yet; its actions keep their state."""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        from .widgets import QMenu
+
+        self.setMenu(QMenu(self))
 
 
 class ctkSearchBox(QLineEdit):

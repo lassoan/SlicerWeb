@@ -82,6 +82,16 @@ class SubjectHierarchyPluginLogic:
             return
         self._shTag = shNode.AddObserver(
             slicer.vtkMRMLSubjectHierarchyNode.SubjectHierarchyItemModifiedEvent, self._onItemModified)
+        shNode.AddObserver(slicer.vtkMRMLSubjectHierarchyNode.SubjectHierarchyItemAddedEvent, self._onItemAdded)
+
+    @vtk.calldata_type(vtk.VTK_LONG)
+    def _onItemAdded(self, caller, event, itemID):
+        """A folder made without a plugin (shNode.CreateFolderItem) is owned by the Folder plugin,
+        as on the desktop, where that plugin claims it as it is added. Modules look for their
+        folders by that owner (SlicerHeart's PDA Quantification does): without it, they would not
+        find the folder they made and make another one each time."""
+        if itemID and not caller.GetItemDataNode(itemID) and not caller.GetItemOwnerPluginName(itemID)                 and caller.IsItemLevel(itemID, "Folder"):
+            caller.SetItemOwnerPluginName(itemID, "Folder")
 
     @vtk.calldata_type(vtk.VTK_LONG)
     def _onItemModified(self, caller, event, itemID):

@@ -12,6 +12,20 @@ import weakref
 logger = logging.getLogger("slicerweb.qt")
 
 
+class CallableInt(int):
+    """A number that can also be called: what a Qt property that is also a method (QComboBox::count,
+    QTableWidget::rowCount) gives, since module code reads it either way - PythonQt offers the
+    property (combo.count), code written for C++ or the Python bindings calls it (combo.count())."""
+
+    def __call__(self):
+        return int(self)
+
+
+def count_property(getter, setter=None):
+    """A Qt property whose value is a count (see CallableInt)."""
+    return property(lambda self: CallableInt(getter(self)), setter)
+
+
 class BoundSignal:
     def __init__(self, owner, name):
         self._owner = weakref.ref(owner)

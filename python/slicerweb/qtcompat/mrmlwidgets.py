@@ -3,7 +3,7 @@
 from . import dom
 from .core import property_value
 from .core import QProp, Signal
-from .ctkwidgets import ctkRangeWidget
+from .ctkwidgets import ctkCollapsibleButton, ctkCoordinatesWidget, ctkRangeWidget
 from .widgets import QVBoxLayout, QWidget, _ElementWidget
 
 
@@ -382,6 +382,9 @@ class qMRMLSegmentsTableView(QWidget):
     def setSegmentationNode(self, node):
         self._segmentationNode = node
 
+    def setHideSegments(self, segmentIDs):
+        self._hiddenSegmentIDs = list(segmentIDs)
+
     def selectedSegmentIDs(self):
         return []
 
@@ -409,12 +412,127 @@ class qMRMLSegmentEditorWidget(QWidget):
     setMasterVolumeNode = setSourceVolumeNode
 
     def setMRMLSegmentEditorNode(self, node):
-        pass
+        self._segmentEditorNode = node
+
+    def mrmlSegmentEditorNode(self):
+        return getattr(self, "_segmentEditorNode", None)
 
     def setActiveEffectByName(self, name):
         from .. import segment_editor
 
         segment_editor.editor().setEffect(name)
+
+
+class _WebView:
+    """webView() of qSlicerWebWidget: its url is the widget's."""
+
+    def __init__(self, widget):
+        self._widget = widget
+
+    @property
+    def url(self):
+        return self._widget.url
+
+    @url.setter
+    def url(self, value):
+        self._widget.url = value
+
+    def setUrl(self, value):
+        self._widget.url = value
+
+    def setHtml(self, html, *args):
+        self._widget.setHtml(html)
+
+
+class qSlicerWebWidget(QWidget):
+    """A web page inside a module panel, shown in an iframe. A page of the extension itself (a file in
+    the virtual file system, which the browser cannot load by address) is shown from its content."""
+
+    loadFinished = Signal("loadFinished(bool)")
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._url = ""
+        self._frame = dom.create("iframe", "w-full border-0")
+        try:
+            self._frame.style.minHeight = "400px"
+            self._el.appendChild(self._frame)
+        except Exception:
+            pass
+
+    @property
+    def url(self):
+        return self._url
+
+    @url.setter
+    def url(self, value):
+        self.setUrl(value)
+
+    def setUrl(self, value):
+        import os
+
+        value = str(getattr(value, "toString", lambda: value)()) if not isinstance(value, str) else value
+        self._url = value
+        path = value[len("file://"):] if value.startswith("file://") else value
+        if not value.startswith(("http://", "https://", "data:", "blob:")) and os.path.isfile(path):
+            with open(path, encoding="utf8", errors="replace") as handle:
+                self.setHtml(handle.read())
+        else:
+            try:
+                self._frame.removeAttribute("srcdoc")
+                self._frame.src = value
+            except Exception:
+                pass
+        self.loadFinished.emit(True)
+
+    def setHtml(self, html, *args):
+        try:
+            self._frame.srcdoc = str(html)
+        except Exception:
+            pass
+
+    def webView(self):
+        return _WebView(self)
+
+
+class qMRMLCollapsibleButton(ctkCollapsibleButton):
+    """ctkCollapsibleButton that is given the scene, as qMRMLWidget is (a .ui file uses it as the
+    top of a module panel section)."""
+
+    mrmlSceneChanged = Signal("mrmlSceneChanged(vtkMRMLScene*)")
+
+    def setMRMLScene(self, scene):
+        super().setMRMLScene(scene)
+        self.mrmlSceneChanged.emit(scene)
+
+
+class qMRMLCoordinatesWidget(ctkCoordinatesWidget):
+    """ctkCoordinatesWidget that is given the scene (on the desktop, for the units of its values)."""
+
+    def setMRMLScene(self, scene):
+        super().setMRMLScene(scene)
+
+    def setQuantity(self, quantity):
+        self._quantity = quantity
+
+
+class qMRMLUtils:
+    """qMRMLUtils: conversions between VTK and Qt types (here, the images: a QImage holds the
+    vtkImageData it is made from)."""
+
+    def vtkImageDataToQImage(self, imageData, image):
+        import vtk
+
+        copy = vtk.vtkImageData()
+        copy.DeepCopy(imageData)
+        image._vtkImage = copy
+        return True
+
+    def qImageToVtkImageData(self, image, imageData):
+        if getattr(image, "_vtkImage", None) is None:
+            return False
+        imageData.DeepCopy(image._vtkImage)
+        return True
 
 
 class qSlicerSimpleMarkupsWidget(qMRMLWidget):
@@ -625,6 +743,15 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         self._colorButton.setToolTip("Color of the markups")
         self._colorButton.colorChanged.connect(self._onColorChanged)
         layout.addWidget(self._colorButton)
+        # The "..." button that opens the menu of the actions below on the desktop (modules hide it
+        # by findChild(..., "MoreButton")); hidden here until a button can show a menu.
+        from .widgets import QMenu
+
+        self._moreButton = QPushButton("...", self)
+        self._moreButton.setObjectName("MoreButton")
+        self._moreButton.setMenu(QMenu(self._moreButton))
+        self._moreButton.setVisible(False)
+        layout.addWidget(self._moreButton)
         # The actions of the real widget's "more" menu, by name, so that a module may hide or use
         # them; here they are kept as actions without a menu to show them in yet.
         from .types import QAction
@@ -637,6 +764,7 @@ class qSlicerMarkupsPlaceWidget(QWidget):
             action.setObjectName(name)
             action.text = text
             self._actions[name] = action
+            self._moreButton.menu().addAction(action)
 
     def colorButton(self):
         return self._colorButton
@@ -1090,8 +1218,16 @@ class qMRMLSubjectHierarchyTreeView(QWidget):
     def currentItem(self):
         return getattr(self, "_item", 0)
 
-    def currentItems(self):
-        return [self.currentItem()] if self.currentItem() else []
+    def currentItems(self, idList=None):
+        """The selected items: returned, or put into the vtkIdList given, as the desktop tree does
+        (modules call currentItems(idList) and read the list)."""
+        items = [self.currentItem()] if self.currentItem() else []
+        if idList is None:
+            return items
+        idList.Reset()
+        for item in items:
+            idList.InsertNextId(item)
+        return None
 
     def setMRMLScene(self, scene):
         self._scene = scene
@@ -1110,6 +1246,12 @@ class qMRMLSubjectHierarchyTreeView(QWidget):
 
     def isColumnHidden(self, column):
         return column in self._hiddenColumns
+
+    def hideColumn(self, column):
+        self.setColumnHidden(column, True)
+
+    def showColumn(self, column):
+        self.setColumnHidden(column, False)
 
     def setRootItem(self, item):
         self._rootItem = item
@@ -1141,6 +1283,13 @@ class qMRMLSliceWidget(QWidget):
 class qMRMLTableView(QWidget):
     def setMRMLTableNode(self, node):
         self._node = node
+
+    # Selection options: the table is shown read-only, as QTableWidget's is
+    def setSelectionMode(self, mode):
+        pass
+
+    def setSelectionBehavior(self, behavior):
+        pass
 
 
 class qSlicerModuleWidget(qMRMLWidget):

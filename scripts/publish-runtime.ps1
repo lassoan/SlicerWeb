@@ -11,9 +11,15 @@
 
   Needs the GitHub CLI, signed in with a token that may write to the repository (gh auth login).
 
+  A build with extensions of another folder (build.ps1 -ExtensionsDir), private ones among them,
+  goes to a release of a private repository of its own, whose "Publish app" workflow calls this
+  repository's (docs/extensions.md). It is not uploaded to a public repository: extensions that
+  extensions\ of this repository does not have would be published with it.
+
 .EXAMPLE
   .\scripts\publish-runtime.ps1
   .\scripts\publish-runtime.ps1 -Publish       # also start the workflow that rebuilds the site
+  .\scripts\publish-runtime.ps1 -Repository myorg/slicerweb-deploy -Publish
 #>
 param(
   [string]$Dist = "D:\SlicerWeb-build\dist",
@@ -25,6 +31,17 @@ $ErrorActionPreference = "Stop"
 
 foreach ($name in @("wheels", "extensions")) {
   if (-not (Test-Path (Join-Path $Dist $name))) { throw "Not found: $(Join-Path $Dist $name) (run .\build.ps1 60-wheels 80-extensions)" }
+}
+
+$visibility = gh repo view $Repository --json visibility --jq .visibility
+if ($LASTEXITCODE -ne 0) { throw "Repository $Repository cannot be read" }
+if ($visibility -eq "PUBLIC") {
+  $index = Get-Content (Join-Path $Dist "extensions\index.json") -Raw | ConvertFrom-Json
+  $ours = Get-ChildItem (Join-Path $PSScriptRoot "..\extensions\*.json") | ForEach-Object { $_.BaseName }
+  $others = @($index.extensions | ForEach-Object { $_.name } | Where-Object { $ours -notcontains $_ })
+  if ($others.Count) {
+    throw "$Repository is public, and the build has extensions that extensions\ of SlicerWeb has not: $($others -join ', '). Upload it to a private repository (-Repository)."
+  }
 }
 
 $staging = Join-Path ([System.IO.Path]::GetTempPath()) "slicerweb-runtime"

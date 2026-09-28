@@ -1,8 +1,7 @@
 // slicer.app.extensionsManagerModel(): modules ask which extensions are installed and install the
 // ones they need, as on the desktop. Extensions of SlicerWeb's index are installed (with what they
-// depend on) and their modules loaded; one the index does not have is reported, and the module is
-// told it could not be installed - Guided Artery Segmentation asks for SegmentEditorExtraEffects,
-// which SlicerWeb does not have, and says so rather than failing on a missing extensionsManagerModel.
+// depend on) and their modules loaded - Guided Artery Segmentation asks for SegmentEditorExtraEffects,
+// and gets it; one no index has is reported as not installable.
 // Usage: node tests/extensions-manager-model.mjs [url]
 import { chromium } from "playwright-core";
 
@@ -34,15 +33,16 @@ const em = "slicer.app.extensionsManagerModel()";
 check("SlicerVMTK is installed", await py(`${em}.isExtensionInstalled("SlicerVMTK")`), "True");
 check("MarkupsToModel is not, yet", await py(`${em}.isExtensionInstalled("MarkupsToModel")`), "False");
 
-// ---- the module that asks for an extension SlicerWeb does not have
+// ---- the module that asks for an extension it needs: installed, as on the desktop
 await page.evaluate(() => { window.slicerWeb.store.activeModule = "GuidedArterySegmentation"; });
-await page.waitForTimeout(5000);
+await page.waitForFunction(() => (window.slicerWeb.store.modules ?? []).some((m) => m.name === "SegmentEditorFloodFilling"), null, { timeout: 120000 }).catch(() => {});
+await page.waitForTimeout(1500);
 const logs = await page.evaluate(() => window.__logs.map((l) => String(l.message)).join("\n"));
 check("no complaint about a missing extensionsManagerModel", /extensionsManagerModel/.test(logs), false);
-check("the extension it asks for is reported as not available in SlicerWeb", /SegmentEditorExtraEffects extension is not available in SlicerWeb/.test(logs), true);
-check("and the module says it could not be installed", /Failed to install SegmentEditorExtraEffects/.test(logs + (await page.locator("body").innerText())), true);
-check("its GUI is there all the same", (await page.locator(".sw-scripted-module").first().innerText()).length > 50, true);
-check("with the error shown above it", /Failed to install SegmentEditorExtraEffects/.test(await page.locator("[data-name=moduleError]").first().innerText().catch(() => "")), true);
+check("the extension it asks for is installed", await py(`${em}.isExtensionInstalled("SegmentEditorExtraEffects")`), "True");
+check("with its modules", await page.evaluate(() => window.slicerWeb.store.modules.some((m) => m.name === "SegmentEditorFloodFilling")), true);
+check("the module's GUI is there", (await page.locator(".sw-scripted-module").first().innerText()).length > 50, true);
+check("without an error above it", await page.locator("[data-name=moduleError]").count(), 0);
 
 // ---- an extension of the index, installed on request
 check("an extension of the index is installed on request", await pyYielding(`${em}.installExtensionFromServer("MarkupsToModel", True)`), "True");

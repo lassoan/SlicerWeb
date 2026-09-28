@@ -1,0 +1,154 @@
+# Bundling extensions
+
+The extensions a build bundles are the extension description files in a folder: `extensions/` of
+this repository, or any other folder given to the build. Stage `80-extensions` fetches each one at
+the revision its file names, builds it against the SlicerWeb build tree, installs the Python
+packages it asks for, and packages it as a wheel in `dist/extensions`, together with the extension
+index (`index.json`) that the Extensions Manager reads.
+
+```powershell
+.\build.ps1 80-extensions                                           # extensions\ of this repository
+.\build.ps1 -ExtensionsDir C:\D\SlicerWebExtensions 80-extensions   # another folder
+$env:SW_EXTENSIONS = "SlicerHeart"; .\build.ps1 80-extensions       # only rebuild some of them
+```
+
+## Description files
+
+One `<Name>.json` per extension, named after the extension (its CMake `project()`), in the format of
+the [Slicer ExtensionsIndex](https://github.com/Slicer/ExtensionsIndex), so a file can be copied from
+there as it is:
+
+| Key | Used for |
+| --- | --- |
+| `scm_url` | the git repository (`https://`, or `git@github.com:` for a private one) |
+| `scm_revision` | a commit, branch or tag. A branch is built at whatever it holds when the build runs; a commit keeps the build reproducible |
+| `build_dependencies` | extensions built before this one. One that is not in the folder is reported, and the build goes on (SlicerVMTK does without ExtraMarkups) |
+| `slicerweb` | what only matters for the browser build (below); the Slicer extension build ignores it |
+
+```json
+{
+  "scm_url": "https://github.com/lassoan/SlicerSimVascular.git",
+  "scm_revision": "be90339c18b7de7b093d1e65e2a1b7e13dead9ca",
+  "build_dependencies": [],
+  "slicerweb": {
+    "python_packages": [
+      "scipy",
+      "svmorph @ git+https://github.com/lassoan/svMorph.git@330908d80dd911f2a8ca17942dbdce5acf5b3aed"
+    ],
+    "cmake_options": []
+  }
+}
+```
+
+### Python packages
+
+`slicerweb.python_packages` lists what the extension would pip-install on the desktop, as pip
+requirements: a name (`scipy`), a pinned version (`pyyaml==6.0.3`), or a git repository
+(`name @ git+https://github.com/org/repo.git@<commit>`). A browser cannot pip-install, so the build
+sorts them:
+
+- **In the Pyodide distribution** (SciPy, scikit-image, PyYAML, ...): not bundled. The page loads
+  them when the extension is installed and at every start. Pyodide has one version of each: a
+  requirement for another one is reported, and Pyodide's version is used.
+- **Everything else** is pip-installed into the extension's wheel. It has to be pure Python: the
+  build stops at a package with compiled code, since nothing here compiles it for WebAssembly.
+- `vtk` is SlicerWeb's own and is left alone.
+
+Dependencies are not followed (a package's own requirements often include things that cannot work
+in a browser, such as JAX for svMorph), so list every package the extension imports.
+
+An extension can also say this itself, in a `slicerweb-extension.json` of its source
+(`{"pythonPackages": ["scipy"]}`, Pyodide packages only); both lists are used.
+
+### How an extension is built
+
+Every extension is built as Slicer's extension build builds it, with nothing specific to one
+extension in this repository: configured against the SlicerWeb build tree (`Slicer_DIR`), built -
+its superbuild included, so an extension that needs a library builds it itself (SlicerVMTK builds
+VMTK, SlicerIGSIO builds IGSIO) - and installed: its own build tree (`build_subdirectory` of the
+description file, `inner-build` for one with a superbuild) and whatever it lists in
+`<Name>_CPACK_INSTALL_CMAKE_PROJECTS`, the list Slicer's extension packaging uses too. An extension
+that another depends on is handed to it as `<Name>_DIR` (SlicerIGT finds SlicerIGSIO, and IGSIO
+through it).
+
+What makes this a WebAssembly build is a toolchain file that stage `80-extensions` writes and names
+in the environment (`CMAKE_TOOLCHAIN_FILE`), so that every CMake configure reads it - the
+extension's, and those of the projects its superbuild adds, which get no command line from us. It
+holds Pyodide's toolchain, the side-module flags, and the stand-ins for OpenGL and zlib.
+
+An extension adapts to WebAssembly the way it adapts to a platform: with CMake's `EMSCRIPTEN`, as
+it would with `APPLE` or `WIN32` - for example, not building a library that cannot be built there,
+or a module that runs a program, which a web page cannot. And to what SlicerWeb's Slicer lacks,
+with the variables of its `SlicerConfig.cmake`, as for any Slicer (`Slicer_BUILD_DICOM_SUPPORT` is
+`OFF`, `Slicer_BUILD_CLI` is `OFF`). Such changes belong in the extension's own repository; until
+they are merged upstream, the description file points at a fork that has them.
+
+`slicerweb.cmake_options` in a description file adds CMake options, for when a build needs to be
+told something the extension cannot tell by itself. Patches in `patches/<Name>/` are applied to a
+fetched source; they are for the libraries SlicerWeb builds itself (Slicer, VTK, ITK, ...).
+
+## Private repositories
+
+### Sources
+
+The build fetches private repositories with a GitHub token: `$env:SW_GIT_TOKEN`, or the file
+`.secrets\github-token` (git-ignored). Git and pip get it from a credential helper, so it is not
+part of any URL or log. SSH URLs of GitHub (`git@github.com:org/repo.git`) are fetched over HTTPS
+with it.
+
+Everything the build runs can read the token, including the extensions' CMake code and the build
+scripts of the Python packages. Use a
+[fine-grained token](https://github.com/settings/personal-access-tokens/new) with read-only
+**Contents** access to just the repositories the build needs, rather than `gh auth token`.
+
+### Deployment
+
+A build with private extensions must not go to the public `runtime` release of this repository;
+`publish-runtime.ps1` refuses to upload extensions to a public repository unless they are in
+`extensions/` here. It goes to a private repository of its own, for example `myorg/slicerweb-deploy`,
+which also works well as the extension folder:
+
+```
+slicerweb-deploy/
+├── extensions/*.json                  the description files (build.ps1 -ExtensionsDir ...\slicerweb-deploy\extensions)
+└── .github/workflows/publish-app.yml  builds and publishes the site
+```
+
+The workflow calls the one of this repository, which takes the runtime from the deployment
+repository's `runtime` release and pushes the site - one commit, no history - to its `gh-pages`
+branch:
+
+```yaml
+name: Publish app
+on:
+  workflow_dispatch:
+permissions:
+  contents: write   # read the runtime release, push the site to gh-pages
+jobs:
+  publish:
+    uses: lassoan/SlicerWeb/.github/workflows/publish-app.yml@main
+    with:
+      appRepository: ${{ github.repository }}
+      appBranch: gh-pages
+      slicerwebRef: main          # the SlicerWeb commit the runtime was built from, to keep them in step
+    secrets: inherit
+```
+
+Build and publish:
+
+```powershell
+.\build.ps1 -ExtensionsDir C:\D\slicerweb-deploy\extensions 60-wheels 80-extensions
+.\scripts\publish-runtime.ps1 -Repository myorg/slicerweb-deploy -Publish
+```
+
+Other inputs: `appRepository` may be another private repository (give the workflow a deploy key as
+the secret `SLICERWEB_APP_KEY`, or a token as `SLICERWEB_APP_TOKEN`); `runtimeRepository` and
+`runtime` name another release; `RUNTIME_TOKEN` is a secret for reading a release of another private
+repository; `sampleData: false` leaves the sample data out.
+
+**Who can open the site.** A private repository keeps the files private, but GitHub Pages of a
+private repository is public unless the organization is on GitHub Enterprise Cloud, where Pages can
+be restricted to the organization's members. Without Enterprise Cloud, do not turn on Pages for
+the branch. Serve it from a host that checks who is asking instead, for example Cloudflare Pages or
+a Cloudflare tunnel behind Cloudflare Access, as `scripts/publish-test-site.ps1` does for the test
+site.

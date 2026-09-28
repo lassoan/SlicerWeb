@@ -169,7 +169,8 @@ need neither: SlicerRtCommon, Isodose, DoseAccumulation, DoseVolumeHistogram, Dv
 PlanarImage, the VFF and DOSXYZnrc dose readers, and BatchProcessing. Every module that needs
 Plastimatch steps aside when it is not found (Beams, DoseComparison, SegmentComparison,
 ExternalBeamPlanning, PlmProtonDoseEngine, RoomsEyeView, DrrImageComputation, PlastimatchPy and the
-Plm modules), and the two DICOM RT modules are left out with DCMTK; `patches/SlicerRT` guards the
-places that did not step aside on their own. PlmRegister, a scripted module that drives the
-Plastimatch executable, is in the wheel but cannot run. Plastimatch itself compiled to WebAssembly
-would bring the rest, and is a separate, sizeable effort.
+Plm modules), and the two DICOM RT modules are left out with DCMTK. SlicerRT's own option
+`SLICERRT_USE_PLASTIMATCH`, off where `EMSCRIPTEN` is set, leaves out the places that did not step
+aside on their own. PlmRegister, a scripted module that drives the Plastimatch executable, is in
+the wheel but cannot run. Plastimatch itself compiled to WebAssembly would bring the rest, and is
+a separate, sizeable effort.

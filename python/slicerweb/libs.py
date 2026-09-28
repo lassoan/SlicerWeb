@@ -40,6 +40,17 @@ def slicer_version_full():
         return slicer_version() + ".0"
 
 
+def slicer_revision():
+    """Slicer's revision: the commit count of the Slicer source it was built from, as desktop Slicer
+    counts it (SlicerVersion.cmake)."""
+    try:
+        from slicerweb_build_info import SLICER_REVISION  # written by scripts/make_wheels.py
+
+        return SLICER_REVISION
+    except ImportError:
+        return ""
+
+
 def slicer_lib_dir():
     return _version_dir("lib")
 

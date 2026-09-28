@@ -515,18 +515,28 @@ bridge.call
    * The extensions asked for by name (config.extensions, from `?extensions=` on the address) join
    * the installed ones: their wheels, with what they depend on, are installed at this start and
    * remembered as the Extensions Manager remembers an installation, so that they stay installed.
+   *
+   * The installed extensions of the index are resolved again too, since what an extension depends
+   * on can change from one version of it to the next (SlicerVMTK came to depend on ExtraMarkups):
+   * a new dependency is installed, and before the extension, whose libraries need it to load.
+   * Wheels the index does not have stay as they are; so does everything when there is no index
+   * to be had (offline, say).
    */
   private async ensureExtensions() {
-    if (!this.config.extensions.length) return;
+    if (!this.config.extensions.length && !this.config.extensionWheels.length) return;
     this.progress("extensions", "Resolving extensions", 0.01);
     try {
       const indexUrl = extensionIndexUrl();
       const index = await loadExtensionIndex(indexUrl);
-      const { wheels, unknown } = await resolveExtensionWheels(this.config.extensions, index, indexUrl, (name) => this.baseWheelUrl(name));
+      const installed = index.extensions
+        .filter((e) => this.config.extensionWheels.includes(new URL(e.wheel, indexUrl).href))
+        .map((e) => e.name);
+      const { wheels, unknown } = await resolveExtensionWheels(
+        [...installed, ...this.config.extensions], index, indexUrl, (name) => this.baseWheelUrl(name));
       if (unknown.length) console.warn(`Extensions not in ${indexUrl}: ${unknown.join(", ")}`);
-      const missing = wheels.filter((url) => !this.config.extensionWheels.includes(url));
-      if (!missing.length) return;
-      this.config.extensionWheels = [...this.config.extensionWheels, ...missing];
+      const resolved = [...wheels, ...this.config.extensionWheels.filter((url) => !wheels.includes(url))];
+      if (JSON.stringify(resolved) === JSON.stringify(this.config.extensionWheels)) return;
+      this.config.extensionWheels = resolved;
       try {
         localStorage.setItem(EXTENSIONS_KEY, JSON.stringify(this.config.extensionWheels));
       } catch {

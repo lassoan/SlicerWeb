@@ -152,6 +152,19 @@ def needed_closure(roots, libraries):
     return result
 
 
+def itk_libraries(args):
+    """The ITK libraries by file name, and those of them that the Slicer libraries need."""
+    itk_install = os.path.join(args.install, "itk")
+    itk_libs = {os.path.basename(p): p for p in glob.glob(os.path.join(itk_install, "lib", "*.so"))}
+    slicer_libs = [p for p in glob.glob(os.path.join(args.install, "slicer", "lib", "**", "*.so"), recursive=True) if is_wasm(p)]
+    return itk_libs, needed_closure(slicer_libs, itk_libs)
+
+
+def slicer_version(args):
+    lib_dir = glob.glob(os.path.join(args.install, "slicer", "lib", "Slicer-*"))[0]
+    return lib_dir, os.path.basename(lib_dir).split("-", 1)[1]
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--install", default="/build/install")
@@ -160,7 +173,13 @@ def main():
     parser.add_argument("--python", default="/work/python")
     parser.add_argument("--out", default="/dist/wheels")
     parser.add_argument("--extensions-out", default="/dist/extensions")
+    parser.add_argument("--extensions-only", action="store_true", help="only the extension wheels (80-extensions)")
     args = parser.parse_args()
+
+    if args.extensions_only:
+        args.itk_libs, args.core_itk = itk_libraries(args)
+        write_extension_wheels(args, slicer_version(args)[1])
+        return
 
     if os.path.isdir(args.out):
         for old in glob.glob(os.path.join(args.out, "*.whl")):
@@ -185,10 +204,7 @@ def main():
     # slicerweb-itk: the ITK libraries that Slicer's libraries need (loaded at startup);
     # slicerweb-itk-extra: the other ITK modules (e.g. filters used by extensions), installed with the
     # extensions that need them.
-    itk_install = os.path.join(args.install, "itk")
-    itk_libs = {os.path.basename(p): p for p in glob.glob(os.path.join(itk_install, "lib", "*.so"))}
-    slicer_libs = [p for p in glob.glob(os.path.join(args.install, "slicer", "lib", "**", "*.so"), recursive=True) if is_wasm(p)]
-    core_itk = needed_closure(slicer_libs, itk_libs)
+    itk_libs, core_itk = itk_libraries(args)
     w = Wheel("slicerweb-itk", "5.4.7", summary="ITK shared libraries used by 3D Slicer, built for Pyodide (WebAssembly)")
     for name in sorted(core_itk):
         w.add_file(itk_libs[name], "slicerweb_itk/" + name)
@@ -202,8 +218,7 @@ def main():
 
     # ---------------------------------------------------------------- Slicer core
     slicer_install = os.path.join(args.install, "slicer")
-    lib_dir = glob.glob(os.path.join(slicer_install, "lib", "Slicer-*"))[0]
-    slicer_ver = os.path.basename(lib_dir).split("-", 1)[1]
+    lib_dir, slicer_ver = slicer_version(args)
     share_dir = os.path.join(slicer_install, "share", f"Slicer-{slicer_ver}")
     slicer_src = os.path.join(args.src, "Slicer")
     version_full = slicer_ver + ".0"
@@ -236,7 +251,14 @@ def main():
         w.add_bytes('"""vtkTeem classes."""\nimport vtk  # noqa: F401\nfrom vtkTeemPython import *  # noqa: F401,F403\n', "vtkTeem.py")
     w.add_bytes('"""This module loads all the classes from the SlicerWebCore library into its namespace."""\n'
                 "import vtk  # noqa: F401\nfrom SlicerWebCorePython import *  # noqa: F401,F403\ndel vtk\n", "slicerwebcore.py")
-    w.add_bytes(f'SLICER_VERSION_FULL = "{version_full}"\n', "slicerweb_build_info.py")
+    # Slicer's revision (the commit count) and version, as SlicerVersion.cmake computed them for the
+    # build: slicer.app.revision and applicationVersion
+    import re
+
+    version_header = open(os.path.join(args.build, "slicer", "vtkSlicerVersionConfigure.h"), encoding="utf8").read()
+    slicer_revision = re.search(r'#define Slicer_REVISION "([^"]*)"', version_header).group(1)
+    w.add_bytes(f'SLICER_VERSION_FULL = "{version_full}"\nSLICER_REVISION = "{slicer_revision}"\n',
+                "slicerweb_build_info.py")
     w.write(args.out)
 
     # ---------------------------------------------------------------- Slicer core modules
@@ -321,7 +343,7 @@ def module_icon_file(module_dir, name):
     return fallback if os.path.isfile(fallback) else None
 
 
-def extension_metadata(source_dir):
+def extension_metadata(source_dir, install_dir=None):
     """EXTENSION_* settings of an extension's top-level CMakeLists.txt (as the Slicer extension index uses)."""
     import re
 
@@ -356,6 +378,14 @@ def extension_metadata(source_dir):
 
         with open(web, encoding="utf8") as handle:
             meta.update(json.load(handle))
+    # and the Pyodide packages of its description file's python_packages (scripts/extension_catalog.py)
+    built = os.path.join(install_dir or "", "slicerweb-extension.json")
+    if install_dir and os.path.isfile(built):
+        import json
+
+        with open(built, encoding="utf8") as handle:
+            packages = json.load(handle).get("pythonPackages") or []
+        meta["pythonPackages"] = list(dict.fromkeys((meta.get("pythonPackages") or []) + packages))
     return meta
 
 
@@ -378,7 +408,7 @@ def write_extension_wheels(args, slicer_ver):
         source_dir = os.path.join(args.src, name)
         if not os.path.isfile(os.path.join(source_dir, "CMakeLists.txt")):
             continue
-        meta = extension_metadata(source_dir)
+        meta = extension_metadata(source_dir, install_dir)
         try:
             revision = subprocess.run(["git", "-C", source_dir, "rev-parse", "--short=10", "HEAD"], capture_output=True,
                                       text=True, check=True).stdout.strip()
@@ -390,7 +420,8 @@ def write_extension_wheels(args, slicer_ver):
         # Same layout as the Slicer home (desktop extensions have their own tree, but in the browser all
         # modules share one virtual file system; file names do not collide)
         # Pure-Python packages the extension needs and that cannot be installed from the page
-        # (see scripts/stages/80-extensions.sh); they go where any other installed package goes.
+        # (python_packages of its description file, see scripts/extension_catalog.py); they go where
+        # any other installed package goes.
         packages_dir = os.path.join(install_dir, "python-packages")
         if os.path.isdir(packages_dir):
             w.add_tree(packages_dir, "", exclude=lambda rel: rel.endswith(".pyc") or "__pycache__" in rel)

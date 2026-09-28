@@ -403,7 +403,9 @@ class SlicerWebApplication:
 
     @property
     def revision(self):
-        return property_value(self._config.get("revision", ""))
+        from . import libs
+
+        return property_value(self._config.get("revision") or libs.slicer_revision())
 
     @property
     def repositoryRevision(self):

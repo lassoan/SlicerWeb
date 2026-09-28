@@ -5,7 +5,7 @@ tool() { ls "$SW_INSTALL"/vtk-compiletools/bin/$1-* | head -1; }
 cmake -Wno-dev -S /work -B "$B" "${SW_CMAKE_SIDE_ARGS[@]}" "${SW_OPENGL_ARGS[@]}" "${ZLIB_ARGS[@]}" \
   "-DCMAKE_EXE_LINKER_FLAGS=-fwasm-exceptions -sSUPPORT_LONGJMP=wasm -sMAIN_MODULE=2" \
   "-DCMAKE_JOB_POOLS=sw_link=4" -DCMAKE_JOB_POOL_LINK=sw_link \
-  -DSlicer_SOURCE_DIR="$SW_SRC/Slicer" -DSlicer_WC_REVISION_HASH="$SLICER_REV" \
+  -DSlicer_SOURCE_DIR="$SW_SRC/Slicer" \
   -DvtkAddon_SOURCE_DIR="$SW_SRC/vtkAddon" \
   -DSlicerWeb_ITK_SOURCE_DIR="$SW_SRC/ITK" \
   -DVTK_DIR="$SW_INSTALL/vtk/lib/cmake/vtk" \

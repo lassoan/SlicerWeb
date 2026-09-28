@@ -35,6 +35,20 @@ if [ ! -f "$EM_CACHE/.seeded" ]; then
 fi
 git config --global --add safe.directory '*' 2>/dev/null || true
 git config --global advice.detachedHead false
+# Private repositories (extension sources, python_packages from git): build.ps1 passes a GitHub token
+# as SW_GIT_TOKEN, which git and pip get from this credential helper - never in a URL, where it could
+# end up in a log. SSH URLs of GitHub are fetched over HTTPS with it: the container has no SSH keys.
+# Without a token, a private repository fails at once rather than waiting for a password.
+export GIT_TERMINAL_PROMPT=0
+if [ -n "${SW_GIT_TOKEN:-}" ]; then
+  git config --global credential.https://github.com.helper     '!f() { [ "$1" = get ] && echo username=x-access-token && echo "password=$SW_GIT_TOKEN"; }; f'
+  git config --global --unset-all url.https://github.com/.insteadOf || true
+  git config --global --add url.https://github.com/.insteadOf git@github.com:
+  git config --global --add url.https://github.com/.insteadOf ssh://git@github.com/
+fi
+
+# The extensions to build: a folder of extension description files (see scripts/stages/80-extensions.sh).
+export SW_EXTENSIONS_DIR=${SW_EXTENSIONS_DIR:-/work/extensions}
 
 # OpenGL/EGL are provided by Pyodide's main module (-lGL -legl.js ...). Side modules must neither link
 # the sysroot's static libGL.a nor add the sysroot include dir explicitly (breaks libc++ header order).

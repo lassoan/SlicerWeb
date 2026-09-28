@@ -46,7 +46,7 @@ foreach(m
     ChartsCore CommonComputationalGeometry CommonCore CommonDataModel CommonExecutionModel CommonMath
     CommonMisc CommonSystem CommonTransforms
     FiltersCore FiltersExtraction FiltersFlowPaths FiltersGeneral FiltersGeometry FiltersHybrid
-    FiltersModeling FiltersParallel FiltersSources FiltersTexture FiltersStatistics
+    FiltersModeling FiltersParallel FiltersPoints FiltersSources FiltersTexture FiltersStatistics
     IOCore IOExport IOGeometry IOImage IOInfovis IOLegacy IOPLY IOSQL IOXML IOXMLParser
     ImagingColor ImagingCore ImagingGeneral ImagingHybrid ImagingMath ImagingMorphological ImagingSources
     ImagingStatistics ImagingStencil

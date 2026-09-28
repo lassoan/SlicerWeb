@@ -16,6 +16,10 @@
 #
 # Needs a way to write to lassoan/slicerweb-app: the secret SLICERWEB_APP_KEY, the private half of
 # a deploy key of that repository, or else SLICERWEB_APP_TOKEN, a token that may write to it.
+#
+# Another repository - a private one, with extensions of its own - publishes its own build by calling
+# this workflow (docs/extensions.md): the runtime then comes from a release of that repository, and
+# the site goes where it says, which may be a branch of that repository itself.
 
 name: Publish app
 
@@ -25,6 +29,44 @@ on:
     paths:
       - "web/**"
       - ".github/workflows/publish-app.yml"
+  workflow_call:
+    inputs:
+      appRepository:
+        description: Repository the site is pushed to
+        type: string
+        required: true
+      appBranch:
+        description: Branch of it that holds the site (replaced by each build)
+        type: string
+        default: main
+      runtimeRepository:
+        description: Repository whose release holds the runtime wheels (the calling one if empty)
+        type: string
+        default: ""
+      runtime:
+        description: Release holding the runtime wheels
+        type: string
+        default: runtime
+      sampleData:
+        description: Copy the sample data into the site
+        type: boolean
+        default: true
+      slicerwebRepository:
+        description: SlicerWeb repository whose web application is built
+        type: string
+        default: lassoan/SlicerWeb
+      slicerwebRef:
+        description: Branch, tag or commit of it
+        type: string
+        default: main
+    secrets:
+      SLICERWEB_APP_KEY:
+        required: false
+      SLICERWEB_APP_TOKEN:
+        required: false
+      RUNTIME_TOKEN:
+        description: Token that may read the runtime release (the workflow's own token if not given)
+        required: false
   workflow_dispatch:
     inputs:
       runtime:
@@ -40,7 +82,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  APP_REPOSITORY: lassoan/slicerweb-app
+  APP_REPOSITORY: ${{ inputs.appRepository || 'lassoan/slicerweb-app' }}
+  APP_BRANCH: ${{ inputs.appBranch || 'main' }}
+  RUNTIME_REPOSITORY: ${{ inputs.runtimeRepository || github.repository }}
   RUNTIME_RELEASE: ${{ inputs.runtime || 'runtime' }}
   SLICERWEB_WHEELS: ${{ github.workspace }}/runtime/wheels
   SLICERWEB_EXTENSIONS: ${{ github.workspace }}/runtime/extensions
@@ -54,7 +98,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
+      # (github.repository is the calling repository when this workflow is called from another one)
       - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.slicerwebRepository || github.repository }}
+          ref: ${{ inputs.slicerwebRef || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -64,10 +112,10 @@ jobs:
 
       - name: Take the runtime from the ${{ env.RUNTIME_RELEASE }} release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.RUNTIME_TOKEN || github.token }}
         run: |
           mkdir -p runtime
-          gh release download "$RUNTIME_RELEASE" --repo "$GITHUB_REPOSITORY" --dir runtime --clobber
+          gh release download "$RUNTIME_RELEASE" --repo "$RUNTIME_REPOSITORY" --dir runtime --clobber
           unzip -q runtime/wheels.zip -d "$SLICERWEB_WHEELS"
           unzip -q runtime/extensions.zip -d "$SLICERWEB_EXTENSIONS"
           ls -la "$SLICERWEB_WHEELS" "$SLICERWEB_EXTENSIONS"
@@ -121,7 +169,11 @@ jobs:
         env:
           KEY: ${{ secrets.SLICERWEB_APP_KEY }}
           TOKEN: ${{ secrets.SLICERWEB_APP_TOKEN }}
+          # A site pushed to a branch of the repository that runs the workflow needs no key: the
+          # workflow's own token may write there, if the calling workflow grants "contents: write".
+          OWN_TOKEN: ${{ github.token }}
         run: |
+          if [ -z "$KEY" ] && [ -z "$TOKEN" ] && [ "$APP_REPOSITORY" = "$GITHUB_REPOSITORY" ]; then TOKEN=$OWN_TOKEN; fi
           if [ -n "$KEY" ]; then
             mkdir -p ~/.ssh && umask 077 && printf '%s\n' "$KEY" > ~/.ssh/publish
             export GIT_SSH_COMMAND="ssh -i ~/.ssh/publish -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
@@ -132,15 +184,14 @@ jobs:
             echo "Neither SLICERWEB_APP_KEY nor SLICERWEB_APP_TOKEN is set"; exit 1
           fi
           touch .nojekyll   # otherwise GitHub Pages hides files whose name starts with an underscore
-          cat > README.md <<'READ'
-          # slicerweb-app
+          cat > README.md <<READ
+          # ${APP_REPOSITORY##*/}
 
-          The published [SlicerWeb](https://github.com/lassoan/SlicerWeb) application:
-          <https://lassoan.github.io/slicerweb-app/>
+          The published [SlicerWeb](https://github.com/lassoan/SlicerWeb) application.
 
-          Every file here is built, and this repository holds one build and no history - each build
+          Every file here is built, and this branch holds one build and no history - each build
           replaces the last one. Nothing here is edited by hand; the source is in the SlicerWeb
-          repository, and the build is `.github/workflows/publish-app.yml` there.
+          repository, and the build is \`.github/workflows/publish-app.yml\` there.
           READ
           git init -q -b main
           git config user.name "github-actions[bot]"
@@ -149,11 +200,11 @@ jobs:
           # What the site repository already holds, without the files themselves: the commit here
           # has no parent, so it replaces the last build - but knowing what is there already means
           # only the files that changed are uploaded, not the half a gigabyte of sample data again.
-          git fetch --depth 1 --filter=blob:none origin main || echo "Nothing published yet"
+          git fetch --depth 1 --filter=blob:none origin "$APP_BRANCH" || echo "Nothing published yet"
           git add -A
           git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
           # One commit and no history: the site repository holds this build alone.
-          git push --force --quiet origin main || {
+          git push --force --quiet origin "HEAD:$APP_BRANCH" || {
             echo "Pushing what changed did not work; uploading the whole site"
             rm -rf .git
             git init -q -b main
@@ -161,6 +212,6 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
             git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
-            git push --force --quiet "$remote" main
+            git push --force --quiet "$remote" "HEAD:$APP_BRANCH"
           }
           echo "Published https://${APP_REPOSITORY%%/*}.github.io/${APP_REPOSITORY##*/}/" >> "$GITHUB_STEP_SUMMARY"

@@ -25,8 +25,9 @@ left behind is Qt: the widgets are Vue components that talk to the same objects.
   it. Either way the GUI is built from the module's XML, and the work runs in a worker so the views
   keep drawing.
 - **Extensions**: built as wheels and installed from an index at runtime — SlicerVMTK, SlicerHeart,
-  MarkupsToModel, SlicerSimVascular, SlicerIGSIO, SlicerIGT and SlicerRT (without Plastimatch and
-  DICOM) are built by this repository.
+  MarkupsToModel, SimVascular, SlicerIGSIO, SlicerIGT and SlicerRT (without Plastimatch and
+  DICOM) are built by this repository, from the description files in `extensions/`; a folder of
+  others, private ones too, can be built instead ([docs/extensions.md](docs/extensions.md)).
 - **Python**: the console is the one from the desktop, `slicer.util` works, and packages are
   installed on demand from the Pyodide distribution or PyPI.
 
@@ -57,8 +58,10 @@ and the IO manager, together with `qt` and `ctk` modules that build Vue widgets.
 ## Building
 
 Everything is built in a container, driven from Windows by `build.ps1` (or `scripts/build.sh`
-inside the container). You need Docker and the sources of Slicer, VTK, ITK and the rest, which the
-first stage fetches at the revisions pinned in `sources.env`.
+inside the container). All you need is Docker and a network connection: the build fetches every
+source it compiles from its repository - Slicer, VTK, ITK and the rest at the revisions pinned in
+`sources.env`, the extensions at those in `extensions/*.json` - and no source tree is needed
+from outside.
 
 ```powershell
 .\build.ps1 all          # every stage, a few hours from cold
@@ -68,7 +71,8 @@ first stage fetches at the revisions pinned in `sources.env`.
 The stages are in `scripts/stages/`: the sources and patches (`00`), VTK's compile tools for the
 host (`10`) and VTK itself (`20`), ITK (`30`), teem, libarchive and the rest (`40`),
 SlicerExecutionModel (`45`), the Slicer libraries and modules (`50`), the wheels (`60`), a smoke
-test (`70`) and the extensions (`80`). The wheels land in `D:\SlicerWeb-build\dist`.
+test (`70`) and the extensions (`80`, which packages their wheels too). The wheels land in
+`D:\SlicerWeb-build\dist`.
 
 Patches to the upstream projects are in `patches/`, applied by stage `00` and kept small enough to
 be sent upstream — the interesting ones are the WebGL fixes in `patches/VTK/` and the one that lets

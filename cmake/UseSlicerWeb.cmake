@@ -12,11 +12,17 @@
 if(NOT DEFINED EXTENSION_NAME)
   set(EXTENSION_NAME ${PROJECT_NAME})
 endif()
-set(EXTENSION_SOURCE_DIR ${CMAKE_SOURCE_DIR})
+# As in Slicer's UseSlicer.cmake: the inner build of an extension with a superbuild is given these
 set(EXTENSION_BINARY_DIR ${CMAKE_BINARY_DIR})
-set(EXTENSION_SUPERBUILD_BINARY_DIR ${CMAKE_BINARY_DIR})
-set(EXTENSION_BUILD_SUBDIRECTORY ".")
-set(${EXTENSION_NAME}_SUPERBUILD OFF CACHE BOOL "SlicerWeb builds extension dependencies separately" FORCE)
+if(NOT DEFINED EXTENSION_SOURCE_DIR)
+  set(EXTENSION_SOURCE_DIR ${CMAKE_SOURCE_DIR})
+endif()
+if(NOT DEFINED EXTENSION_SUPERBUILD_BINARY_DIR)
+  set(EXTENSION_SUPERBUILD_BINARY_DIR ${CMAKE_BINARY_DIR})
+endif()
+if(NOT DEFINED EXTENSION_BUILD_SUBDIRECTORY)
+  set(EXTENSION_BUILD_SUBDIRECTORY ".")
+endif()
 
 list(PREPEND CMAKE_MODULE_PATH ${SlicerWeb_CMAKE_DIR} ${Slicer_CMAKE_DIR} ${Slicer_EXTENSIONS_CMAKE_DIR} ${vtkAddon_CMAKE_DIR})
 set(BUILD_SHARED_LIBS ON)
@@ -34,9 +40,17 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${Slicer_QTLOADABLEMODULE
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/${Slicer_QTLOADABLEMODULES_LIB_DIR})
 
 #-----------------------------------------------------------------------------
-# Superbuild helpers (dependencies are built by the SlicerWeb build scripts)
-function(mark_as_superbuild)
-endfunction()
+# Superbuild: an extension builds the libraries it depends on (VMTK, IGSIO) as it does for desktop
+# Slicer, with ExternalProject. What makes those builds SlicerWeb builds - the WebAssembly toolchain,
+# the side-module flags - is in the toolchain file that scripts/stages/80-extensions.sh names in the
+# environment, which every project a superbuild adds reads too.
+include(ExternalProject)
+include(ExternalProjectDependency)
+include(ExternalProjectDependencyForPython)
+include(ExternalProjectGenerateProjectDescription)
+# <Extension>Config.cmake, with which an extension that depends on this one finds it (SlicerIGT finds
+# SlicerIGSIO, and IGSIO through it)
+set(Slicer_EXTENSION_GENERATE_CONFIG ${Slicer_CMAKE_DIR}/SlicerExtensionGenerateConfig.cmake)
 
 #-----------------------------------------------------------------------------
 # CTK Python script installation (ctkMacroCompilePythonScript.cmake), without byte compilation

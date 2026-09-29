@@ -167,7 +167,9 @@ const currentMarkupTool = computed(() =>
 
     <!-- [&>*]:shrink-0 so that the buttons keep their size and the toolbar overflows instead of
          squeezing them: overflowing is what tells it to fold them into menus (see measure()). -->
-    <nav ref="nav" class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&>*]:shrink-0 max-md:mx-2"
+    <!-- centered in the room between the logo and the application menu; where the buttons do not
+         fit, packed to the left instead (safe centering), so that the first ones stay reachable -->
+    <nav ref="nav" class="flex min-w-0 flex-1 items-center justify-center-safe gap-1 overflow-x-auto [scrollbar-width:none] [&>*]:shrink-0 max-md:mx-2"
       :class="{ 'pointer-events-none opacity-40': !ready }" aria-label="Toolbar">
       <div ref="layoutAnchor" class="relative shrink-0">
         <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutPanelLeft :size="20" /></ToolButton>

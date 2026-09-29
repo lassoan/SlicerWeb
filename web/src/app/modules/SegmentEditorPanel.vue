@@ -166,9 +166,10 @@ onMounted(async () => {
   state.value = await bridge.call<EditorState>("segmentEditorEnsureSegmentation");
   await takePickedSegment();
 });
+// The effect is not stopped when the panel goes: on a phone the panel is closed to see the views,
+// and to paint in them. It is stopped when another module is opened (App.vue), as on the desktop.
 onBeforeUnmount(() => {
   off();
-  bridge.call("segmentEditorSetEffect", [null]);
 });
 </script>
 

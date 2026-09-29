@@ -21,6 +21,7 @@ import {
   Terminal,
   Triangle,
   Brush,
+  Eraser,
   Square,
 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
@@ -129,12 +130,24 @@ const mouseModes = computed(() => [
   { mode: "Place", label: "Place points", icon: MousePointerClick },
 ]);
 const placing = computed(() => store.interactionMode.startsWith("Place:"));
+/** A Segment Editor effect that takes the mouse in the views (Paint, Erase) is the mouse mode while
+ *  it is at work: shown as such, and ended by choosing another mode. */
+const segmentEditMode = computed(() =>
+  ["Paint", "Erase"].includes(store.segmentEditorEffect)
+    ? { mode: "SegmentEdit", label: `${store.segmentEditorEffect} (Segment Editor)`,
+        icon: store.segmentEditorEffect === "Erase" ? Eraser : Brush }
+    : null);
+const modeActive = (mode: string) =>
+  !segmentEditMode.value && (mode === "Place" ? placing.value : store.interactionMode === mode);
 const currentMouseMode = computed(() =>
-  mouseModes.value.find((m) => m.mode === store.interactionMode)
+  segmentEditMode.value
+  ?? mouseModes.value.find((m) => m.mode === store.interactionMode)
   ?? (placing.value ? mouseModes.value.find((m) => m.mode === "Place")! : mouseModes.value[0]));
 
-/** Enter a mouse mode; placing means placing the kind of markup made last. */
-function chooseMode(mode: string) {
+/** Enter a mouse mode; placing means placing the kind of markup made last. A Segment Editor effect
+ *  that had the mouse stops. */
+async function chooseMode(mode: string) {
+  if (segmentEditMode.value) await bridge.call("segmentEditorSetEffect", [null]);
   return mode === "Place" ? place(lastMarkupTool.value) : setMode(mode);
 }
 
@@ -192,8 +205,12 @@ const currentMarkupTool = computed(() =>
         <ToolButton label="Crosshair" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
         <ToolButton v-for="m in mouseModes" :key="m.mode" :label="m.label"
-          :active="m.mode === 'Place' ? placing : store.interactionMode === m.mode" @click="chooseMode(m.mode)">
+          :active="modeActive(m.mode)" @click="chooseMode(m.mode)">
           <component :is="m.icon" :size="20" />
+        </ToolButton>
+        <ToolButton v-if="segmentEditMode" :label="segmentEditMode.label" active data-name="segmentEditMode"
+          @click="openModule('SegmentEditor')">
+          <component :is="segmentEditMode.icon" :size="20" />
         </ToolButton>
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
       </template>
@@ -202,11 +219,16 @@ const currentMarkupTool = computed(() =>
       <template v-if="compact">
         <!-- What a click in a view does. Placing is one of the three, and places the kind of
              markup chosen last; which kind that is belongs to the button beside this one. -->
-        <ToolMenu label="Mouse mode" :active="store.interactionMode !== 'ViewTransform'">
+        <ToolMenu label="Mouse mode" :active="!!segmentEditMode || store.interactionMode !== 'ViewTransform'">
           <template #button><component :is="currentMouseMode.icon" :size="20" /></template>
+          <button v-if="segmentEditMode" type="button" role="menuitem" data-name="segmentEditMode"
+            class="flex w-full items-center gap-2 rounded bg-accent px-2 py-1.5 text-left text-[13px] text-highlight"
+            @click="openModule('SegmentEditor')">
+            <component :is="segmentEditMode.icon" :size="16" />{{ segmentEditMode.label }}
+          </button>
           <button v-for="m in mouseModes" :key="m.mode" type="button" role="menuitem"
             class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
-            :class="(m.mode === 'Place' ? placing : store.interactionMode === m.mode) ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+            :class="modeActive(m.mode) ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
             @click="chooseMode(m.mode)">
             <component :is="m.icon" :size="16" />{{ m.label }}
           </button>

@@ -54,6 +54,16 @@ watch(() => store.activeView, scheduleSubjectHierarchyRefresh);
 // What a click in a view does is the scene's to say: a module may change it, and place mode ends
 // by itself once something has been placed. The toolbar shows what the scene says, not what was
 // last asked of it (see slicerweb.bridge.interactionMode).
+// The Segment Editor effect at work, for the mouse mode button; and it stops when another module
+// is opened (not when the panel of the Segment Editor is closed: a phone closes it to paint)
+events.on<{ effect?: string | null }>("segment-editor-changed", (state) => {
+  store.segmentEditorEffect = state?.effect ?? "";
+});
+watch(() => store.activeModule, (now, before) => {
+  if (before === "SegmentEditor" && now !== "SegmentEditor" && store.segmentEditorEffect) {
+    runtime.bridge.call("segmentEditorSetEffect", [null]).catch(() => {});
+  }
+});
 events.on<{ mode: string; placeNodeClassName: string }>("interaction-mode", ({ mode, placeNodeClassName }) => {
   store.interactionMode = mode === "Place" && placeNodeClassName ? `Place:${placeNodeClassName}` : mode;
 });

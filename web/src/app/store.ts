@@ -55,6 +55,9 @@ export const store = reactive({
   error: "" as string,
   modules: [] as ModuleSummary[],
   activeModule: "Data",
+  /** The Segment Editor effect at work ("" for none): Paint and Erase take the mouse in the views,
+   *  which the mouse mode button shows (App.vue follows it). */
+  segmentEditorEffect: "",
   /** Keeping the session (auto-save, App.vue): "unsaved" changes, "saving" them, all "saved". */
   sessionSaveState: "" as "" | "unsaved" | "saving" | "saved",
   sessionSavedAt: 0,

@@ -189,7 +189,7 @@ function keepSession() {
     looking = true;
     try {
       const state = await runtime.bridge.call<{ unsaved: boolean; playing: boolean }>("sessionState");
-      if (keeping) return;
+      if (keeping || !store.settings["General/AutoSave"]) return;   // may have changed meanwhile
       if (state.unsaved) store.sessionSaveState = "unsaved";
       else if (store.sessionSaveState === "unsaved") store.sessionSaveState = "saved";
       if (state.unsaved && !state.playing && Date.now() - lastInput >= IDLE_MS) keep(true);

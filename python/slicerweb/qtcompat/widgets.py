@@ -7,7 +7,7 @@ element. User interaction on the element updates the Python state and emits the 
 import logging
 
 from . import dom
-from .core import QObject, QProp, Signal, count_property
+from .core import QObject, QProp, Signal, count_property, text_property
 from .types import QAbstractItemView
 
 logger = logging.getLogger("slicerweb.qt")
@@ -228,8 +228,8 @@ class QWidget(QObject):
     def setStyleSheet(self, sheet):
         self._styleSheet = sheet
 
-    def styleSheet(self):
-        return self._styleSheet
+    # a Qt property: modules set it (label.styleSheet = "...") as well as call it
+    styleSheet = text_property(lambda self: self._styleSheet, setStyleSheet)
 
     # --- geometry-related calls accepted and ignored (layout is CSS based)
     def _noop(self, *args, **kwargs):

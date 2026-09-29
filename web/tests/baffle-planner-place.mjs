@@ -1,7 +1,8 @@
 // Baffle Planner: the Place button of a markups place widget places points in the markup the widget
 // is showing. The widget is given that markup by the node selector beside it, through a connection
 // made in Qt Designer (the module's .ui file), which the page makes as Qt's loader does; Place then
-// makes it the active place node, so that a click in a view adds to it.
+// makes it the active place node, so that a click in a view adds to it. A baffle model can be
+// created in the output selector.
 // Usage: node tests/baffle-planner-place.mjs [url]
 import { chromium } from "playwright-core";
 
@@ -60,6 +61,18 @@ await page.mouse.click(x, y);
 await page.waitForTimeout(800);
 check("a click in a view adds the point to the curve", await py("slicer.util.getNode('Contour').GetNumberOfControlPoints()"), "1");
 check("not to the other point list", await py("slicer.util.getNode('Other').GetNumberOfControlPoints()"), "0");
+
+// The baffle model: the selector's .ui entry says nothing about adding nodes, so it has Qt's default,
+// "Create new ..." there; choosing it makes the model, which becomes the curve's baffle model
+const baffleSelect = page.locator("[data-name=outputBaffleModelSelector] select");
+check("the baffle model selector offers to create a model",
+  await baffleSelect.locator("option[value=__create__]").count(), 1);
+await baffleSelect.selectOption("__create__");
+await page.waitForTimeout(1500);
+check("choosing it makes a model and selects it",
+  await py("(lambda n: n.GetName() if n else None)(slicer.modules.BafflePlannerWidget.ui.outputBaffleModelSelector.currentNode())"), "Baffle");
+check("which becomes the curve's baffle model",
+  await py("(lambda n: n.GetName() if n else None)(curve.GetNodeReference('BaffleModel'))"), "Baffle");
 
 await browser.close();
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");

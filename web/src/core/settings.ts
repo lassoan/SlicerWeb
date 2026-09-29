@@ -8,6 +8,18 @@
 export const SETTINGS_KEY = "slicerweb.settings";
 
 export interface AppSettings {
+  /**
+   * Offer as a download what module code writes into the Documents folder or next to files the
+   * user chose (a module saving an image, a header of a raw file): on the desktop such a file would
+   * be in a folder of the user's, while here it would stay in the page, where nobody can get at it.
+   */
+  "General/SaveWrittenFilesToDownloads": boolean;
+  /**
+   * Keep the scene for the next start while working, not only as the page goes into the background:
+   * what changed is saved after 5 seconds without input. A reload does not wait for anything to be
+   * saved, so without this a reload restores the scene as it was the last time the page was hidden.
+   */
+  "General/AutoSave": boolean;
   /** Show what a module developer needs: the Reload and Test section of a scripted module. */
   "Developer/DeveloperMode": boolean;
   /** Show in the corner of every view how many times it rendered in the last second, and how long it took. */
@@ -31,6 +43,8 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  "General/SaveWrittenFilesToDownloads": true,
+  "General/AutoSave": true,
   "Developer/DeveloperMode": true,
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,

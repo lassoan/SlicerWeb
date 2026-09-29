@@ -12,8 +12,13 @@ Designer (.ui) files, where a class SlicerWeb lacks becomes an empty placeholder
 Prints each missing name with where it is used, and exits with 1 if any is missing. It reads source
 text, so a name in a comment or a string counts too; what it reports is to be looked at, not trusted
 blindly.
+
+It also lists the Qt properties that the code reads or sets but SlicerWeb has as methods
+(self.ui.button.checkState == qt.Qt.Checked, label.styleSheet = "..."): the code then gets a bound
+method instead of the value, or replaces the method, and nothing says so.
 """
 import ast
+import glob
 import os
 import re
 import sys
@@ -60,6 +65,37 @@ PATTERNS = {
 }
 
 
+def methods_used_as_properties(roots):
+    """self.ui.<widget>.<name> neither called nor passed on (as a slot, say), where the class the
+    .ui file gives the widget has <name> as a method: {"Class.name": [(extension, file:line)]}."""
+    import inspect
+    import xml.etree.ElementTree as ET
+
+    sys.path.insert(0, os.path.join(QTCOMPAT, "..", ".."))
+    from slicerweb.qtcompat import core, ctkwidgets, mrmlwidgets, types, widgets
+
+    modules = [widgets, ctkwidgets, mrmlwidgets, types, core]
+    found = {}
+    for root in roots:
+        for extension in sorted(os.listdir(root)):
+            for directory, _, files in os.walk(os.path.join(root, extension)):
+                classes = {}
+                for ui in glob.glob(os.path.join(directory, "Resources", "UI", "*.ui")):
+                    try:
+                        classes.update({w.get("name"): w.get("class") for w in ET.parse(ui).iter("widget")})
+                    except ET.ParseError:
+                        pass
+                for file in (f for f in files if f.endswith(".py")):
+                    text = open(os.path.join(directory, file), encoding="utf8", errors="replace").read()
+                    for match in re.finditer(r"self\.ui\.(\w+)\.(\w+)\b(?!\s*[(),])", text):
+                        widget, name = match.groups()
+                        cls = next((getattr(m, classes[widget]) for m in modules if hasattr(m, classes.get(widget) or "")), None)
+                        if cls is not None and inspect.isfunction(inspect.getattr_static(cls, name, None)):
+                            line = text[:match.start()].count("\n") + 1
+                            found.setdefault(f"{cls.__name__}.{name}", []).append((extension, f"{file}:{line}"))
+    return found
+
+
 def main(roots):
     have = provided()
     missing = {}  # (module, name) -> [(extension, file)]
@@ -88,7 +124,11 @@ def main(roots):
         files = sorted({f for _, f in uses})
         print(f"{module}.{name}: {', '.join(extensions)} ({', '.join(files[:4])}{', ...' if len(files) > 4 else ''})")
     print(f"{len(missing)} missing name(s)")
-    return 1 if missing else 0
+    properties = methods_used_as_properties(roots)
+    for name, uses in sorted(properties.items()):
+        print(f"property {name}: {', '.join(sorted({e for e, _ in uses}))} ({', '.join(u for _, u in uses[:4])})")
+    print(f"{len(properties)} method(s) used as properties")
+    return 1 if missing or properties else 0
 
 
 if __name__ == "__main__":

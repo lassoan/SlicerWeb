@@ -515,7 +515,9 @@ class SlicerWebApplication:
 
     @property
     def defaultScenePath(self):
-        return property_value(os.path.join(self._temp, "Scenes"))
+        """The user's documents folder, as on the desktop: what is written there is offered to the
+        user as a download (web/src/core/runtime.ts, DOCUMENTS_FOLDER - the same path)."""
+        return property_value(os.path.join(os.path.expanduser("~"), "Documents"))
 
     @property
     def extensionsInstallPath(self):

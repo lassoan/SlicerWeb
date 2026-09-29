@@ -55,6 +55,9 @@ export const store = reactive({
   error: "" as string,
   modules: [] as ModuleSummary[],
   activeModule: "Data",
+  /** Keeping the session (auto-save, App.vue): "unsaved" changes, "saving" them, all "saved". */
+  sessionSaveState: "" as "" | "unsaved" | "saving" | "saved",
+  sessionSavedAt: 0,
   /** Modules that were opened, oldest first, and where in that list the panel stands: what the
    *  back and forward arrows of the module title bar walk through (as the module toolbar of
    *  desktop Slicer does). */

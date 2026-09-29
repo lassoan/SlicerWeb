@@ -23,6 +23,26 @@ def available():
     return _js_host is not None
 
 
+def _finite(value):
+    """The value with every float that is not a number (NaN, infinity) as None."""
+    if isinstance(value, float):
+        return value if value == value and value not in (float("inf"), float("-inf")) else None
+    if isinstance(value, dict):
+        return {k: _finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite(v) for v in value]
+    return value
+
+
+def to_json_text(value, default=None):
+    """JSON for the web page. Python writes NaN and Infinity, which JSON does not have and the page
+    cannot read (an empty volume has an extent of NaN, say); those are sent as null."""
+    try:
+        return json.dumps(value, default=default, allow_nan=False)
+    except ValueError:
+        return json.dumps(_finite(value), default=default, allow_nan=False)
+
+
 def emit(event, payload=None):
     """Send an event with a JSON-serializable payload to the web page and Python listeners."""
     for callback in list(_listeners.get(event, [])):
@@ -32,7 +52,7 @@ def emit(event, payload=None):
             logger.exception("Error in listener of %s", event)
     if _js_host is not None:
         try:
-            _js_host.emit(event, json.dumps(payload, default=_json_default))
+            _js_host.emit(event, to_json_text(payload, default=_json_default))
         except Exception:
             logger.exception("Failed to send %s to the web page", event)
     else:

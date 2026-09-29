@@ -50,11 +50,18 @@ class qMRMLNodeComboBox(_ElementWidget):
     editEnabled = QProp(False)
     interactionNodeSingletonTag = QProp("")
 
+    # Adding and removing nodes are on unless turned off, as in qMRMLNodeComboBox (a .ui file that
+    # says nothing of them gets "Create new ..." and "Delete current node"); the selectors made for
+    # other purposes turn them off, as their C++ classes do.
+    _addRemoveByDefault = True
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._currentNodeID = None
         self._attributeFilters = {}
         self._proxyModel = _NodeComboBoxProxyModel(self)
+        self.addEnabled = self._addRemoveByDefault
+        self.removeEnabled = self._addRemoveByDefault
 
     def _onCurrentNodeChanged(self, nodeID=None):
         self._currentNodeID = nodeID or None
@@ -167,6 +174,7 @@ class _NodeComboBoxProxyModel:
 
 
 class qMRMLCheckableNodeComboBox(qMRMLNodeComboBox):
+    _addRemoveByDefault = False
     checkedNodesChanged = Signal("checkedNodesChanged()")
 
     def checkedNodes(self):
@@ -175,6 +183,7 @@ class qMRMLCheckableNodeComboBox(qMRMLNodeComboBox):
 
 
 class qMRMLSubjectHierarchyComboBox(qMRMLNodeComboBox):
+    _addRemoveByDefault = False
     currentItemChanged = Signal("currentItemChanged(vtkIdType)")
 
     def currentItem(self):
@@ -1179,6 +1188,8 @@ class qMRMLVolumePropertyNodeWidget(QWidget):
 
 
 class qMRMLColorTableComboBox(qMRMLNodeComboBox):
+    _addRemoveByDefault = False
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.nodeTypes = ["vtkMRMLColorTableNode"]
@@ -1273,7 +1284,96 @@ class qMRMLSubjectHierarchyTreeView(QWidget):
 
 
 class qMRMLThreeDWidget(QWidget):
-    pass
+    """A 3D view of its own, for a view node the module makes (Baffle Planner renders a flattened
+    model in one and captures it into an image to print). The view is a browser view like those of
+    the layout, drawn on a canvas inside the widget; a widget that is not placed in the page is kept
+    off screen, where its view still renders and can be captured (vtkWindowToImageFilter)."""
+
+    _count = 0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._scene = None
+        self._viewNode = None
+        self._view = None
+        self._size = (400, 400)
+        self.viewLabel = ""
+        self.viewColor = None
+
+    def setMRMLScene(self, scene):
+        self._scene = scene
+
+    def mrmlScene(self):
+        return self._scene
+
+    def setMRMLViewNode(self, viewNode):
+        if viewNode is self._viewNode:
+            return
+        self._releaseView()
+        self._viewNode = viewNode
+
+    def mrmlViewNode(self):
+        return self._viewNode
+
+    def resize(self, width, height=None):
+        if height is None:
+            width, height = width.width(), width.height()
+        self._size = (int(width), int(height))
+        if self._view is not None:
+            self._view.SetSize(*self._size)
+
+    def show(self):
+        super().show()
+        self._ensureView()
+
+    def threeDView(self):
+        from ..layout import ThreeDView
+
+        self._ensureView()
+        return ThreeDView(self._view) if self._view is not None else None
+
+    def viewLogic(self):
+        self._ensureView()
+        return self._view.GetViewLogic() if self._view is not None else None
+
+    def _ensureView(self):
+        if self._view is not None or self._viewNode is None:
+            return
+        import slicer
+
+        qMRMLThreeDWidget._count += 1
+        canvasID = f"sw-threed-widget-{qMRMLThreeDWidget._count}"
+        canvas = dom.create("canvas")
+        canvas.id = canvasID
+        canvas.width, canvas.height = self._size
+        self._el.appendChild(canvas)
+        if not getattr(self._el, "isConnected", False):
+            offscreen = dom.query("#sw-offscreen-views")
+            if not offscreen:  # None, or JavaScript's null
+                offscreen = dom.create("div")
+                offscreen.id = "sw-offscreen-views"
+                offscreen.style.position = "fixed"
+                offscreen.style.left = "-100000px"
+                offscreen.style.top = "0"
+                body = dom.query("body")
+                if body:
+                    body.appendChild(offscreen)
+            offscreen.appendChild(self._el)
+        view = slicer.vtkSlicerWebThreeDView()
+        view.SetCanvasSelector("#" + canvasID)
+        view.SetSize(*self._size)
+        layoutName = self._viewNode.GetSingletonTag() or self._viewNode.GetLayoutName()
+        if not view.Initialize(slicer.app.applicationLogic(), self._scene or slicer.mrmlScene, layoutName):
+            raise RuntimeError(f"The 3D view of {layoutName} could not be made")
+        view.Start()
+        self._view = view
+
+    def _releaseView(self):
+        if self._view is not None:
+            self._view.Finalize()
+            self._view = None
+            while self._el.firstChild:
+                self._el.removeChild(self._el.firstChild)
 
 
 class qMRMLSliceWidget(QWidget):

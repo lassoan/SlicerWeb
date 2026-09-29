@@ -87,8 +87,31 @@ async function refreshSubjectHierarchy() {
  * page from nothing on return. The scene is kept as the page goes into the background (below), and
  * asked about here, before anything else is loaded: what was there is usually what is wanted.
  */
+/**
+ * The module that was open, kept for the tab whenever another is opened (sessionStorage: a tab's
+ * own, as its session is): a reload does not wait for the session to be written, and the module
+ * belongs with the scene it is restored with. Read before anything else opens a module.
+ */
+const ACTIVE_MODULE_KEY = "slicerweb.activeModule";
+const lastActiveModule = (() => {
+  try {
+    return sessionStorage.getItem(ACTIVE_MODULE_KEY);
+  } catch {
+    return null;
+  }
+})();
+function rememberActiveModule() {
+  watch(() => store.activeModule, (name) => {
+    try {
+      if (name) sessionStorage.setItem(ACTIVE_MODULE_KEY, name);
+    } catch {
+      // a private window, say
+    }
+  }, { immediate: true });
+}
+
 async function offerLastSession(): Promise<boolean> {
-  const info = await runtime.bridge.call<{ savedAt: number; bytes: number; nodes: string[]; count: number } | null>("sessionInfo").catch(() => null);
+  const info = await runtime.bridge.call<{ savedAt: number; bytes: number; nodes: string[]; count: number; module?: string | null } | null>("sessionInfo").catch(() => null);
   if (!info) return false;
   const when = new Date(info.savedAt * 1000);
   const age = Date.now() - when.getTime();
@@ -103,6 +126,9 @@ async function offerLastSession(): Promise<boolean> {
   store.progress = { stage: "session", message: "Restoring the last session", fraction: 0.9 };
   try {
     await runtime.bridge.call("restoreSession");
+    // and the module that was open, if it is still there (an extension may have gone meanwhile)
+    const module = lastActiveModule ?? info.module;
+    if (module && store.modules.some((m) => m.name === module)) openModule(module);
     return true;
   } catch (e: any) {
     alert(`The last session could not be restored: ${e.message ?? e}`);
@@ -112,23 +138,67 @@ async function offerLastSession(): Promise<boolean> {
 }
 
 /**
- * Keep the scene as the page goes into the background.
+ * Keep the scene for the next start: as the page goes into the background, and - with auto-save on
+ * (application settings) - while it is used.
  *
- * That is the moment before a phone reclaims the tab, and the last one this code runs; the
- * page is hidden, so a moment's pause to write the scene is not felt. What is written goes to
- * IndexedDB right away rather than on the usual short delay, since there may be no later.
+ * Going into the background is the moment before a phone reclaims the tab, and the last one this
+ * code runs; the page is hidden, so a moment's pause to write the scene is not felt. A reload does
+ * not wait for what is written to reach IndexedDB, though, so auto-save also keeps the scene when
+ * it has changed and nothing has been done for 5 seconds (so that saving does not interrupt
+ * dragging a point). Only what changed is written (slicerweb/session.py). The dot in the lower left
+ * corner shows it: red while saving, green when saved.
  */
-function keepSessionWhenHidden() {
+function keepSession() {
   let keeping: Promise<unknown> | null = null;
-  const keep = () => {
+  const keep = (showing = false) => {
     if (keeping || store.status !== "ready") return;
-    keeping = runtime.bridge.call<{ saved: boolean }>("saveSession")
-      .then((result) => (result.saved ? runtime.flushPersistentStorage() : undefined))
-      .catch((e) => console.warn("The session could not be kept", e))
+    keeping = (async () => {
+      if (showing) {
+        // Saving blocks the page, so the red dot is drawn first
+        store.sessionSaveState = "saving";
+        await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+      }
+      const result = await runtime.bridge.call<{ saved: boolean; changed?: boolean }>("saveSession", [false, store.activeModule ?? null]);
+      if (result.saved || result.changed) await runtime.flushPersistentStorage();
+      if (showing) {
+        store.sessionSaveState = "saved";
+        store.sessionSavedAt = Date.now();
+      }
+    })()
+      .catch((e) => {
+        console.warn("The session could not be kept", e);
+        if (showing) store.sessionSaveState = "";
+      })
       .finally(() => (keeping = null));
   };
   document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && keep());
-  window.addEventListener("pagehide", keep);
+  window.addEventListener("pagehide", () => keep());
+
+  // Auto-save: whether anything changed is looked at every second (the dot shows it), and it is
+  // saved after 5 seconds without input - not while a sequence is being played, which changes its
+  // nodes at every frame, nor while Python is in the middle of something
+  const IDLE_MS = 5000;
+  let lastInput = Date.now();
+  for (const type of ["pointerdown", "pointermove", "keydown", "wheel", "touchmove"]) {
+    window.addEventListener(type, () => (lastInput = Date.now()), { passive: true, capture: true });
+  }
+  let looking = false;
+  window.setInterval(async () => {
+    if (!store.settings["General/AutoSave"] || keeping || looking || store.status !== "ready") return;
+    if (document.visibilityState !== "visible" || (runtime.bridge as { suspendableCalls?: number }).suspendableCalls) return;
+    looking = true;
+    try {
+      const state = await runtime.bridge.call<{ unsaved: boolean; playing: boolean }>("sessionState");
+      if (keeping) return;
+      if (state.unsaved) store.sessionSaveState = "unsaved";
+      else if (store.sessionSaveState === "unsaved") store.sessionSaveState = "saved";
+      if (state.unsaved && !state.playing && Date.now() - lastInput >= IDLE_MS) keep(true);
+    } catch {
+      // not now; the next look will tell
+    } finally {
+      looking = false;
+    }
+  }, 1000);
 }
 
 /**
@@ -204,7 +274,8 @@ onMounted(async () => {
     reportGLToApplication(runtime.bridge);
     await refreshSubjectHierarchy();
     if (!(await offerLastSession())) await loadStartupSample();
-    keepSessionWhenHidden();
+    keepSession();
+    rememberActiveModule();
   } catch (e: any) {
     console.error(e);
     store.status = "error";
@@ -235,5 +306,14 @@ onMounted(async () => {
     </div>
     <ExtensionsManager v-if="store.extensionsManagerOpen" @close="store.extensionsManagerOpen = false" />
     <SettingsDialog v-if="store.settingsDialogOpen" @close="store.settingsDialogOpen = false" />
+    <!-- auto-save, in muted colors: unsaved changes (close to the background), saving (red), all
+         changes saved (green) -->
+    <div v-if="store.settings['General/AutoSave'] && store.sessionSaveState" data-name="autosave-indicator"
+      class="pointer-events-auto fixed bottom-2 left-2 z-[70] h-2.5 w-2.5 rounded-full"
+      :class="{ unsaved: 'bg-muted-foreground/25', saving: 'bg-red-400/60', saved: 'bg-green-500/50' }[store.sessionSaveState]"
+      :data-state="store.sessionSaveState"
+      :title="{ unsaved: 'Unsaved changes: saved after 5 seconds without input',
+        saving: 'Saving the scene…',
+        saved: `All changes saved (${new Date(store.sessionSavedAt).toLocaleTimeString()})` }[store.sessionSaveState]" />
   </div>
 </template>

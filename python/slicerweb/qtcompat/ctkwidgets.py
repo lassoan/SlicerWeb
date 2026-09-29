@@ -1,7 +1,7 @@
 """CTK widgets used by Slicer module GUIs."""
 
 from . import dom
-from .core import QProp, Signal
+from .core import QProp, Signal, count_property
 from .types import QColor, QMessageBox
 from .widgets import (
     QAbstractButton,
@@ -186,13 +186,20 @@ class ctkPathLineEdit(_ElementWidget):
     _events = {"currentPathChanged": "_onCurrentPathChanged"}
 
     currentPathChanged = Signal("currentPathChanged(QString)")
-    # ctkPathLineEdit::Filters
-    Files, Dirs, Drives, NoDot, NoDotDot, AllDirs, Readable, Writable, Executable = 1, 2, 4, 0x2000, 0x4000, 0x400, 0x10, 0x20, 0x40
+    # ctkPathLineEdit::Filters (those of QDir::Filter)
+    Dirs, Files, Drives, NoSymLinks = 0x1, 0x2, 0x4, 0x8
+    Readable, Writable, Executable, Hidden, System = 0x10, 0x20, 0x40, 0x100, 0x200
+    AllDirs, NoDotAndDotDot, NoDot, NoDotDot = 0x400, 0x1000, 0x2000, 0x4000
+    AllEntries = Dirs | Files | Drives
 
     currentPath = QProp("", el="currentPath", signal="currentPathChanged", convert=str)
     nameFilters = QProp([], el="nameFilters")
     placeholderText = QProp("", el="placeholderText", convert=str)
     chooseDirectory = QProp(False, el="chooseDirectory", convert=_bool)
+    # A file to be written (the Writable filter): the user names it, and it goes into the documents
+    # folder, whose files are offered to the user as downloads (SwPathLineEdit.vue, runtime.ts)
+    saveMode = QProp(False, el="saveMode", convert=_bool)
+    saveDirectory = QProp("", el="saveDirectory", convert=str)
 
     def _onCurrentPathChanged(self, path):
         type(self).currentPath.set_silently(self, path)
@@ -207,9 +214,20 @@ class ctkPathLineEdit(_ElementWidget):
         self.nameFilters = [str(f) for f in (filters or [])]
 
     def setFilters(self, filters):
-        """ctkPathLineEdit::Filters: whether files or folders are wanted."""
+        """ctkPathLineEdit::Filters: whether files or folders are wanted, and whether to read or to
+        write one. A .ui file gives them by name ("ctkPathLineEdit::Files|ctkPathLineEdit::Writable")."""
+        if isinstance(filters, str):
+            names = [name.split("::")[-1].strip() for name in filters.split("|")]
+            filters = 0
+            for name in names:
+                filters |= getattr(ctkPathLineEdit, name, 0) if name else 0
         self._filters = int(filters)
         self.chooseDirectory = bool(self._filters & self.Dirs) and not bool(self._filters & self.Files)
+        self.saveMode = bool(self._filters & self.Writable) and not self.chooseDirectory
+        if self.saveMode:
+            import slicer
+
+            self.saveDirectory = slicer.app.defaultScenePath
 
     # PythonQt exposes Qt properties as attributes, and modules set this one that way
     filters = property(lambda self: getattr(self, "_filters", ctkPathLineEdit.Files), setFilters)
@@ -430,8 +448,9 @@ class ctkCheckablePushButton(QPushButton):
     def setCheckState(self, state):
         self.setChecked(bool(state))
 
-    def checkState(self):
-        return 2 if self.isChecked() else 0
+    # A Qt property (PythonQt: button.checkState == qt.Qt.Checked, button.checkState = ...), which
+    # can also be called
+    checkState = count_property(lambda self: 2 if self.isChecked() else 0, lambda self, state: self.setCheckState(state))
 
     def setIndicatorAlignment(self, alignment):
         pass

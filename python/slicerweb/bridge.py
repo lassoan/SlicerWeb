@@ -43,7 +43,7 @@ def call(methodName, argsJson="[]"):
         if fn is None:
             raise KeyError(f"Unknown bridge method: {methodName}")
         result = fn(**args) if isinstance(args, dict) else fn(*args)
-        return json.dumps({"result": to_json(result)})
+        return host.to_json_text({"result": to_json(result)})
     except Exception as e:
         logger.debug("Bridge call %s failed: %s", methodName, traceback.format_exc())
         return json.dumps({"error": str(e), "type": type(e).__name__})

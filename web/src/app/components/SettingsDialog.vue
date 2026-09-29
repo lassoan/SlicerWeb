@@ -13,7 +13,9 @@ const bridge = inject<SlicerBridge>("bridge");
 const jspiSupported = !!(bridge as { jspiSupported?: boolean } | undefined)?.jspiSupported;
 
 interface Section { id: string; title: string }
-const sections: Section[] = [{ id: "rendering", title: "Rendering" }, { id: "developer", title: "Developer" }];
+const sections: Section[] = [
+  { id: "general", title: "General" }, { id: "rendering", title: "Rendering" }, { id: "developer", title: "Developer" },
+];
 const section = ref(sections[0].id);
 </script>
 
@@ -33,6 +35,24 @@ const section = ref(sections[0].id);
           </button>
         </nav>
         <div class="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <template v-if="section === 'general'">
+            <SwCheckBox text="Save files that modules write to your downloads" data-name="saveWrittenFilesToDownloads"
+              :checked="store.settings['General/SaveWrittenFilesToDownloads']"
+              @toggled="setSetting('General/SaveWrittenFilesToDownloads', $event)" />
+            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+              A file that a module writes into the Documents folder - the folder offered when a module asks where to
+              save a file - or next to a file you chose is saved to your downloads, as it would be in a folder of yours on
+              the desktop. Files anywhere else in the application stay in it.
+            </div>
+            <SwCheckBox text="Auto-save" class="mt-3" data-name="autoSave"
+              :checked="store.settings['General/AutoSave']"
+              @toggled="setSetting('General/AutoSave', $event)" />
+            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+              Keep the scene for the next start while you work: what changed is saved after 5 seconds without input,
+              so that reloading the page brings back the latest state. A dot in the lower left corner shows it: red
+              while saving, green when saved. Off, the scene is kept only when the page goes into the background.
+            </div>
+          </template>
           <template v-if="section === 'rendering'">
             <SwCheckBox text="Share one WebGL context between the views" data-name="sharedWebGLContext"
               :checked="store.settings['Rendering/SharedWebGLContext']"

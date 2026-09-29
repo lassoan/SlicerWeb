@@ -74,7 +74,10 @@ await slicer.bridge.call("loadFiles", [[volumePath, segmentationPath]]);
 `loadFiles` reads what the extension says it is - volumes, models, markups, segmentations,
 transforms, tables, and `.mrml`/`.mrb` scenes - and returns the IDs of the nodes it added.
 `downloadFile` reports progress through its `onProgress` option, and `saveFileToDisk(path)` offers a
-file of the application's file system to the visitor as a download.
+file of the application's file system to the visitor as a download. A file that module code writes
+next to files the visitor chose (with `writeFiles`, the Data panel or a module's file selector) is
+offered as a download by itself, since on the desktop it would have landed in the visitor's folder:
+RawImageGuess's NRRD header of a raw file, for instance. Files written anywhere else are not.
 
 ### Doing more than loading
 

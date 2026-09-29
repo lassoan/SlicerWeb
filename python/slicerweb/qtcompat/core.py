@@ -21,6 +21,19 @@ class CallableInt(int):
         return int(self)
 
 
+class CallableStr(str):
+    """A text that can also be called, for a Qt property of text read either way (widget.styleSheet
+    and widget.styleSheet()), as CallableInt is for numbers."""
+
+    def __call__(self):
+        return str(self)
+
+
+def text_property(getter, setter=None):
+    """A Qt property whose value is a text (see CallableStr)."""
+    return property(lambda self: CallableStr(getter(self)), setter)
+
+
 def count_property(getter, setter=None):
     """A Qt property whose value is a count (see CallableInt)."""
     return property(lambda self: CallableInt(getter(self)), setter)

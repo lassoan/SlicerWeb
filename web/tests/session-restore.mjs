@@ -1,5 +1,6 @@
 // The scene is kept when the page goes into the background and offered back at the next start -
-// what a phone reclaiming the tab costs is then the start-up, not the work.
+// what a phone reclaiming the tab costs is then the start-up, not the work. The module that was open
+// is opened again with it.
 // Usage: node tests/session-restore.mjs [url]
 import { chromium } from "playwright-core";
 
@@ -23,7 +24,10 @@ const nodes = (page) => page.evaluate(() => window.slicerWeb.bridge.evalPython(
 // A session with something in it
 let page = await context.newPage();
 page.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
-page.on("dialog", (d) => { console.log(`[dialog] ${d.message().split("\n")[0]}`); d.dismiss(); }); // nothing to restore yet
+// what the question about restoring is answered: nothing to restore yet at first
+let answer = "dismiss";
+let offered = "";
+page.on("dialog", (d) => { offered = d.message(); d[answer](); });
 await page.goto(base + "?sample=CTChest");
 await page.waitForFunction(() => /CT-chest/.test(document.body.innerText), null, { timeout: 300000 });
 await page.waitForTimeout(6000);
@@ -34,6 +38,10 @@ const rows = (page) => page.locator(".sw-row").count();
 const before = await nodes(page);
 const rowsBefore = await rows(page);
 console.log("scene:", before, `(${rowsBefore} rows in the data tree)`);
+
+// with a module open, which comes back with the scene
+await page.evaluate(() => { window.slicerWeb.store.activeModule = "Markups"; });
+await page.waitForTimeout(1500);
 
 // Going into the background keeps it
 const t0 = Date.now();
@@ -49,14 +57,11 @@ check("the scene was kept", info.count >= 2, true);
 await page.waitForTimeout(1500); // for IndexedDB to take it
 const again = await page.evaluate(() => window.slicerWeb.bridge.call("saveSession"));
 check("hidden again with nothing changed, nothing is written", again.reason, "nothing changed");
-await page.close();
 
-// The next start offers it back
-page = await context.newPage();
-page.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
-let offered = "";
-page.on("dialog", (d) => { offered = d.message(); d.accept(); });
-await page.goto(base + "?sample=CTChest");
+// The next start of the tab (a reload: a session is the tab's own) offers it back
+answer = "accept";
+offered = "";
+await page.reload();
 await page.waitForFunction(() => window.slicerWeb?.store?.status === "ready", null, { timeout: 300000 });
 await page.waitForFunction(() => /CT-chest/.test(document.body.innerText), null, { timeout: 120000 });
 await page.waitForTimeout(6000);
@@ -64,15 +69,14 @@ check("the next start asks about it", /Restore the scene/.test(offered), true);
 console.log("asked:", offered.replace(/\s+/g, " "));
 const after = await nodes(page);
 check("and brings it back whole", JSON.stringify(after), JSON.stringify(before));
+check("with the module that was open", await page.evaluate(() => window.slicerWeb.store.activeModule), "Markups");
 check("rather than the sample the address names as well", (after.match(/CT-chest/g) ?? []).length, 1);
 // A bundle comes in inside a batch, and its subject hierarchy items are resolved only once the
 // batch has ended: nothing must make items for its nodes before then, or each is listed twice.
 check("and the data tree lists each node once", await rows(page), rowsBefore);
-await page.close();
 
 // Declining forgets it
-page = await context.newPage();
-page.on("dialog", (d) => d.dismiss());
+answer = "dismiss";
 await page.goto(base + "?sample=");
 await page.waitForFunction(() => window.slicerWeb?.store?.status === "ready", null, { timeout: 300000 });
 await page.waitForTimeout(3000);

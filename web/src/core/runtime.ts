@@ -293,6 +293,7 @@ bridge.call
     const jspi = !!(pyodide as any)._module?.jspiSupported;
     this.bridge.attach((method: string, args: string) => init(method, args),
       jspi ? (method: string, args: string) => init.callPromising(method, args) : null);
+    await this.bridge.call("setSessionDirectory", [this.sessionDirectory]);
     this.bridge.missingModuleHandler = (name) => this.ensurePythonPackage(name);
     await this.loadExtensionPackages();
     await this.loadModulesWithPackages();
@@ -301,6 +302,7 @@ bridge.call
     // is fetched now, while nothing waits for it
     void this.extensionIndex();
     await this.dropLoadedLibraryFiles();
+    this.watchUserFiles();
     this.progress("ready", "Ready", 1);
   }
 
@@ -597,11 +599,131 @@ bridge.call
   /** Settings and user data survive page reloads (IndexedDB). */
   private async mountPersistentStorage() {
     const FS = this.pyodide!.FS;
-    for (const dir of ["/home/pyodide/.config", "/home/pyodide/SlicerData"]) {
+    this.sessionDirectory = await this.claimSession();
+    for (const dir of ["/home/pyodide/.config", "/home/pyodide/SlicerData", this.sessionDirectory]) {
       FS.mkdirTree(dir);
       FS.mount(FS.filesystems.IDBFS, {}, dir);
     }
     await new Promise<void>((resolve) => FS.syncfs(true, () => resolve()));
+    // the session all tabs shared before sessions were a tab's own: it is no one's now
+    try {
+      if (FS.analyzePath(SlicerRuntime.SHARED_SESSION).exists) {
+        this.removeTree(SlicerRuntime.SHARED_SESSION);
+        this.persistFileSystem();
+      }
+    } catch (e) {
+      console.warn("The shared session of an earlier version could not be removed", e);
+    }
+  }
+
+  // ------------------------------------------------------------------ the session of this tab
+  // The scene is kept for when the tab is reloaded (slicerweb/session.py), in a folder of the tab's
+  // own that is mounted on an IndexedDB database of its own: a database is written as a whole, so
+  // tabs sharing one would overwrite each other's sessions. A reload of the tab restores its session;
+  // a new tab - a duplicated one too - starts with none, and nothing goes from one tab to another.
+  //
+  // Which session is the tab's: its id, in sessionStorage (kept through a reload of the tab, not
+  // shared with other tabs, but copied into a duplicate of the tab), and a Web Lock of that name held
+  // while the tab is open, which a duplicate finds taken. A tab closed for good leaves its session
+  // behind; it is deleted by the next tab to start, once it is certain that no tab has it: no one holds
+  // its lock and its tab has not said it is alive for a while (a tab being reloaded holds no lock for
+  // a moment).
+
+  static readonly SESSIONS_FOLDER = "/home/pyodide/SlicerSessions";
+  static readonly SHARED_SESSION = "/home/pyodide/SlicerData/session";
+  private static readonly SESSION_ID_KEY = "slicerweb.sessionId";
+  private static readonly SESSIONS_KEY = "slicerweb.sessions";   // id -> when its tab was last alive
+  private static readonly SESSION_LOCK = "slicerweb.session.";
+  private static readonly ALIVE_MS = 30_000;
+  private static readonly ABANDONED_MS = 120_000;
+  /** This tab's session folder (Python keeps the session there). */
+  sessionDirectory = "";
+
+  private async claimSession(): Promise<string> {
+    let id: string | null = null;
+    try {
+      id = sessionStorage.getItem(SlicerRuntime.SESSION_ID_KEY);
+    } catch {
+      // no sessionStorage: a session for this page only
+    }
+    if (!id || !(await this.holdLock(SlicerRuntime.SESSION_LOCK + id))) {
+      // a new tab, or a duplicate of one that is still open (which holds the lock)
+      id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      await this.holdLock(SlicerRuntime.SESSION_LOCK + id);
+    }
+    try {
+      sessionStorage.setItem(SlicerRuntime.SESSION_ID_KEY, id);
+    } catch {
+      // as above
+    }
+    const tab = id;
+    const alive = () => this.updateSessions((sessions) => { sessions[tab] = Date.now(); });
+    alive();
+    window.setInterval(alive, SlicerRuntime.ALIVE_MS);
+    window.addEventListener("pagehide", alive);
+    await this.deleteAbandonedSessions(tab);
+    return `${SlicerRuntime.SESSIONS_FOLDER}/${tab}`;
+  }
+
+  /** Take a lock and keep it while the page is open; false if another page holds it. */
+  private holdLock(name: string): Promise<boolean> {
+    const locks = (navigator as any).locks;
+    if (!locks?.request) return Promise.resolve(true);   // no Web Locks: sessionStorage alone decides
+    return new Promise((resolve) => {
+      locks.request(name, { ifAvailable: true }, (lock: unknown) => {
+        resolve(!!lock);
+        return lock ? new Promise(() => {}) : undefined;   // held until the page goes
+      }).catch(() => resolve(true));
+    });
+  }
+
+  private updateSessions(change: (sessions: Record<string, number>) => void) {
+    try {
+      const sessions = JSON.parse(localStorage.getItem(SlicerRuntime.SESSIONS_KEY) ?? "{}");
+      change(sessions);
+      localStorage.setItem(SlicerRuntime.SESSIONS_KEY, JSON.stringify(sessions));
+    } catch {
+      // a private window, say
+    }
+  }
+
+  /** Delete the sessions of tabs that are gone: no lock held, not alive for a while. */
+  private async deleteAbandonedSessions(own: string) {
+    let sessions: Record<string, number> = {};
+    try {
+      sessions = JSON.parse(localStorage.getItem(SlicerRuntime.SESSIONS_KEY) ?? "{}");
+    } catch {
+      return;
+    }
+    const locks = (navigator as any).locks;
+    const held = new Set<string>();
+    try {
+      const state = locks?.query ? await locks.query() : null;
+      for (const lock of [...(state?.held ?? []), ...(state?.pending ?? [])]) held.add(lock.name);
+    } catch {
+      return;   // it cannot be told which are in use: none is deleted
+    }
+    const now = Date.now();
+    for (const [id, alive] of Object.entries(sessions)) {
+      if (id === own || held.has(SlicerRuntime.SESSION_LOCK + id) || now - alive < SlicerRuntime.ABANDONED_MS) continue;
+      // IDBFS names a database after its mount point
+      await new Promise<void>((resolve) => {
+        const request = indexedDB.deleteDatabase(`${SlicerRuntime.SESSIONS_FOLDER}/${id}`);
+        request.onsuccess = request.onerror = request.onblocked = () => resolve();
+      });
+      this.updateSessions((all) => { delete all[id]; });
+    }
+  }
+
+  private removeTree(path: string) {
+    const FS = this.pyodide!.FS;
+    for (const name of FS.readdir(path)) {
+      if (name === "." || name === "..") continue;
+      const child = `${path}/${name}`;
+      if (FS.isDir(FS.stat(child).mode)) this.removeTree(child);
+      else FS.unlink(child);
+    }
+    FS.rmdir(path);
   }
 
   /** Set once the start is complete: wheels installed after that are extensions. */
@@ -625,15 +747,79 @@ bridge.call
     const stamp = Date.now().toString(36);
     const dir = `${directory}/${stamp}`;
     FS.mkdirTree(dir);
+    this.userFolders.add(dir);
     const paths: string[] = [];
     for (const file of files) {
       const rel = (file as any).webkitRelativePath || file.name;
       const path = `${dir}/${rel}`;
       FS.mkdirTree(path.substring(0, path.lastIndexOf("/")));
       FS.writeFile(path, new Uint8Array(await file.arrayBuffer()));
+      this.userFiles.set(path, this.modificationTime(path));  // the user's own: not offered back
       paths.push(path);
     }
     return paths;
+  }
+
+  // ------------------------------------------------------------------ files modules write
+  // A module that writes a file next to one the user chose (RawImageGuess writes the NRRD header of
+  // a raw file beside it) writes it into the virtual file system, which the user cannot see: on the
+  // desktop the file would be in a folder of theirs. So what appears or changes in a folder of
+  // chosen files (writeFiles makes one for each choice) is offered as a download - not the chosen
+  // files themselves, and nothing written anywhere else, such as a scene an embedding page saves.
+
+  /** The folders of the files the user chose, and their files as last seen, with modification times. */
+  private userFolders = new Set<string>();
+  private userFiles = new Map<string, number>();
+  /**
+   * The user's documents folder, which the application offers where a module asks where to save a
+   * file (a save path box), and Slicer's default scene folder (slicerweb/app.py, the same path).
+   */
+  static readonly DOCUMENTS_FOLDER = "/home/pyodide/Documents";
+
+  private modificationTime(path: string): number {
+    const mtime = this.pyodide!.FS.stat(path).mtime;
+    return mtime instanceof Date ? mtime.getTime() : Number(mtime);
+  }
+
+  private scanUserFiles(): Map<string, number> {
+    const FS = this.pyodide!.FS;
+    const found = new Map<string, number>();
+    const visit = (dir: string) => {
+      let names: string[];
+      try {
+        names = FS.readdir(dir);
+      } catch {
+        return;  // no such folder (yet)
+      }
+      for (const name of names) {
+        if (name === "." || name === "..") continue;
+        const path = `${dir}/${name}`;
+        const stat = FS.stat(path);
+        if (FS.isDir(stat.mode)) visit(path);
+        else found.set(path, this.modificationTime(path));
+      }
+    };
+    for (const folder of [SlicerRuntime.DOCUMENTS_FOLDER, ...this.userFolders]) visit(folder);
+    return found;
+  }
+
+  /** Look at the Documents folder and the folders of chosen files every second, from now on (what is
+   * there already is not offered). */
+  private watchUserFiles() {
+    this.pyodide!.FS.mkdirTree(SlicerRuntime.DOCUMENTS_FOLDER);
+    this.userFiles = this.scanUserFiles();
+    setInterval(() => {
+      const now = this.scanUserFiles();
+      // off in the application settings: what is written is only noted, so that turning it on
+      // does not offer what was written meanwhile
+      const offer = loadSettings()["General/SaveWrittenFilesToDownloads"] !== false;
+      for (const [path, mtime] of now) {
+        if (!offer || this.userFiles.get(path) === mtime) continue;
+        console.info(`A module wrote ${path}; it is saved to your downloads`);
+        this.saveFileToDisk(path);
+      }
+      this.userFiles = now;
+    }, 1000);
   }
 
   /** Download a URL into the virtual file system. */

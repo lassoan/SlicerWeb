@@ -96,11 +96,26 @@ abstract class BridgeBase implements SlicerBridge {
     return this.callWith<T>(method, args, this.canYield);
   }
 
+  /** How many calls that Python code may be suspended in are in progress: while there are any,
+   *  Python is in the middle of something, and what is not needed is better not asked of it. */
+  suspendableCalls = 0;
+
   private async callWith<T>(method: string, args: unknown[] | Record<string, unknown>, yielding: boolean): Promise<T> {
     const argsJson = JSON.stringify(args);
     const tried = new Set<string>();
     for (;;) {
-      const response = JSON.parse(await (yielding ? this.rawCallYielding(method, argsJson) : this.rawCall(method, argsJson)));
+      let raw: string;
+      if (yielding) {
+        this.suspendableCalls++;
+        try {
+          raw = await this.rawCallYielding(method, argsJson);
+        } finally {
+          this.suspendableCalls--;
+        }
+      } else {
+        raw = await this.rawCall(method, argsJson);
+      }
+      const response = JSON.parse(raw);
       if (!("error" in response)) return response.result as T;
       const missing = response.type === "ModuleNotFoundError" ? /No module named '([^']+)'/.exec(response.error)?.[1] : undefined;
       if (missing && this.missingModuleHandler && !tried.has(missing) && tried.size < 5) {

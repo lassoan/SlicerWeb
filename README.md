@@ -57,16 +57,21 @@ and the IO manager, together with `qt` and `ctk` modules that build Vue widgets.
 
 ## Building
 
-Everything is built in a container, driven from Windows by `build.ps1` (or `scripts/build.sh`
-inside the container). All you need is Docker and a network connection: the build fetches every
+Everything is built in a container, driven by `build.py` on Windows, Linux or macOS (or by
+`scripts/build.sh` inside the container). All you need is Docker, Python 3.8 or later and a network
+connection: the build fetches every
 source it compiles from its repository - Slicer, VTK, ITK and the rest at the revisions pinned in
 `sources.env`, the extensions at those in `extensions/*.json` - and no source tree is needed
 from outside.
 
-```powershell
-.\build.ps1 all          # every stage, a few hours from cold
-.\build.ps1 50-slicer 60-wheels   # or just the stages that matter after a change
+```sh
+python build.py all                   # every stage, a few hours from cold
+python build.py 50-slicer 60-wheels   # or just the stages that matter after a change
 ```
+
+What differs from one computer to another - where the wheels are copied (`SW_DIST`, by default
+`~/SlicerWeb-build/dist`), the extension folder - goes in `local.env`, which is not committed (see
+`local.env.example`); an environment variable of the same name overrides it.
 
 The stages are in `scripts/stages/`: the sources and patches (`00`), VTK's compile tools for the
 host (`10`) and VTK itself (`20`), ITK (`30`), teem, libarchive and the rest (`40`),
@@ -108,9 +113,9 @@ parent: it holds one build and no history.
 
 The wheels take hours to compile and no runner could build them, so they travel through a release:
 
-```powershell
-.\build.ps1 60-wheels 80-extensions      # build them here
-.\scripts\publish-runtime.ps1 -Publish   # upload them, and rebuild the site
+```sh
+python build.py 60-wheels 80-extensions          # build them here
+python scripts/publish_runtime.py --publish      # upload them, and rebuild the site
 ```
 
 The site repository's Pages source is its `main` branch, and the workflow writes to it with a

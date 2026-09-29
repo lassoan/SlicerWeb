@@ -6,10 +6,10 @@ the revision its file names, builds it against the SlicerWeb build tree, install
 packages it asks for, and packages it as a wheel in `dist/extensions`, together with the extension
 index (`index.json`) that the Extensions Manager reads.
 
-```powershell
-.\build.ps1 80-extensions                                           # extensions\ of this repository
-.\build.ps1 -ExtensionsDir C:\D\SlicerWebExtensions 80-extensions   # another folder
-$env:SW_EXTENSIONS = "SlicerHeart"; .\build.ps1 80-extensions       # only rebuild some of them
+```sh
+python build.py 80-extensions                                              # extensions/ of this repository
+python build.py --extensions-dir ../SlicerWebExtensions 80-extensions      # another folder
+python build.py --extensions SlicerHeart 80-extensions                     # only rebuild some of them
 ```
 
 ## Description files
@@ -104,13 +104,13 @@ scripts of the Python packages. Use a
 ### Deployment
 
 A build with private extensions must not go to the public `runtime` release of this repository;
-`publish-runtime.ps1` refuses to upload extensions to a public repository unless they are in
+`publish_runtime.py` refuses to upload extensions to a public repository unless they are in
 `extensions/` here. It goes to a private repository of its own, for example `myorg/slicerweb-deploy`,
 which also works well as the extension folder:
 
 ```
 slicerweb-deploy/
-├── extensions/*.json                  the description files (build.ps1 -ExtensionsDir ...\slicerweb-deploy\extensions)
+├── extensions/*.json                  the description files (build.py --extensions-dir .../slicerweb-deploy/extensions)
 └── .github/workflows/publish-app.yml  builds and publishes the site
 ```
 
@@ -136,9 +136,9 @@ jobs:
 
 Build and publish:
 
-```powershell
-.\build.ps1 -ExtensionsDir C:\D\slicerweb-deploy\extensions 60-wheels 80-extensions
-.\scripts\publish-runtime.ps1 -Repository myorg/slicerweb-deploy -Publish
+```sh
+python build.py --extensions-dir ../slicerweb-deploy/extensions 60-wheels 80-extensions
+python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --publish
 ```
 
 Other inputs: `appRepository` may be another private repository (give the workflow a deploy key as
@@ -150,5 +150,5 @@ repository; `sampleData: false` leaves the sample data out.
 private repository is public unless the organization is on GitHub Enterprise Cloud, where Pages can
 be restricted to the organization's members. Without Enterprise Cloud, do not turn on Pages for
 the branch. Serve it from a host that checks who is asking instead, for example Cloudflare Pages or
-a Cloudflare tunnel behind Cloudflare Access, as `scripts/publish-test-site.ps1` does for the test
+a Cloudflare tunnel behind Cloudflare Access, as `scripts/publish_test_site.py` does for the test
 site.

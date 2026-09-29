@@ -35,7 +35,7 @@ if [ ! -f "$EM_CACHE/.seeded" ]; then
 fi
 git config --global --add safe.directory '*' 2>/dev/null || true
 git config --global advice.detachedHead false
-# Private repositories (extension sources, python_packages from git): build.ps1 passes a GitHub token
+# Private repositories (extension sources, python_packages from git): build.py passes a GitHub token
 # as SW_GIT_TOKEN, which git and pip get from this credential helper - never in a URL, where it could
 # end up in a log. SSH URLs of GitHub are fetched over HTTPS with it: the container has no SSH keys.
 # Without a token, a private repository fails at once rather than waiting for a password.

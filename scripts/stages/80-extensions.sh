@@ -1,6 +1,6 @@
 # Extensions built against the SlicerWeb build tree (Slicer_DIR=/build/slicer, see cmake/SlicerWebSDK.cmake).
 # Which ones: the extension description files in $SW_EXTENSIONS_DIR (extensions/ of this repository
-# unless build.ps1 is given another folder; see docs/extensions.md). Each is fetched at the revision
+# unless build.py is given another folder; see docs/extensions.md). Each is fetched at the revision
 # its description names, built as Slicer's extension build builds it (superbuild included), and
 # installed into $SW_INSTALL/ext/<Name> together with the Python packages it asks for; then all are
 # packaged as wheels in $SW_DIST_ROOT/extensions.

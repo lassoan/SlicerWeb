@@ -10,7 +10,7 @@
 #  - the web application, built here from web/
 #  - the WebAssembly runtime (VTK, ITK, Slicer libraries and modules, extensions), which takes hours
 #    to compile and cannot be built by a runner: it is downloaded from the "runtime" release of this
-#    repository, uploaded from a local build with scripts/publish-runtime.ps1
+#    repository, uploaded from a local build with scripts/publish_runtime.py
 #  - the sample data, copied into the site because a site of static files cannot fetch files from
 #    servers that refuse cross-origin requests (web/scripts/mirror-sample-data.mjs)
 #

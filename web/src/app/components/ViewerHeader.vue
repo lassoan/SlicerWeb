@@ -16,7 +16,12 @@ import {
   Ruler,
   Spline,
   ScrollText,
-  Settings,
+  Menu,
+  Maximize2,
+  Minimize2,
+  PanelLeft,
+  PanelRight,
+  LayoutGrid,
   SlidersHorizontal,
   Terminal,
   Triangle,
@@ -26,6 +31,7 @@ import {
 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { openModule as openModuleInPanel, store } from "../store";
+import { moduleList } from "../modules/list";
 import ToolButton from "./ToolButton.vue";
 import ToolMenu from "./ToolMenu.vue";
 import ClosedCurveIcon from "./icons/ClosedCurveIcon.vue";
@@ -49,13 +55,21 @@ async function place(className: string) {
   await bridge.call("placeMarkup", [className]);
 }
 
+/** Show the current view alone (the one last used, else the red slice view), or, when a view is
+ *  maximized, restore the layout: what the button in the header of each view does, for the view at
+ *  hand. */
+async function toggleMaximized() {
+  await bridge.call("maximizeView", [store.layout.maximized || store.activeView || "Red"]);
+}
+
+/** Show or hide the crosshair. Moving it (shift + mouse, or a click where it is placed) centers the
+ *  other slice views on the point (centered jump), so that it is in the middle of each. */
 async function toggleCrosshair() {
-  await bridge.evalPython(`
-import slicer
-n = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLCrosshairNode")
-n.SetCrosshairMode(0 if n.GetCrosshairMode() else 2)
-n.SetCrosshairBehavior(n.OffsetJumpSlice)
-`);
+  const mode = await bridge.evalPython(`(lambda n: (
+    n.SetCrosshairBehavior(n.CenteredJumpSlice),
+    n.SetCrosshairMode(0 if n.GetCrosshairMode() else 2),
+    n.GetCrosshairMode())[-1])(__import__("slicer").mrmlScene.GetFirstNodeByClass("vtkMRMLCrosshairNode"))`, "eval");
+  store.crosshairOn = String(mode) !== "0";
 }
 
 async function resetViews() {
@@ -151,13 +165,21 @@ async function chooseMode(mode: string) {
   return mode === "Place" ? place(lastMarkupTool.value) : setMode(mode);
 }
 
-/** The modules the toolbar offers, for the single button they fold into. */
-const favouriteModules = [
-  { name: "SegmentEditor", label: "Segment Editor", icon: Brush },
-  { name: "VolumeRendering", label: "Volume Rendering", icon: Box },
-  { name: "Transforms", label: "Transforms", icon: Move3d },
-  { name: "SceneViews", label: "Scene Views", icon: Camera },
-];
+/** The modules the toolbar offers (Slicer's setting of favorite modules, Application settings >
+ *  Modules), or those the address names for this page (?favoriteModules=SegmentEditor,Markups: an
+ *  embedding page's own, not kept as a setting). A module that is not loaded is left out. */
+const favouritesFromAddress = (() => {
+  const value = new URLSearchParams(window.location.search).get("favoriteModules");
+  return value === null ? null : value.split(/[,;\s]+/).filter(Boolean);
+})();
+const moduleIcons: Record<string, unknown> = { SegmentEditor: Brush, VolumeRendering: Box, Transforms: Move3d, SceneViews: Camera };
+const favouriteModules = computed(() =>
+  (favouritesFromAddress ?? store.settings["Modules/FavoriteModules"] ?? []).flatMap((name) => {
+    const module = moduleList.value.find((m) => m.name === name);
+    return module ? [{ name, label: module.title || name, icon: moduleIcons[name] ?? null, iconUrl: module.icon }] : [];
+  }));
+// More or fewer buttons: whether they fit is measured again
+watch(() => favouriteModules.value.map((m) => m.name).join(), () => { compact.value = false; nextTick(measure); });
 
 /** The markup kind the menu button shows: the one being placed, else the one placed last. */
 const lastMarkupTool = ref("vtkMRMLMarkupsLineNode");
@@ -170,6 +192,9 @@ const currentMarkupTool = computed(() =>
 
 <template>
   <header class="relative z-50 flex h-[52px] shrink-0 items-center justify-between bg-background px-3">
+    <!-- A phone held upright: the Data panel opens from here, not from a strip beside the views -->
+    <ToolButton v-if="store.panelButtons" label="Data panel" :active="store.leftPanelOpen" data-name="leftPanelButton"
+      class="mr-1" @click="store.leftPanelOpen = !store.leftPanelOpen"><PanelLeft :size="20" /></ToolButton>
     <div class="flex shrink-0 items-center gap-3 md:min-w-[240px]">
       <img :src="iconUrl" alt="" class="h-7 w-7 shrink-0" />
       <div class="leading-tight max-md:hidden">
@@ -186,14 +211,25 @@ const currentMarkupTool = computed(() =>
       :class="{ 'pointer-events-none opacity-40': !ready }" aria-label="Toolbar">
       <div ref="layoutAnchor" class="relative shrink-0">
         <ToolButton label="Layout" @click="layoutOpen = !layoutOpen"><LayoutPanelLeft :size="20" /></ToolButton>
+        <!-- the crosshair is in the layout menu here: a mark on the button says it is on -->
+        <span v-if="compact && store.crosshairOn" class="pointer-events-none absolute right-0.5 bottom-0.5 rounded-full bg-background text-highlight"
+          data-name="crosshairBadge"><Crosshair :size="12" /></span>
         <LayoutSelector v-if="layoutOpen" :anchor="layoutAnchor" @close="layoutOpen = false">
           <!-- Too narrow for them of their own: what is done to the views joins the layouts. -->
           <template v-if="compact" #views="{ close }">
             <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60" @click="resetViews(); close()">
               <ScanSearch :size="16" />Reset views
             </button>
-            <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60" @click="toggleCrosshair(); close()">
-              <Crosshair :size="16" />Crosshair
+            <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
+              :class="store.layout.maximized ? 'bg-accent text-highlight' : 'hover:bg-accent/60'"
+              data-name="maximizeMenuItem" @click="toggleMaximized(); close()">
+              <Minimize2 v-if="store.layout.maximized" :size="16" /><Maximize2 v-else :size="16" />
+              {{ store.layout.maximized ? "Restore layout" : "Maximize view" }}
+            </button>
+            <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px]"
+              :class="store.crosshairOn ? 'bg-accent text-highlight' : 'hover:bg-accent/60'" :aria-pressed="store.crosshairOn"
+              data-name="crosshairMenuItem" @click="toggleCrosshair(); close()">
+              <Crosshair :size="16" />{{ store.crosshairOn ? "Crosshair: on" : "Crosshair" }}
             </button>
           </template>
         </LayoutSelector>
@@ -202,7 +238,11 @@ const currentMarkupTool = computed(() =>
       <!-- With room for everything, every button is its own -->
       <template v-if="!compact">
         <ToolButton label="Reset views" @click="resetViews"><ScanSearch :size="20" /></ToolButton>
-        <ToolButton label="Crosshair" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
+        <ToolButton :label="store.layout.maximized ? 'Restore layout' : 'Maximize view'" :active="!!store.layout.maximized"
+          data-name="maximizeButton" @click="toggleMaximized">
+          <Minimize2 v-if="store.layout.maximized" :size="20" /><Maximize2 v-else :size="20" />
+        </ToolButton>
+        <ToolButton label="Crosshair" :active="store.crosshairOn" data-name="crosshairButton" @click="toggleCrosshair"><Crosshair :size="20" /></ToolButton>
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
         <ToolButton v-for="m in mouseModes" :key="m.mode" :label="m.label"
           :active="modeActive(m.mode)" @click="chooseMode(m.mode)">
@@ -250,17 +290,21 @@ const currentMarkupTool = computed(() =>
       <template v-if="!compact">
         <div class="mx-1 h-6 w-px shrink-0 bg-input" />
         <ToolButton v-for="m in favouriteModules" :key="m.name" :label="m.label" @click="openModule(m.name)">
-          <component :is="m.icon" :size="20" />
+          <component v-if="m.icon" :is="m.icon" :size="20" />
+          <img v-else-if="m.iconUrl" :src="m.iconUrl" alt="" class="h-5 w-5 object-contain" />
+          <Puzzle v-else :size="20" />
         </ToolButton>
       </template>
 
       <!-- ... and the modules of the toolbar another -->
       <template v-if="compact">
-        <ToolMenu label="Modules">
-          <template #button><Brush :size="20" /></template>
+        <ToolMenu v-if="favouriteModules.length" label="Modules">
+          <template #button><LayoutGrid :size="20" /></template>
           <button v-for="m in favouriteModules" :key="m.name" type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
             @click="openModule(m.name)">
-            <component :is="m.icon" :size="16" />{{ m.label }}
+            <component v-if="m.icon" :is="m.icon" :size="16" />
+            <img v-else-if="m.iconUrl" :src="m.iconUrl" alt="" class="h-4 w-4 object-contain" />
+            <Puzzle v-else :size="16" />{{ m.label }}
           </button>
         </ToolMenu>
       </template>
@@ -270,20 +314,23 @@ const currentMarkupTool = computed(() =>
     <!-- The tools that are not about the views: in a menu of their own, at the end of the bar -->
     <div class="flex shrink-0 items-center justify-end gap-1">
       <ToolMenu label="Application menu" align="right" :active="store.logWindowOpen || store.pythonConsoleOpen">
-        <template #button><Settings :size="20" /></template>
+        <template #button><Menu :size="20" /></template>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="menu:fullscreen" @click="fullScreen"><Maximize :size="16" />Full screen</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="menu:extensions" @click="store.extensionsManagerOpen = true"><Puzzle :size="16" />Extensions manager</button>
+        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+          data-name="menu:settings" @click="store.settingsDialogOpen = true"><SlidersHorizontal :size="16" />Application settings</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.logWindowOpen ? 'text-highlight' : ''" data-name="menu:log"
           @click="store.logWindowOpen = !store.logWindowOpen"><ScrollText :size="16" />Application log</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.pythonConsoleOpen ? 'text-highlight' : ''" data-name="menu:python"
           @click="store.pythonConsoleOpen = !store.pythonConsoleOpen"><Terminal :size="16" />Python console</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          data-name="menu:extensions" @click="store.extensionsManagerOpen = true"><Puzzle :size="16" />Extensions manager</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          data-name="menu:settings" @click="store.settingsDialogOpen = true"><SlidersHorizontal :size="16" />Application settings</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
-          data-name="menu:fullscreen" @click="fullScreen"><Maximize :size="16" />Full screen</button>
       </ToolMenu>
+      <!-- A phone held upright: the module panel opens from here -->
+      <ToolButton v-if="store.panelButtons" label="Module panel" :active="store.rightPanelOpen" data-name="rightPanelButton"
+        @click="store.rightPanelOpen = !store.rightPanelOpen"><PanelRight :size="20" /></ToolButton>
     </div>
   </header>
 </template>

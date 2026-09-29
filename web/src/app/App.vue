@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, provide, ref, useTemplateRef, watch, watchEffect } from "vue";
 import type { SlicerRuntime } from "@/core/runtime";
 import { openNodeModule } from "./nodeModules";
 import { openModule, setSetting, store, type LayoutTreeNode, type LogEntry, type ModuleSummary } from "./store";
@@ -256,9 +256,19 @@ async function loadStartupSample() {
 const RAIL = 33; // the strip that opens a closed panel, with the gap beside it
 const shell = useTemplateRef<HTMLElement>("shell");
 const shellWidth = ref(window.innerWidth);
+// A narrow screen held upright (a phone): the strips would take a sixth of the width from the views,
+// so the panels are opened from buttons at the ends of the toolbar instead
+const windowSize = ref({ width: window.innerWidth, height: window.innerHeight });
+window.addEventListener("resize", () => (windowSize.value = { width: window.innerWidth, height: window.innerHeight }));
+watchEffect(() => {
+  store.panelButtons = windowSize.value.width < 600 && windowSize.value.height > windowSize.value.width;
+});
 const panelsOverlay = computed(() => {
-  const left = store.leftPanelOpen ? store.leftPanelWidth : RAIL;
-  const right = store.rightPanelOpen ? store.rightPanelWidth : RAIL;
+  // a phone held upright: always over the views, whose width is little enough already
+  if (store.panelButtons) return true;
+  const rail = RAIL;
+  const left = store.leftPanelOpen ? store.leftPanelWidth : rail;
+  const right = store.rightPanelOpen ? store.rightPanelWidth : rail;
   return shellWidth.value - left - right < shellWidth.value * 0.25;
 });
 
@@ -298,7 +308,7 @@ onMounted(async () => {
   <div class="flex h-full flex-col bg-background text-foreground select-none">
     <ViewerHeader />
     <div ref="shell" class="relative flex min-h-0 flex-1 flex-row overflow-hidden" style="height: calc(100vh - 52px)">
-      <SidePanel side="left" :open="store.leftPanelOpen" :overlay="panelsOverlay" @toggle="store.leftPanelOpen = !store.leftPanelOpen"
+      <SidePanel side="left" :open="store.leftPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.leftPanelOpen = !store.leftPanelOpen"
         :tabs="[{ id: 'data', label: 'Data' }]">
         <DataPanel />
       </SidePanel>
@@ -308,7 +318,7 @@ onMounted(async () => {
         <LogWindow v-if="store.logWindowOpen" />
         <PythonConsole v-if="store.pythonConsoleOpen" />
       </main>
-      <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" @toggle="store.rightPanelOpen = !store.rightPanelOpen"
+      <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.rightPanelOpen = !store.rightPanelOpen"
         :tabs="[{ id: 'modules', label: 'Modules' }]">
         <template #header><ModuleTitleBar /></template>
         <ModulePanel />

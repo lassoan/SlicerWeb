@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // Extensions Manager: browse an extension index, install/uninstall extension wheels.
 // Installed extensions are remembered in the browser (localStorage) and loaded at startup.
-import { computed, inject, onMounted, ref } from "vue";
+import { computed, inject, nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
 import { X, Download, Trash2, ExternalLink } from "@lucide/vue";
 import type { SlicerRuntime } from "@/core/runtime";
 
@@ -35,6 +35,46 @@ const shown = computed(() => {
   const says = (text: string | undefined) => (text ?? "").toLowerCase().includes(f);
   return extensions.value.filter((e) => !f || says(e.name) || says(e.description) || says(e.category));
 });
+
+// Keyboard: the search box keeps the focus all along. Typing filters the list, the arrow keys move
+// through it, Enter installs or uninstalls the extension the list is on, and Escape closes the
+// dialog - so that extensions can be found and installed one after the other without the mouse.
+const search = useTemplateRef<HTMLInputElement>("search");
+const list = useTemplateRef<HTMLElement>("list");
+const highlighted = ref(0);
+const busy = ref(false);
+watch(() => shown.value.map((e) => e.name).join(), () => (highlighted.value = 0));
+function focusSearch() {
+  nextTick(() => search.value?.focus());
+}
+function moveHighlight(step: number) {
+  if (!shown.value.length) return;
+  highlighted.value = Math.max(0, Math.min(shown.value.length - 1, highlighted.value + step));
+  nextTick(() => list.value?.querySelector("[data-highlighted=true]")?.scrollIntoView({ block: "nearest" }));
+}
+async function toggle(e: ExtensionEntry) {
+  if (busy.value) return;   // one at a time: Enter pressed again while installing is not another
+  busy.value = true;
+  try {
+    if (isInstalled(e)) uninstall(e);
+    else await install(e);
+  } finally {
+    busy.value = false;
+    focusSearch();
+  }
+}
+function onSearchKey(event: KeyboardEvent) {
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveHighlight(event.key === "ArrowDown" ? 1 : -1);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    const e = shown.value[highlighted.value];
+    if (e) toggle(e);
+  } else if (event.key === "Escape") {
+    emit("close");
+  }
+}
 
 function resolve(path: string) {
   return new URL(path, indexUrl.value).href;
@@ -111,7 +151,10 @@ function uninstall(e: ExtensionEntry) {
   status.value = `${e.name} will be removed after reloading the page.`;
 }
 
-onMounted(loadIndex);
+onMounted(() => {
+  focusSearch();
+  loadIndex();
+});
 </script>
 
 <template>
@@ -124,13 +167,17 @@ onMounted(loadIndex);
       <div class="flex flex-wrap gap-2 px-4 py-2">
         <!-- Bound by hand rather than with v-model, which holds its value back while a phone keyboard
              composes a word: the list follows every keystroke. -->
-        <input :value="filter" placeholder="Search extensions" @input="filter = ($event.target as HTMLInputElement).value" class="h-8 flex-1 rounded-md border border-input bg-background px-2 text-[13px] outline-none focus:border-primary" />
+        <input ref="search" :value="filter" placeholder="Search extensions (↑ ↓ to choose, Enter to install or uninstall)"
+          data-name="extensionSearch" @input="filter = ($event.target as HTMLInputElement).value" @keydown="onSearchKey"
+          class="h-8 flex-1 rounded-md border border-input bg-background px-2 text-[13px] outline-none focus:border-primary" />
         <input v-model="indexUrl" title="Extension index URL" class="h-8 w-80 max-md:hidden rounded-md border border-input bg-background px-2 text-[12px] text-muted-foreground outline-none" @change="loadIndex" />
         <button type="button" class="h-8 rounded-md bg-secondary/60 px-3 text-[13px] hover:bg-secondary" @click="installFromUrl">Install from URL</button>
       </div>
       <div v-if="status" class="mx-4 rounded bg-accent px-2 py-1 text-[12px]">{{ status }}</div>
-      <div class="min-h-0 flex-1 overflow-y-auto px-4 py-2">
-        <div v-for="e in shown" :key="e.name" class="mb-2 flex gap-3 rounded-lg bg-card p-3 max-md:flex-wrap">
+      <div ref="list" class="min-h-0 flex-1 overflow-y-auto px-4 py-2">
+        <div v-for="(e, index) in shown" :key="e.name" class="mb-2 flex gap-3 rounded-lg bg-card p-3 max-md:flex-wrap"
+          :class="index === highlighted ? 'ring-2 ring-highlight' : ''" :data-extension="e.name" :data-highlighted="index === highlighted"
+          @mouseenter="highlighted = index">
           <img v-if="e.icon" :src="resolve(e.icon)" class="h-12 w-12 rounded" alt="" />
           <div class="min-w-0 flex-1">
             <div class="flex items-baseline gap-2">
@@ -145,10 +192,12 @@ onMounted(loadIndex);
               <span class="text-foreground/70">Depends on:</span> {{ e.depends.join(", ") }}</div>
             <div v-if="e.contributors?.length" class="mt-1 text-[11px] text-muted-foreground">{{ e.contributors.join(", ") }}</div>
           </div>
-          <button v-if="!isInstalled(e)" type="button" class="flex h-8 items-center gap-1 self-center rounded-md bg-primary px-3 text-[13px] hover:bg-primary/85" @click="install(e)">
+          <button v-if="!isInstalled(e)" type="button" class="flex h-8 items-center gap-1 self-center rounded-md bg-primary px-3 text-[13px] hover:bg-primary/85 disabled:opacity-50"
+            :disabled="busy" @click="toggle(e)">
             <Download :size="14" />Install
           </button>
-          <button v-else type="button" class="flex h-8 items-center gap-1 self-center rounded-md bg-secondary/60 px-3 text-[13px] hover:bg-secondary" @click="uninstall(e)">
+          <button v-else type="button" class="flex h-8 items-center gap-1 self-center rounded-md bg-secondary/60 px-3 text-[13px] hover:bg-secondary disabled:opacity-50"
+            :disabled="busy" @click="toggle(e)">
             <Trash2 :size="14" />Uninstall
           </button>
         </div>

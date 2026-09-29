@@ -9,7 +9,9 @@ import { store } from "../store";
 // side (a phone held upright, say). The panel then lies over the views instead of narrowing them:
 // the strip that closes it again stays where it is, and the views keep the width they had, which
 // matters because what is loaded is fitted to the width of a view at the moment it arrives.
-const props = defineProps<{ side: "left" | "right"; open: boolean; overlay?: boolean; tabs: { id: string; label: string }[] }>();
+const props = defineProps<{ side: "left" | "right"; open: boolean; overlay?: boolean; tabs: { id: string; label: string }[];
+  /** No strip to open the panel from: the toolbar has a button for it instead (a phone held upright). */
+  noStrip?: boolean }>();
 defineEmits<{ toggle: [] }>();
 
 const width = computed({
@@ -44,7 +46,7 @@ function startResize(e: PointerEvent) {
 <template>
   <!-- The strip that opens the panel again. It stays in the row while the panel lies over the
        views, so that the views neither move nor change size when the panel comes and goes. -->
-  <aside v-if="!open || overlay" class="flex w-[25px] shrink-0 flex-col bg-popover"
+  <aside v-if="(!open || overlay) && !noStrip" class="flex w-[25px] shrink-0 flex-col bg-popover"
     :class="side === 'left' ? 'ml-[4px] mr-[8px]' : 'mr-[4px] ml-[8px]'">
     <!-- The whole strip opens the panel, not only the arrow on it: it is 25 px wide, which is a
          small thing to hit with a finger, and there is nothing else it could mean. -->

@@ -24,7 +24,8 @@ phone.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
 await phone.goto(base + "?sample=");
 await ready(phone);
 const closedWidth = await viewWidth(phone);
-await phone.locator("[title='Expand panel']").first().click();
+// held upright, the panel opens from the button at the start of the toolbar (no strips there)
+await phone.locator("[data-name=leftPanelButton]").click();
 await phone.waitForTimeout(1000);
 check("the views keep their width when the Data panel opens", await viewWidth(phone), closedWidth);
 check("the panel lies over the views", await overlaying(phone), true);

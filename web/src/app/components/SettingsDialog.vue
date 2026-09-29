@@ -1,11 +1,12 @@
 <script setup lang="ts">
 // Application settings: what Slicer's settings dialog offers, in sections. The settings are
 // Slicer's own, by their Qt key (see core/settings.ts): a module reads them as on the desktop.
-import { inject, ref } from "vue";
-import { X } from "@lucide/vue";
+import { computed, inject, ref } from "vue";
+import { ArrowDown, ArrowUp, X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox } from "@/widgets";
 import { setSetting, store } from "../store";
+import { moduleList } from "../modules/list";
 
 const emit = defineEmits<{ close: [] }>();
 // Whether this browser has JavaScript Promise Integration (the Developer section says so if not)
@@ -14,9 +15,29 @@ const jspiSupported = !!(bridge as { jspiSupported?: boolean } | undefined)?.jsp
 
 interface Section { id: string; title: string }
 const sections: Section[] = [
-  { id: "general", title: "General" }, { id: "rendering", title: "Rendering" }, { id: "developer", title: "Developer" },
+  { id: "general", title: "General" }, { id: "modules", title: "Modules" }, { id: "rendering", title: "Rendering" },
+  { id: "developer", title: "Developer" },
 ];
 const section = ref(sections[0].id);
+
+// Favorite modules: the modules of the toolbar, in order (Slicer's setting Modules/FavoriteModules)
+const favourites = computed(() => store.settings["Modules/FavoriteModules"] ?? []);
+const titleOf = (name: string) => moduleList.value.find((m) => m.name === name)?.title ?? `${name} (not loaded)`;
+const addable = computed(() => moduleList.value.filter((m) => !favourites.value.includes(m.name)));
+const setFavourites = (names: string[]) => setSetting("Modules/FavoriteModules", names);
+function moveFavourite(index: number, step: number) {
+  const names = [...favourites.value];
+  const [name] = names.splice(index, 1);
+  names.splice(index + step, 0, name);
+  setFavourites(names);
+}
+function addFavourite(event: Event) {
+  const select = event.target as HTMLSelectElement;
+  if (select.value) setFavourites([...favourites.value, select.value]);
+  select.value = "";
+}
+// An embedding page may name the favorites for itself (?favoriteModules=): the toolbar follows that
+const favouritesFromAddress = new URLSearchParams(window.location.search).has("favoriteModules");
 </script>
 
 <template>
@@ -52,6 +73,32 @@ const section = ref(sections[0].id);
               so that reloading the page brings back the latest state. A dot in the lower left corner shows it: red
               while saving, green when saved. Off, the scene is kept only when the page goes into the background.
             </div>
+          </template>
+          <template v-if="section === 'modules'">
+            <div class="text-[13px] text-foreground">Favorite modules</div>
+            <div class="mt-1 text-[12px] text-muted-foreground">
+              The modules the toolbar offers, in this order. (Slicer setting <code>Modules/FavoriteModules</code>.)
+              <template v-if="favouritesFromAddress"><br />This page's address names the favorite modules
+                (<code>?favoriteModules=</code>), and its toolbar shows those.</template>
+            </div>
+            <div class="mt-2 flex flex-col gap-0.5" data-name="favoriteModules">
+              <div v-for="(name, index) in favourites" :key="name" class="flex items-center gap-1 rounded px-2 py-1 text-[13px] hover:bg-accent/40"
+                :data-module="name">
+                <span class="min-w-0 flex-1 truncate">{{ titleOf(name) }}</span>
+                <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight disabled:opacity-30" :disabled="index === 0"
+                  :title="`Move ${titleOf(name)} up`" @click="moveFavourite(index, -1)"><ArrowUp :size="14" /></button>
+                <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight disabled:opacity-30" :disabled="index === favourites.length - 1"
+                  :title="`Move ${titleOf(name)} down`" @click="moveFavourite(index, 1)"><ArrowDown :size="14" /></button>
+                <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight"
+                  :title="`Remove ${titleOf(name)}`" @click="setFavourites(favourites.filter((n) => n !== name))"><X :size="14" /></button>
+              </div>
+              <div v-if="!favourites.length" class="px-2 py-1 text-[12px] text-muted-foreground">None: the toolbar offers no modules.</div>
+            </div>
+            <select class="mt-2 w-full rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground"
+              data-name="addFavoriteModule" @change="addFavourite">
+              <option value="">Add a module…</option>
+              <option v-for="m in addable" :key="m.name" :value="m.name">{{ m.title || m.name }}</option>
+            </select>
           </template>
           <template v-if="section === 'rendering'">
             <SwCheckBox text="Share one WebGL context between the views" data-name="sharedWebGLContext"

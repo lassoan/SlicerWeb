@@ -28,7 +28,7 @@ check("the extensions are listed", all >= 5, true);
 
 /** Type the way a phone keyboard does: the word is still being composed, no space yet. */
 const compose = (text) => page.evaluate((value) => {
-  const el = document.querySelector("input[placeholder='Search extensions']");
+  const el = document.querySelector("[data-name=extensionSearch]");
   el.focus();
   el.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
   el.value = value;

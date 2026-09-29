@@ -27,7 +27,7 @@ const py = (code) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(c, 
 const resize = async (width) => { await page.setViewportSize({ width, height: 900 }); await page.waitForTimeout(900); };
 
 check("every button is its own where there is room", await buttons(), [
-  "Layout", "Reset views", "Crosshair", "Rotate / Pan / Zoom", "Window / Level", "Scroll slices",
+  "Layout", "Reset views", "Maximize view", "Crosshair", "Rotate / Pan / Zoom", "Window / Level", "Scroll slices",
   "Place points", "New markup", "Segment Editor", "Volume Rendering", "Transforms", "Scene Views"]);
 
 // Making a markup is something done, not a state: the button holds nothing to switch off, and that
@@ -100,7 +100,7 @@ check("and framing the views again", await page.locator("[role=menuitem]", { has
 await page.keyboard.press("Escape");
 
 await resize(1500);
-check("room again brings every button back", (await buttons()).length, 12);
+check("room again brings every button back", (await buttons()).length, 13);
 
 await browser.close();
 console.log(failures ? `${failures} check(s) failed` : "all checks passed");

@@ -20,6 +20,11 @@ export interface AppSettings {
    * saved, so without this a reload restores the scene as it was the last time the page was hidden.
    */
   "General/AutoSave": boolean;
+  /**
+   * The modules the toolbar offers (by name), in order: Slicer's own setting of favorite modules.
+   * An embedding page can give others for itself with ?favoriteModules= (docs/embedding.md).
+   */
+  "Modules/FavoriteModules": string[];
   /** Show what a module developer needs: the Reload and Test section of a scripted module. */
   "Developer/DeveloperMode": boolean;
   /** Show in the corner of every view how many times it rendered in the last second, and how long it took. */
@@ -45,6 +50,7 @@ export interface AppSettings {
 export const DEFAULT_SETTINGS: AppSettings = {
   "General/SaveWrittenFilesToDownloads": true,
   "General/AutoSave": true,
+  "Modules/FavoriteModules": ["SegmentEditor", "VolumeRendering", "Transforms", "SceneViews"],
   "Developer/DeveloperMode": true,
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,

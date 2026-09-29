@@ -58,6 +58,11 @@ export const store = reactive({
   /** The Segment Editor effect at work ("" for none): Paint and Erase take the mouse in the views,
    *  which the mouse mode button shows (App.vue follows it). */
   segmentEditorEffect: "",
+  /** Whether the crosshair is shown in the views (the toolbar's Crosshair button says so). */
+  crosshairOn: false,
+  /** A narrow screen held upright (a phone): the side panels are opened from buttons at the ends
+   *  of the toolbar instead of from strips beside the views, which would take width from them. */
+  panelButtons: false,
   /** Keeping the session (auto-save, App.vue): "unsaved" changes, "saving" them, all "saved". */
   sessionSaveState: "" as "" | "unsaved" | "saving" | "saved",
   sessionSavedAt: 0,

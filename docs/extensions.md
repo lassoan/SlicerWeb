@@ -91,8 +91,8 @@ fetched source; they are for the libraries SlicerWeb builds itself (Slicer, VTK,
 
 ### Sources
 
-The build fetches private repositories with a GitHub token: `$env:SW_GIT_TOKEN`, or the file
-`.secrets\github-token` (git-ignored). Git and pip get it from a credential helper, so it is not
+The build fetches private repositories with a GitHub token: the environment variable `SW_GIT_TOKEN`,
+or the file `.secrets/github-token` (git-ignored). Git and pip get it from a credential helper, so it is not
 part of any URL or log. SSH URLs of GitHub (`git@github.com:org/repo.git`) are fetched over HTTPS
 with it.
 

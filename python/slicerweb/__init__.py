@@ -25,6 +25,10 @@ def initialize(config=None):
     """
     global _application
     if _application is None:
+        # vtk.util.numpy_support without importing it, as module code finds it in desktop Slicer, where
+        # the application has imported it by the time modules run (ConduitPlanner uses it so)
+        import vtk.util.numpy_support  # noqa: F401
+
         from .app import SlicerWebApplication
 
         _application = SlicerWebApplication(config or {})

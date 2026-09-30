@@ -46,7 +46,7 @@ the browser console and the tests use. Wait for it to be ready, then talk to it:
 
 ```js
 const frame = document.getElementById("slicer");
-const slicer = await new Promise((ready) => {
+const slicerWebApp = await new Promise((ready) => {
   const poll = () => (frame.contentWindow?.slicerWeb?.store.status === "ready"
     ? ready(frame.contentWindow.slicerWeb)
     : setTimeout(poll, 200));
@@ -62,22 +62,22 @@ To load, put the bytes there, then read them into the scene.
 
 ```js
 // something your site serves (same origin, or a server that allows cross-origin requests)
-const path = await slicer.downloadFile("/cases/42/ct.nrrd", "ct.nrrd");
-await slicer.bridge.call("loadFiles", [[path]]);
+const path = await slicerWebApp.downloadFile("/cases/42/ct.nrrd", "ct.nrrd");
+await slicerWebApp.bridge.call("loadFiles", [[path]]);
 
 // bytes you already hold: a File from an <input>, or anything you have fetched
-const [scene] = await slicer.writeFiles([new File([blob], "case42.mrb")]);
-await slicer.bridge.call("loadFiles", [[scene]]);
+const [scene] = await slicerWebApp.writeFiles([new File([blob], "case42.mrb")]);
+await slicerWebApp.bridge.call("loadFiles", [[scene]]);
 
 // several files that belong together (a volume and its segmentation, a DICOM series)
-await slicer.bridge.call("loadFiles", [[volumePath, segmentationPath]]);
+await slicerWebApp.bridge.call("loadFiles", [[volumePath, segmentationPath]]);
 ```
 
 To save, write the file there, then read its bytes out.
 
 ```js
-await slicer.bridge.call("saveScene", ["/data/out/case42.mrb"]); // save to application's virtual file system
-const [mrb] = await slicer.readFiles(["/data/out/case42.mrb"]);  // copy the file to browser file object
+await slicerWebApp.bridge.call("saveScene", ["/data/out/case42.mrb"]); // save to application's virtual file system
+const [mrb] = await slicerWebApp.readFiles(["/data/out/case42.mrb"]);  // copy the file to browser file object
 await fetch("/cases/42/scene", { method: "PUT", body: mrb }); // use a web request to store the file
 ```
 
@@ -104,15 +104,15 @@ download.
 A page that stores files somewhere of its own can define its own save handler instead:
 
 ```js
-slicer.saveHandler = async (path) => {
-  const [file] = await slicer.readFiles([path]);
+slicerWebApp.saveHandler = async (path) => {
+  const [file] = await slicerWebApp.readFiles([path]);
   await fetch(`/cases/42/files/${encodeURIComponent(file.name)}`, { method: "PUT", body: file });
 };
 ```
 
 While a handler is set, nothing is downloaded - not even when the handler throws or its promise is
 rejected (that is logged as an error, and nothing more). A handler that wants a download after all,
-for example when its upload fails, can call `slicer.saveFileToDisk(path)` itself.
+for example when its upload fails, can call `slicerWebApp.saveFileToDisk(path)` itself.
 Set `saveHandler = null` to go back to downloads.
 
 A save the page itself asks for (`bridge.call("saveScene", ...)` above) does not reach the handler;
@@ -125,21 +125,21 @@ Three levels of access are available:
 
 ```js
 // 1. named operations of the application (python/slicerweb: every @method())
-await slicer.bridge.call("closeScene");
-await slicer.bridge.call("saveScene", ["/data/case42.mrb"]);
-const tree = await slicer.bridge.call("getSubjectHierarchy");
+await slicerWebApp.bridge.call("closeScene");
+await slicerWebApp.bridge.call("saveScene", ["/data/case42.mrb"]);
+const tree = await slicerWebApp.bridge.call("getSubjectHierarchy");
 
 // 2. any method of any object in the scene
 //    targets: app, layout, io, scene, appLogic, node:<id>, logic:<Module>
-await slicer.bridge.invoke("node:vtkMRMLScalarVolumeNode1", "SetName", ["CT"]);
-const nodeCount = await slicer.bridge.invoke("scene", "GetNumberOfNodes");
+await slicerWebApp.bridge.invoke("node:vtkMRMLScalarVolumeNode1", "SetName", ["CT"]);
+const nodeCount = await slicerWebApp.bridge.invoke("scene", "GetNumberOfNodes");
 // a node passed as an argument travels as {__node__: "<id>"}
-await slicer.bridge.invoke("logic:Volumes", "CreateAndAddLabelVolume",
+await slicerWebApp.bridge.invoke("logic:Volumes", "CreateAndAddLabelVolume",
                            [{ __node__: "vtkMRMLScalarVolumeNode1" }, "Segmentation labels"]);
 
 // 3. Python, for anything the first two do not reach
-await slicer.bridge.evalPython("slicer.util.getNode('CT').GetDisplayNode().SetWindowLevel(1000, 300)");
-const count = await slicer.bridge.evalPython("len(slicer.util.getNodesByClass('vtkMRMLModelNode'))", "eval");
+await slicerWebApp.bridge.evalPython("slicer.util.getNode('CT').GetDisplayNode().SetWindowLevel(1000, 300)");
+const count = await slicerWebApp.bridge.evalPython("len(slicer.util.getNodesByClass('vtkMRMLModelNode'))", "eval");
 ```
 
 `evalPython` in `"eval"` mode returns the value's Python `repr` as a string, so parse it or return
@@ -148,9 +148,9 @@ JSON from the expression itself.
 ### Get event notifications from the application
 
 ```js
-slicer.bridge.events.on("nodes-loaded", ({ fileName, nodeIDs }) => console.log(fileName, nodeIDs));
-slicer.bridge.events.on("scene-changed", () => refreshMyCaseList());
-slicer.bridge.events.on("busy", ({ busy }) => showSpinner(busy));
+slicerWebApp.bridge.events.on("nodes-loaded", ({ fileName, nodeIDs }) => console.log(fileName, nodeIDs));
+slicerWebApp.bridge.events.on("scene-changed", () => refreshMyCaseList());
+slicerWebApp.bridge.events.on("busy", ({ busy }) => showSpinner(busy));
 ```
 
 The events the application sends on its own: `app-ready`, `busy`, `scene-changed`, `nodes-loaded`,
@@ -206,7 +206,7 @@ host.emit("measurement-ready", {"case": 42, "volumeMl": 87.3})
 ```
 
 ```js
-slicer.bridge.events.on("measurement-ready", (payload) => caseApi.save(payload));
+slicerWebApp.bridge.events.on("measurement-ready", (payload) => caseApi.save(payload));
 ```
 
 This keeps the module free of anything about the page it happens to be embedded in.

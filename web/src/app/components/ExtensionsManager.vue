@@ -2,7 +2,7 @@
 // Extensions Manager: browse an extension index, install/uninstall extension wheels.
 // Installed extensions are remembered in the browser (localStorage) and loaded at startup.
 import { computed, inject, nextTick, onMounted, ref, useTemplateRef, watch } from "vue";
-import { X, Download, Trash2, ExternalLink } from "@lucide/vue";
+import { X, Download, Trash2, ExternalLink, Puzzle } from "@lucide/vue";
 import type { SlicerRuntime } from "@/core/runtime";
 
 interface ExtensionEntry {
@@ -78,6 +78,16 @@ function onSearchKey(event: KeyboardEvent) {
 
 function resolve(path: string) {
   return new URL(path, indexUrl.value).href;
+}
+
+// An icon the page cannot load - one in a private repository, say - is replaced by a placeholder,
+// with a warning in the log (once for each).
+const iconFailed = ref<Record<string, boolean>>({});
+function onIconError(e: ExtensionEntry) {
+  if (iconFailed.value[e.name]) return;
+  iconFailed.value = { ...iconFailed.value, [e.name]: true };
+  console.warn(`The icon of extension ${e.name} could not be loaded: ${resolve(e.icon ?? "")} ` +
+    `(the extension can name an icon file of its repository as "icon" in its slicerweb-extension.json)`);
 }
 
 function wheelUrl(e: ExtensionEntry) {
@@ -178,7 +188,10 @@ onMounted(() => {
         <div v-for="(e, index) in shown" :key="e.name" class="mb-2 flex gap-3 rounded-lg bg-card p-3 max-md:flex-wrap"
           :class="index === highlighted ? 'ring-2 ring-highlight' : ''" :data-extension="e.name" :data-highlighted="index === highlighted"
           @mouseenter="highlighted = index">
-          <img v-if="e.icon" :src="resolve(e.icon)" class="h-12 w-12 rounded" alt="" />
+          <img v-if="e.icon && !iconFailed[e.name]" :src="resolve(e.icon)" class="h-12 w-12 shrink-0 rounded" alt=""
+            @error="onIconError(e)" />
+          <div v-else class="flex h-12 w-12 shrink-0 items-center justify-center rounded bg-accent text-muted-foreground"
+            data-name="extensionIconPlaceholder"><Puzzle :size="24" /></div>
           <div class="min-w-0 flex-1">
             <div class="flex items-baseline gap-2">
               <span class="font-medium">{{ e.name }}</span>

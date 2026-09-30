@@ -21,6 +21,7 @@ import glob
 import hashlib
 import io
 import os
+import re
 import shutil
 import sys
 import zipfile
@@ -450,7 +451,7 @@ def write_extension_wheels(args, slicer_ver):
     if not os.path.isdir(ext_root):
         return
     os.makedirs(args.extensions_out, exist_ok=True)
-    for old in glob.glob(os.path.join(args.extensions_out, "*.whl")):
+    for old in glob.glob(os.path.join(args.extensions_out, "*.whl")) + glob.glob(os.path.join(args.extensions_out, "icon-*")):
         os.remove(old)
     print("Writing extension wheels to", args.extensions_out)
     index = []
@@ -466,6 +467,20 @@ def write_extension_wheels(args, slicer_ver):
         except Exception:
             revision = ""
         meta["revision"] = revision
+        # The icon: the file of the repository that "icon" of slicerweb-extension.json names, served
+        # next to the index (a URL relative to it; at the top of the folder, which is copied into the
+        # site file by file), else EXTENSION_ICONURL as it is - which the Extensions Manager shows a
+        # placeholder for, with a warning, if the page cannot load it (a private repository's).
+        icon = meta.get("icon", "")
+        if icon and not re.match(r"^[a-z][a-z0-9+.-]*:", icon, re.I):
+            named = os.path.join(source_dir, *icon.replace("\\", "/").split("/"))
+            if os.path.isfile(named):
+                copied = f"icon-{name}{os.path.splitext(named)[1].lower()}"
+                shutil.copyfile(named, os.path.join(args.extensions_out, copied))
+                meta["icon"] = copied
+            else:
+                print(f"  Warning: {name}: the icon of its slicerweb-extension.json, {icon}, is not a file of the extension")
+                meta["icon"] = ""
         dist = "slicer-ext-" + name.lower()
         w = Wheel(dist, "0.1.0", summary=meta.get("description", name))
         # Same layout as the Slicer home (desktop extensions have their own tree, but in the browser all

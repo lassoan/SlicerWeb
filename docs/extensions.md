@@ -60,6 +60,12 @@ in a browser, such as JAX for svMorph), so list every package the extension impo
 An extension can also say this itself, in a `slicerweb-extension.json` of its source
 (`{"pythonPackages": ["scipy"]}`, Pyodide packages only); both lists are used.
 
+**Icon.** The Extensions Manager shows the icon that `"icon"` of `slicerweb-extension.json` names,
+a file of the extension's repository (`{"icon": "MyExtension.png"}`), which is copied next to the
+extension index; else the `EXTENSION_ICONURL` of its CMakeLists.txt. An icon the page cannot load -
+that of a private repository, say - is shown as a placeholder, with a warning in the log; a private
+extension names its icon in `slicerweb-extension.json`.
+
 Packages that come with desktop Slicer are there for an extension without it saying so, so they
 are added too: the small ones of them that the extension's Python code imports anywhere - also
 inside a function, as ImportMimics imports pydicom only when it reads an image - are listed by

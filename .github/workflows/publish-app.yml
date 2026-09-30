@@ -186,6 +186,8 @@ jobs:
           else
             echo "Neither SLICERWEB_APP_KEY nor SLICERWEB_APP_TOKEN is set"; exit 1
           fi
+          # the commit of SlicerWeb built (GITHUB_SHA is that of the calling repository, when called)
+          SLICERWEB_COMMIT=$(git -C "$GITHUB_WORKSPACE" rev-parse --short HEAD)
           touch .nojekyll   # otherwise GitHub Pages hides files whose name starts with an underscore
           cat > README.md <<READ
           # ${APP_REPOSITORY##*/}
@@ -205,7 +207,7 @@ jobs:
           # only the files that changed are uploaded, not the half a gigabyte of sample data again.
           git fetch --depth 1 --filter=blob:none origin "$APP_BRANCH" || echo "Nothing published yet"
           git add -A
-          git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
+          git commit -qm "SlicerWeb ${SLICERWEB_COMMIT}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
           # One commit and no history: the site repository holds this build alone.
           git push --force --quiet origin "HEAD:$APP_BRANCH" || {
             echo "Pushing what changed did not work; uploading the whole site"
@@ -214,7 +216,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add -A
-            git commit -qm "SlicerWeb ${GITHUB_SHA:0:7}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
+            git commit -qm "SlicerWeb ${SLICERWEB_COMMIT}: ${GITHUB_WORKFLOW} #${GITHUB_RUN_NUMBER}"
             git push --force --quiet "$remote" "HEAD:$APP_BRANCH"
           }
           echo "Published https://${APP_REPOSITORY%%/*}.github.io/${APP_REPOSITORY##*/}/" >> "$GITHUB_STEP_SUMMARY"

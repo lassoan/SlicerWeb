@@ -1,7 +1,7 @@
 // A module that brings its own file format: a class named <Module>FileReader (and FileWriter) is
-// found and added to the list of readers and writers - vtkSlicerFileIOManager, the VTK class that
-// stands where qSlicerCoreIOManager's list does on the desktop - so that such a file can be opened
-// and saved like any other. The path widget of a module chooses a file in the browser.
+// found and added to the file IO manager of the application logic - vtkMRMLFileIOManager, which
+// qSlicerCoreIOManager forwards to on the desktop - so that such a file can be opened and saved like
+// any other. The path widget of a module chooses a file in the browser.
 // Usage: node tests/scripted-file-reader.mjs [url] [screenshot.png]
 import { chromium } from "playwright-core";
 
@@ -19,7 +19,7 @@ const value = (expr) => page.evaluate((c) => window.slicerWeb.bridge.evalPython(
 
 // what the application itself reads, before any module has added anything
 console.log("file types of the application:", await value(`", ".join(
-    __import__("slicerweb.io_registry", fromlist=["x"]).file_types()[:6])`));
+    slicer.app.applicationLogic().GetFileIOManager().GetReaderFileTypes())`));
 console.log("a volume is read by:", await value(`slicer.app.coreIOManager().fileType("/data/head.nrrd")`)
   .catch(async () => value(`__import__("slicer").app.coreIOManager().fileType("/data/head.nrrd")`)));
 
@@ -131,7 +131,8 @@ _out = "module loaded: %s" % (slicer.app.moduleManager().module("MyFormat") is n
 console.log(await value("_out"));
 
 console.log("the reader is in the list:", await value(`", ".join(
-    line for line in __import__("slicerweb.io_registry", fromlist=["x"]).describe() if "MyFileType" in line)`));
+    "%s %s (%s)" % (h.GetClassName(), h.GetFileType(), ", ".join(h.GetExtensions()))
+    for h in slicer.app.coreIOManager().readers("MyFileType") + slicer.app.coreIOManager().writers("MyFileType"))`));
 
 // a file of that kind, read without anyone saying what it is
 await run(`
@@ -148,7 +149,7 @@ console.log("loaded:", await value(`"%s named %s holding %s" % (node.GetClassNam
 // and written back out through the module's writer
 console.log("writer chosen for the node:", await value(`"%s of %s, for %s" % (
     slicer.app.coreIOManager().writerForNode(node, "/data/written.mft").GetFileType(),
-    slicer.app.coreIOManager().writerForNode(node, "/data/written.mft").GetOwner(),
+    slicer.app.coreIOManager().writerForNode(node, "/data/written.mft").GetClassName(),
     slicer.app.coreIOManager().fileWriterFileType(node))`));
 await run(`saved = slicer.util.saveNode(node, "/data/written.mft")`);
 console.log("saved:", await value(`str(saved)`), "|",

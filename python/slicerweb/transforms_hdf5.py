@@ -176,113 +176,111 @@ def companion_text_path(path):
     return os.path.join(tempfile.mkdtemp(prefix="transform-"), name)
 
 
-OWNER = "slicerweb:hdf5-transforms"
+def _reader_class():
+    """The reader of transforms in HDF5 files: a Slicer file reader written in Python.
+
+    Made when it is first needed, as its base class is only there once slicer is imported.
+    """
+    import slicer
+
+    class HDF5TransformFileReader(slicer.vtkSlicerScriptedFileReader):
+        """Reads a transform out of an HDF5 file, by way of its text form."""
+
+        def __init__(self):
+            super().__init__()
+            self.SetFileType("TransformFile")
+            self.SetDescription("Transform")
+            self.SetNameFilters(["Transform (*.h5 *.hdf5 *.hdf)"])
+
+        def CanLoadFileConfidence(self, filePath):
+            # Surer than the reader of the Transforms module, which knows the extension but cannot read it
+            return 0.7 if str(filePath).lower().endswith(EXTENSIONS) else 0.0
+
+        def Load(self, properties):
+            import shutil
+
+            # Asked for before anything is caught: a package that is not there yet is installed by
+            # the page, which then runs this again (see slicerweb.packages).
+            import h5py  # noqa: F401
+
+            filePath = properties.GetStringProperty("fileName")
+            textPath = companion_text_path(filePath)
+            try:
+                hdf5_to_text(filePath, textPath)
+                nodes = vtk.vtkCollection()
+                messages = slicer.vtkMRMLMessageCollection()
+                loadProperties = slicer.vtkMRMLIOProperties()
+                loadProperties.Copy(properties)
+                loadProperties.SetStringProperty("fileName", textPath)
+                if not loadProperties.HasProperty("name"):
+                    loadProperties.SetStringProperty("name", os.path.splitext(os.path.basename(filePath))[0])
+                if not self.GetFileIOManager().LoadNodes("TransformFile", loadProperties, nodes, messages):
+                    raise RuntimeError(messages.GetAllMessagesAsString() or "the transform could not be read")
+                for i in range(nodes.GetNumberOfItems()):
+                    node = nodes.GetItemAsObject(i)
+                    # The file it came from is the HDF5 one, not the text form made on the way
+                    storage = node.GetStorageNode()
+                    if storage is not None:
+                        storage.SetFileName(filePath)
+                    self.AddLoadedNodeID(node.GetID())
+            except Exception as e:
+                self.GetUserMessages().AddMessage(
+                    vtk.vtkCommand.ErrorEvent, f"Failed to read {os.path.basename(filePath)}: {e}")
+                return False
+            finally:
+                shutil.rmtree(os.path.dirname(textPath), ignore_errors=True)
+            return True
+
+    return HDF5TransformFileReader
 
 
-class HDF5TransformFileReader:
-    """Reads a transform out of an HDF5 file, by way of its text form."""
+def _writer_class():
+    """The writer of transforms in HDF5 files (see _reader_class)."""
+    import slicer
 
-    def __init__(self, parent):
-        self.parent = parent
+    class HDF5TransformFileWriter(slicer.vtkSlicerScriptedFileWriter):
+        """Writes a transform into an HDF5 file, by way of its text form."""
 
-    def description(self):
-        return "Transform"
+        def __init__(self):
+            super().__init__()
+            self.SetFileType("TransformFile")
+            self.SetDescription("Transform")
+            self.SetNameFilters(["Transform (*.h5 *.hdf5 *.hdf)"])
+            self.SetNodeClassName("vtkMRMLTransformNode")
 
-    def fileType(self):
-        return "TransformFile"
+        def CanWriteObjectConfidence(self, obj):
+            return 0.7 if obj is not None and obj.IsA("vtkMRMLTransformNode") else 0.0
 
-    def extensions(self):
-        return ["Transform (*.h5 *.hdf5 *.hdf)"]
+        def Write(self, properties):
+            import shutil
 
-    def canLoadFileConfidence(self, filePath):
-        # Surer than the application's own reader, which knows the extension but cannot read it
-        return 0.7 if str(filePath).lower().endswith(EXTENSIONS) else 0.0
+            filePath = properties.GetStringProperty("fileName")
+            if not filePath.lower().endswith(EXTENSIONS):
+                return False   # another writer's business
 
-    def load(self, properties):
-        import shutil
+            # Asked for before anything is caught: a package that is not there yet is installed by
+            # the page, which then runs this again (see slicerweb.packages).
+            import h5py  # noqa: F401
 
-        import slicer
+            textPath = companion_text_path(filePath)
+            try:
+                writeProperties = slicer.vtkMRMLIOProperties()
+                writeProperties.Copy(properties)
+                writeProperties.SetStringProperty("fileName", textPath)
+                messages = slicer.vtkMRMLMessageCollection()
+                if not self.GetFileIOManager().SaveNodes("TransformFile", writeProperties, messages, self.GetScene()):
+                    raise RuntimeError(messages.GetAllMessagesAsString() or "the transform could not be written")
+                text_to_hdf5(textPath, filePath)
+                self.AddWrittenNodeID(properties.GetStringProperty("nodeID"))
+            except Exception as e:
+                self.GetUserMessages().AddMessage(
+                    vtk.vtkCommand.ErrorEvent, f"Failed to write {os.path.basename(filePath)}: {e}")
+                return False
+            finally:
+                shutil.rmtree(os.path.dirname(textPath), ignore_errors=True)
+            return True
 
-        # Asked for before anything is caught: a package that is not there yet is installed by
-        # the page, which then runs this again (see slicerweb.packages).
-        import h5py  # noqa: F401
-
-        filePath = str(properties["fileName"])
-        textPath = companion_text_path(filePath)
-        try:
-            hdf5_to_text(filePath, textPath)
-            nodes = vtk.vtkCollection()
-            messages = slicer.vtkMRMLMessageCollection()
-            loadProperties = dict(properties)
-            loadProperties["fileName"] = textPath
-            loadProperties.setdefault("name", os.path.splitext(os.path.basename(filePath))[0])
-            if not slicer.app.coreIOManager().loadNodes("TransformFile", loadProperties, nodes, messages):
-                raise RuntimeError(messages.GetAllMessagesAsString() or "the transform could not be read")
-            loaded = [nodes.GetItemAsObject(i) for i in range(nodes.GetNumberOfItems())]
-            for node in loaded:
-                # The file it came from is the HDF5 one, not the text form made on the way
-                storage = node.GetStorageNode()
-                if storage is not None:
-                    storage.SetFileName(filePath)
-            self.parent.loadedNodes = [node.GetID() for node in loaded]
-        except Exception as e:
-            self.parent.userMessages().AddMessage(
-                vtk.vtkCommand.ErrorEvent, f"Failed to read {os.path.basename(filePath)}: {e}")
-            return False
-        finally:
-            shutil.rmtree(os.path.dirname(textPath), ignore_errors=True)
-        return True
-
-
-class HDF5TransformFileWriter:
-    """Writes a transform into an HDF5 file, by way of its text form."""
-
-    def __init__(self, parent):
-        self.parent = parent
-
-    def description(self):
-        return "Transform"
-
-    def fileType(self):
-        return "TransformFile"
-
-    def extensions(self, node=None):
-        return ["Transform (*.h5 *.hdf5 *.hdf)"]
-
-    def canWriteObjectConfidence(self, node):
-        if node is None or not node.IsA("vtkMRMLTransformNode"):
-            return 0.0
-        return 0.7
-
-    def write(self, properties):
-        import shutil
-
-        import slicer
-
-        filePath = str(properties["fileName"])
-        if not filePath.lower().endswith(EXTENSIONS):
-            return False   # another writer's business
-
-        # Asked for before anything is caught: a package that is not there yet is installed by
-        # the page, which then runs this again (see slicerweb.packages).
-        import h5py  # noqa: F401
-
-        textPath = companion_text_path(filePath)
-        try:
-            writeProperties = dict(properties)
-            writeProperties["fileName"] = textPath
-            messages = slicer.vtkMRMLMessageCollection()
-            if not slicer.app.coreIOManager().saveNodes("TransformFile", writeProperties, messages):
-                raise RuntimeError(messages.GetAllMessagesAsString() or "the transform could not be written")
-            text_to_hdf5(textPath, filePath)
-            self.parent.writtenNodes = [properties.get("nodeID", "")]
-        except Exception as e:
-            self.parent.userMessages().AddMessage(
-                vtk.vtkCommand.ErrorEvent, f"Failed to write {os.path.basename(filePath)}: {e}")
-            return False
-        finally:
-            shutil.rmtree(os.path.dirname(textPath), ignore_errors=True)
-        return True
+    return HDF5TransformFileWriter
 
 
 #: What a transform is saved as when nothing says otherwise. Slicer's own default is "h5"; here it
@@ -291,6 +289,8 @@ class HDF5TransformFileWriter:
 DEFAULT_WRITE_EXTENSION = "tfm"
 
 _observer = None
+#: The reader and writer registered by install()
+_handlers = []
 
 
 @vtk.calldata_type(vtk.VTK_OBJECT)
@@ -351,14 +351,23 @@ def read_scene_transforms(nodes):
 
 
 def install():
-    """Let the application read and write transforms in HDF5 files."""
-    global _observer
+    """Let the application read and write transforms in HDF5 files.
+
+    Their reader and writer are registered before those of the Transforms module, so that they are
+    the ones tried first for an .h5 file (the file IO manager tries them in that order).
+    """
+    global _observer, _handlers
 
     import slicer
 
     from . import io_scripted
 
-    io_scripted.register_handlers(OWNER, HDF5TransformFileReader, HDF5TransformFileWriter)
+    manager = slicer.app.applicationLogic().GetFileIOManager()
+    for handler in _handlers:
+        manager.UnregisterHandler(handler)
+    _handlers = [io_scripted.create_reader(_reader_class()), io_scripted.create_writer(_writer_class())]
+    for handler in _handlers:
+        manager.RegisterHandler(handler)
 
     scene = slicer.mrmlScene
     if scene is not None and _observer is None:

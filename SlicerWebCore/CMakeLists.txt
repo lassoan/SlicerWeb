@@ -2,11 +2,6 @@
 project(SlicerWebCore)
 
 set(SlicerWebCore_SRCS
-  vtkSlicerIOProperties.cxx
-  vtkSlicerFileIOHandler.cxx
-  vtkSlicerFileReader.cxx
-  vtkSlicerFileWriter.cxx
-  vtkSlicerFileIOManager.cxx
   vtkSlicerWebView.cxx
   vtkSlicerWebCanvas.cxx
   vtkSlicerWebSliceView.cxx

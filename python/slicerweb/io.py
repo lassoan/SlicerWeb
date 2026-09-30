@@ -1,9 +1,14 @@
-"""Qt-free equivalent of qSlicerCoreIOManager and the qSlicer*Reader / qSlicerNodeWriter classes.
+"""qSlicerCoreIOManager without Qt: the Python face of Slicer's file IO manager.
 
 ``slicer.util.loadVolume()``, ``loadModel()``, ``loadSegmentation()``, ``saveNode()``,
-``saveScene()`` ... call ``slicer.app.coreIOManager()``; this implements the methods they use
-with the same file types (``"VolumeFile"``, ``"ModelFile"``, ...) and IO properties, and the same
-module logic calls as the desktop readers.
+``saveScene()`` ... call ``slicer.app.coreIOManager()``. On the desktop that is
+qSlicerCoreIOManager, which forwards the calls to vtkMRMLFileIOManager, the file IO manager of the
+application logic (``slicer.app.applicationLogic().GetFileIOManager()``). This class does the same,
+taking Python dictionaries as IO properties where the desktop takes a QVariantMap.
+
+The readers and writers are those of Slicer core: each module logic registers its own when it is
+set in the application logic, and the readers and writers of scripted modules are registered when
+the module is loaded (:mod:`slicerweb.io_scripted`).
 
 Files are read from the Emscripten virtual file system. The web page copies files selected or
 dropped by the user (or downloaded from a URL) into ``/data`` and then calls :meth:`loadFiles`.
@@ -14,7 +19,7 @@ import os
 
 import vtk
 
-from . import host
+from . import host, io_scripted
 
 logger = logging.getLogger("slicerweb.io")
 
@@ -26,37 +31,6 @@ def _lower_ext(filename):
         if name.endswith(compound):
             return compound
     return os.path.splitext(name)[1]
-
-
-# File type -> extensions (first match wins in the order of FILE_TYPES)
-FILE_TYPES = [
-    ("SceneFile", [".mrml", ".mrb", ".zip"]),
-    ("SegmentationFile", [".seg.nrrd", ".seg.nhdr", ".seg.vtm"]),
-    ("SequenceFile", [".seq.nrrd", ".seq.nhdr", ".seq.mrb"]),
-    ("MarkupsFile", [".mrk.json", ".fcsv"]),
-    ("TransformFile", [".h5", ".tfm", ".mat"]),
-    ("VolumeFile", [".nrrd", ".nhdr", ".nii", ".nii.gz", ".mha", ".mhd", ".hdr", ".img", ".img.gz", ".gipl",
-                    ".dcm", ".ima", ".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp", ".mgz", ".mgh", ".mrc",
-                    ".rec", ".pic", ".lsm", ".spr", ".vti"]),
-    ("ModelFile", [".vtk", ".vtp", ".vtu", ".stl", ".obj", ".ply", ".ucd", ".byu", ".g", ".tri", ".vtk.gz"]),
-    ("ColorTableFile", [".ctbl", ".cjson"]),
-    ("TableFile", [".tsv", ".csv", ".txt.tsv"]),
-    ("TextFile", [".txt", ".xml", ".json"]),
-]
-
-# File type -> (node class used to determine default writer, description) for writing
-WRITER_DESCRIPTIONS = {
-    "VolumeFile": "Volume",
-    "ModelFile": "Model",
-    "SegmentationFile": "Segmentation",
-    "MarkupsFile": "Markups",
-    "TransformFile": "Transform",
-    "ColorTableFile": "Color table",
-    "TableFile": "Table",
-    "TextFile": "Text",
-    "SequenceFile": "Sequence",
-    "SceneFile": "Scene",
-}
 
 
 def archiveHoldsScene(fileName):
@@ -74,128 +48,168 @@ def archiveHoldsScene(fileName):
         return False
 
 
+def _properties(values):
+    """IO properties (vtkMRMLIOProperties) from a Python dictionary, keeping the types of the values."""
+    import slicer
+
+    properties = slicer.vtkMRMLIOProperties()
+    slicer.vtkSlicerScriptedFileReader.UpdatePropertiesFromDict(properties, dict(values or {}))
+    return properties
+
+
+def _dictionary(properties):
+    import slicer
+
+    return slicer.vtkSlicerScriptedFileReader.PropertiesToDict(properties)
+
+
 class IOManager:
     def __init__(self, app):
         self._app = app
-        self._defaultSceneFileType = "MRML Scene (.mrml)"
+        manager = self.fileIOManager()
+        manager.AddObserver(manager.NewFileLoadedEvent, self._onNewFileLoaded)
+        manager.AddObserver(manager.FileSavedEvent, self._onFileSaved)
 
-    # ------------------------------------------------------------------ helpers
+    def fileIOManager(self):
+        """The file IO manager of the application logic (vtkMRMLFileIOManager)."""
+        return self._app.applicationLogic().GetFileIOManager()
+
     def _scene(self):
         return self._app.mrmlScene()
 
-    def _logic(self, moduleName):
-        return self._app.applicationLogic().GetModuleLogic(moduleName)
+    # ------------------------------------------------------------------ events
+    @vtk.calldata_type(vtk.VTK_OBJECT)
+    def _onNewFileLoaded(self, caller, event, properties):
+        values = _dictionary(properties) if properties is not None else {}
+        host.emit("nodes-loaded", {"fileName": values.get("fileName", ""), "nodeIDs": list(values.get("nodeIDs") or [])})
 
-    def _appLogic(self):
-        return self._app.applicationLogic()
+    @vtk.calldata_type(vtk.VTK_OBJECT)
+    def _onFileSaved(self, caller, event, properties):
+        values = _dictionary(properties) if properties is not None else {}
+        written = {"fileName": values.get("fileName", "")}
+        if values.get("nodeID"):
+            written["nodeID"] = values["nodeID"]
+        host.emit("file-written", written)
 
     # ------------------------------------------------------------------ file types
-    #
-    # Which readers and writers there are is kept by vtkSlicerFileIOManager (see io_registry): the
-    # application registers its own at startup and a module adds the ones it brings. These methods
-    # ask it, so that a module's reader counts wherever a file type is looked up.
+    def fileType(self, fileName):
+        return self.fileIOManager().GetFileTypeForFile(str(fileName)) or "NoFile"
+
+    def fileTypes(self, fileName):
+        return list(self.fileIOManager().GetFileTypesForFile(str(fileName)))
+
+    fileTypesFromFileName = fileTypes
+
+    def fileTypeFromDescription(self, description):
+        return self.fileIOManager().GetFileTypeFromDescription(str(description)) or "NoFile"
+
+    def fileDescriptions(self, fileName):
+        return list(self.fileIOManager().GetFileDescriptionsForFile(str(fileName)))
+
+    def fileDescriptionsByType(self, fileType):
+        return list(self.fileIOManager().GetFileDescriptionsByType(str(fileType)))
 
     def readerForFile(self, fileName):
-        """The reader that is to read this file, or None.
+        """The reader that is surest it can read this file (vtkMRMLFileReader), or None."""
+        return self.fileIOManager().GetReaderForFile(str(fileName))
 
-        Every reader that knows the extension is asked how sure it is (a module's reader may look
-        inside the file); the surest one wins, as qSlicerCoreIOManager does it.
-        """
-        from . import io_registry, io_scripted
+    def readers(self, fileType=None):
+        manager = self.fileIOManager()
+        if fileType is not None:
+            return list(manager.GetReadersForFileType(str(fileType)))
+        return [manager.GetNthReader(i) for i in range(manager.GetNumberOfReaders())]
 
-        best, bestConfidence = None, 0.0
-        for reader in io_registry.readers_for_file(fileName):
-            confidence = (io_scripted.confidence_for_file(reader, fileName) if reader.GetOwner()
-                          else reader.CanLoadFileConfidence(str(fileName)))
-            if confidence > bestConfidence:
-                best, bestConfidence = reader, confidence
-        return best
+    def writers(self, fileType=None):
+        manager = self.fileIOManager()
+        if fileType is not None:
+            return list(manager.GetWritersForFileType(str(fileType)))
+        return [manager.GetNthWriter(i) for i in range(manager.GetNumberOfWriters())]
 
-    def fileType(self, fileName):
-        reader = self.readerForFile(fileName)
-        return reader.GetFileType() if reader is not None else "NoFile"
+    def registeredFileReaderCount(self, fileType):
+        return len(self.fileIOManager().GetReadersForFileType(str(fileType)))
 
-    def fileTypesFromFileName(self, fileName):
-        from . import io_registry
-
-        return [reader.GetFileType() for reader in io_registry.readers_for_file(fileName)]
-
-    def fileDescriptions(self, fileType):
-        from . import io_registry
-
-        description = io_registry.description_for_file_type(fileType)
-        return [description or WRITER_DESCRIPTIONS.get(fileType, fileType)]
-
-    def registeredFileReaderCount(self, fileType=None):
-        from . import io_registry
-
-        types = io_registry.file_types()
-        return len(types) if fileType is None else types.count(fileType)
+    def registeredFileWriterCount(self, fileType):
+        return len(self.fileIOManager().GetWritersForFileType(str(fileType)))
 
     def readerFileTypes(self):
-        from . import io_registry
-
-        return io_registry.file_types()
+        return list(self.fileIOManager().GetReaderFileTypes())
 
     def fileExtensions(self, fileType):
-        from . import io_registry
-
-        return io_registry.extensions_for_file_type(fileType)
+        return list(self.fileIOManager().GetExtensionsForFileType(str(fileType), False))
 
     def allReadableFileExtensions(self):
-        from . import io_registry
+        return list(self.fileIOManager().GetAllReadableFileExtensions())
 
-        extensions = []
-        for fileType in io_registry.file_types():
-            for extension in io_registry.extensions_for_file_type(fileType):
-                if extension not in extensions:
-                    extensions.append(extension)
-        return extensions
+    def allWritableFileExtensions(self):
+        return list(self.fileIOManager().GetAllWritableFileExtensions())
 
     # ------------------------------------------------------------------ loading
     def loadNodes(self, fileType, properties, loadedNodes=None, userMessages=None):
-        """Same signature as qSlicerCoreIOManager::loadNodes. Returns True on success."""
+        """qSlicerCoreIOManager::loadNodes. Returns True on success.
+
+        Raises ModuleNotFoundError where a reader needs a package that is not installed yet: the
+        page installs it and calls this again (see slicerweb.packages).
+        """
+        if not isinstance(fileType, str):
+            # loadNodes(filesProperties, loadedNodes, userMessages): a list of properties, each with its "fileType"
+            return self._loadNodesFromList(fileType, properties, loadedNodes)
         properties = dict(properties)
-        fileName = str(properties.get("fileName", ""))
-        if not fileName or not os.path.exists(fileName):
-            self._addMessage(userMessages, f"File not found: {fileName}")
+        fileName = properties.get("fileName", "")
+        fileNames = fileName if isinstance(fileName, (list, tuple)) else [fileName]
+        missing = [str(f) for f in fileNames if not f or not os.path.exists(str(f))]
+        if missing:
+            self._addMessage(userMessages, f"File not found: {', '.join(missing) or fileName}")
             return False
-        scripted = self._scriptedReader(fileType, fileName)
-        if scripted is not None:
-            return self._loadWithScriptedReader(scripted, properties, loadedNodes, userMessages)
+        if fileType == "SceneFile" and isinstance(fileName, str):
+            return self._loadScene(properties, loadedNodes, userMessages)
+        io_scripted.clear_missing_module()
+        success = self.fileIOManager().LoadNodes(fileType, _properties(properties), loadedNodes, userMessages)
+        io_scripted.raise_missing_module()
+        return success
 
-        reader = getattr(self, "_read" + fileType, None)
-        if reader is None:
-            self._addMessage(userMessages, f"No reader for file type {fileType}")
-            return False
-        scene = self._scene()
-        try:
-            nodes = reader(fileName, properties, userMessages) or []
-        except Exception as e:
-            logger.exception("Failed to load %s", fileName)
-            self._addMessage(userMessages, f"Failed to load {fileName}: {e}")
-            return False
-        for node in nodes:
-            if loadedNodes is not None:
-                loadedNodes.AddItem(node)
-            node.SetAttribute("SlicerWeb.SourceFile", fileName) if hasattr(node, "SetAttribute") else None
-        host.emit("nodes-loaded", {"fileName": fileName, "nodeIDs": [n.GetID() for n in nodes]})
-        return len(nodes) > 0 or fileType == "SceneFile"
+    def _loadNodesFromList(self, filesProperties, loadedNodes, userMessages):
+        success = True
+        for fileProperties in filesProperties:
+            fileProperties = dict(fileProperties)
+            fileType = fileProperties.pop("fileType", None) or self.fileType(fileProperties.get("fileName", ""))
+            success = self.loadNodes(fileType, fileProperties, loadedNodes, userMessages) and success
+        return success
 
-    def loadNodesAndGetFirst(self, fileType, properties):
-        import vtk
-
+    def _loadScene(self, properties, loadedNodes, userMessages):
+        """Load a scene. A zip that holds no scene is unpacked, and transforms kept in HDF5 files are read."""
+        fileName = str(properties["fileName"])
+        if _lower_ext(fileName) == ".zip" and not archiveHoldsScene(fileName):
+            self._unpackArchive(fileName, userMessages)
+            return True
         nodes = vtk.vtkCollection()
-        self.loadNodes(fileType, properties, nodes)
+        io_scripted.clear_missing_module()
+        success = self.fileIOManager().LoadNodes("SceneFile", _properties(properties), nodes, userMessages)
+        io_scripted.raise_missing_module()
+        loaded = [nodes.GetItemAsObject(i) for i in range(nodes.GetNumberOfItems())]
+        from . import transforms_hdf5
+
+        transforms_hdf5.read_scene_transforms(loaded)
+        if loadedNodes is not None:
+            for node in loaded:
+                loadedNodes.AddItem(node)
+        return success
+
+    def loadNodesAndGetFirst(self, fileType, properties, userMessages=None):
+        nodes = vtk.vtkCollection()
+        self.loadNodes(fileType, properties, nodes, userMessages)
         return nodes.GetItemAsObject(0) if nodes.GetNumberOfItems() else None
+
+    def loadScene(self, fileName, clear=True, userMessages=None):
+        return self.loadNodes("SceneFile", {"fileName": str(fileName), "clear": bool(clear)}, None, userMessages)
+
+    def loadFile(self, fileName, userMessages=None):
+        return self.loadNodes(self.fileType(fileName), {"fileName": str(fileName)}, None, userMessages)
 
     def loadFiles(self, fileNames, properties=None):
         """Load files selected in the web page (fileType is determined from the extension).
 
         DICOM files (.dcm) given together are loaded as one series. Returns loaded node IDs.
         """
-        import vtk
-
         properties = properties or {}
         fileNames = [str(f) for f in fileNames]
         dicom = [f for f in fileNames if _lower_ext(f) in (".dcm", ".ima", "")]
@@ -216,237 +230,11 @@ class IOManager:
             loadedIDs += [nodes.GetItemAsObject(i).GetID() for i in range(nodes.GetNumberOfItems())]
         return loadedIDs
 
-    def _scriptedReader(self, fileType, fileName):
-        """The reader a module registered for this file type, where it can read this file."""
-        from . import io_registry, io_scripted
-
-        for reader in io_registry.readers_for_file(fileName):
-            if (reader.GetOwner() and reader.GetFileType() == fileType
-                    and io_scripted.confidence_for_file(reader, fileName) > 0.0):
-                return reader
-        return None
-
-    def _loadWithScriptedReader(self, reader, properties, loadedNodes, userMessages):
-        """Let a module's reader read the file, and collect what it put in the scene."""
-        from . import io_scripted
-
-        fileName = str(properties.get("fileName", ""))
-        try:
-            nodeIDs = io_scripted.load(reader, properties)
-        except ModuleNotFoundError:
-            raise   # the page installs the package and tries again (see slicerweb.packages)
-        except Exception as e:
-            logger.exception("The reader of %s failed on %s", reader.GetOwner(), fileName)
-            self._addMessage(userMessages, f"Failed to load {fileName}: {e}")
-            return False
-        if userMessages is not None:
-            userMessages.AddMessages(reader.GetUserMessages())
-        scene = self._scene()
-        for nodeID in nodeIDs:
-            node = scene.GetNodeByID(nodeID)
-            if node is not None and loadedNodes is not None:
-                loadedNodes.AddItem(node)
-        host.emit("nodes-loaded", {"fileName": fileName, "nodeIDs": list(nodeIDs)})
-        return bool(nodeIDs)
-
     @staticmethod
     def _addMessage(userMessages, text, error=True):
         logger.error(text) if error else logger.warning(text)
         if userMessages is not None:
-            try:
-                import slicer
-
-                userMessages.AddMessage(vtk.vtkCommand.ErrorEvent if error else vtk.vtkCommand.WarningEvent, text)
-            except Exception:
-                pass
-
-    # --- readers (same logic calls as the desktop qSlicer*Reader classes)
-    def _readVolumeFile(self, fileName, properties, userMessages):
-        import slicer
-        import vtk
-
-        logic = self._logic("Volumes")
-        name = properties.get("name") or os.path.basename(fileName).split(".")[0]
-        options = 0
-        options |= 0x1 if properties.get("labelmap") else 0
-        options |= 0x2 if properties.get("center") else 0
-        options |= 0x4 if properties.get("singleFile") else 0
-        options |= 0x8 if properties.get("autoWindowLevel", True) else 0
-        options |= 0x10 if properties.get("discardOrientation") else 0
-        fileList = None
-        if properties.get("fileNames"):
-            fileList = vtk.vtkStringArray()
-            for f in properties["fileNames"]:
-                fileList.InsertNextValue(str(f))
-        node = logic.AddArchetypeVolume(fileName, name, options, fileList)
-        if node is None:
-            return []
-        colorNodeID = properties.get("colorNodeID")
-        if colorNodeID and node.GetVolumeDisplayNode():
-            node.GetVolumeDisplayNode().SetAndObserveColorNodeID(colorNodeID)
-        if properties.get("show", True):
-            appLogic = self._app.applicationLogic()
-            selectionNode = appLogic.GetSelectionNode()
-            if node.IsA("vtkMRMLLabelMapVolumeNode"):
-                selectionNode.SetActiveLabelVolumeID(node.GetID())
-            else:
-                selectionNode.SetActiveVolumeID(node.GetID())
-            appLogic.PropagateVolumeSelection()
-        return [node]
-
-    def _readModelFile(self, fileName, properties, userMessages):
-        import slicer
-
-        logic = self._logic("Models")
-        coordinateSystem = int(properties.get("coordinateSystem", slicer.vtkMRMLStorageNode.CoordinateSystemLPS))
-        node = logic.AddModel(fileName, coordinateSystem, userMessages)
-        if node is None:
-            return []
-        if properties.get("name"):
-            node.SetName(self._scene().GetUniqueNameByString(properties["name"]))
-        otherVisible = False
-        displayNodes = self._scene().GetNodesByClass("vtkMRMLDisplayNode")
-        for i in range(displayNodes.GetNumberOfItems()):
-            d = displayNodes.GetItemAsObject(i)
-            if d.GetDisplayableNode() and d.GetVisibility() and d.GetDisplayableNode() != node:
-                otherVisible = True
-                break
-        if not otherVisible and self._app.layoutManager():
-            self._app.layoutManager().resetThreeDViews()
-        return [node]
-
-    def _readSegmentationFile(self, fileName, properties, userMessages):
-        import slicer
-
-        logic = self._logic("Segmentations")
-        name = properties.get("name", "")
-        ext = _lower_ext(fileName)
-        scene = self._scene()
-        if ext in (".stl", ".obj"):
-            storage = slicer.vtkMRMLModelStorageNode()
-            storage.SetFileName(fileName)
-            model = slicer.vtkMRMLModelNode()
-            if not storage.ReadData(model):
-                return []
-            polyData = model.GetPolyData()
-            pointData = polyData.GetPointData()
-            while pointData.GetNumberOfArrays() > 0:
-                pointData.RemoveArray(0)
-            name = name or os.path.basename(fileName).rsplit(".", 1)[0]
-            segment = slicer.vtkSegment()
-            segment.SetName(name)
-            segment.AddRepresentation(slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName(), polyData)
-            node = scene.AddNewNodeByClass("vtkMRMLSegmentationNode", scene.GetUniqueNameByString(name))
-            node.SetSourceRepresentationToClosedSurface()
-            node.CreateDefaultDisplayNodes()
-            node.GetDisplayNode().SetPreferredDisplayRepresentationName2D(
-                slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName())
-            node.GetSegmentation().AddSegment(segment)
-            return [node]
-        colorTableNode = None
-        if properties.get("colorNodeID"):
-            colorTableNode = scene.GetNodeByID(properties["colorNodeID"])
-        node = logic.LoadSegmentationFromFile(fileName, bool(properties.get("autoOpacities", True)), name,
-                                              colorTableNode, userMessages)
-        return [node] if node else []
-
-    def _readMarkupsFile(self, fileName, properties, userMessages):
-        logic = self._logic("Markups")
-        nodeIDs = logic.LoadMarkups(fileName, properties.get("name", ""), userMessages)
-        if not nodeIDs:
-            return []
-        scene = self._scene()
-        return [scene.GetNodeByID(i) for i in str(nodeIDs).split(",") if scene.GetNodeByID(i)]
-
-    def _readTransformFile(self, fileName, properties, userMessages):
-        logic = self._logic("Transforms")
-        node = logic.AddTransform(fileName, self._scene(), userMessages)
-        return [node] if node else []
-
-    def _readColorTableFile(self, fileName, properties, userMessages):
-        logic = self._logic("Colors")
-        node = logic.LoadColorFile(fileName, None, userMessages)
-        return [node] if node else []
-
-    def _readTableFile(self, fileName, properties, userMessages):
-        logic = self._logic("Tables")
-        name = self._scene().GetUniqueNameByString(properties.get("name") or os.path.basename(fileName).rsplit(".", 1)[0])
-        node = logic.AddTable(fileName, name, True, properties.get("password", ""), userMessages)
-        return [node] if node else []
-
-    def _readTextFile(self, fileName, properties, userMessages):
-        import slicer
-
-        scene = self._scene()
-        name = properties.get("name") or os.path.basename(fileName)
-        node = scene.AddNewNodeByClass("vtkMRMLTextNode", scene.GetUniqueNameByString(name))
-        storage = scene.AddNewNodeByClass("vtkMRMLTextStorageNode")
-        storage.SetFileName(fileName)
-        node.SetAndObserveStorageNodeID(storage.GetID())
-        if not storage.ReadData(node):
-            scene.RemoveNode(node)
-            scene.RemoveNode(storage)
-            return []
-        return [node]
-
-    def _readSequenceFile(self, fileName, properties, userMessages):
-        """A sequence, and the browser that plays it (as qSlicerSequencesReader does).
-
-        A sequence on its own shows nothing: what is seen in the views is the proxy node that the
-        browser keeps at the current item. So one is made for it, unless the caller asked for the
-        sequence alone (show=False), and the proxy volume becomes the volume the slices show.
-        """
-        logic = self._logic("Sequences")
-        node = logic.AddSequence(fileName, userMessages)
-        if not node:
-            return []
-        if properties.get("name"):
-            node.SetName(self._scene().GetUniqueNameByString(str(properties["name"])))
-        if not properties.get("show", True):
-            return [node]
-
-        scene = self._scene()
-        browser = scene.AddNewNodeByClass("vtkMRMLSequenceBrowserNode", node.GetName() + " browser")
-        if browser is None:
-            return [node]
-        browser.SetAndObserveMasterSequenceNodeID(node.GetID())
-        if logic is not None:
-            logic.UpdateProxyNodesFromSequences(browser)
-        proxy = browser.GetProxyNode(node)
-
-        # What the proxy is decides what is shown: a volume becomes the one the slice views show.
-        if proxy is not None and proxy.IsA("vtkMRMLVolumeNode"):
-            appLogic = self._appLogic()
-            selection = appLogic.GetSelectionNode() if appLogic else None
-            if selection is not None:
-                if proxy.IsA("vtkMRMLLabelMapVolumeNode"):
-                    selection.SetActiveLabelVolumeID(proxy.GetID())
-                else:
-                    selection.SetActiveVolumeID(proxy.GetID())
-                appLogic.PropagateVolumeSelection(1)
-        return [node, browser] + ([proxy] if proxy is not None else [])
-
-    def _readSceneFile(self, fileName, properties, userMessages):
-        scene = self._scene()
-        clear = bool(properties.get("clear", False))
-        before = set(scene.GetNodes().GetItemAsObject(i).GetID() for i in range(scene.GetNumberOfNodes()))
-        ext = _lower_ext(fileName)
-        if ext == ".zip" and not archiveHoldsScene(fileName):
-            self._unpackArchive(fileName, userMessages)
-            return []
-        if ext in (".mrb", ".zip"):
-            ok = scene.ReadFromMRB(fileName, clear, userMessages)
-        else:
-            scene.SetURL(fileName)
-            ok = scene.Connect(userMessages) if clear else scene.Import(userMessages)
-        if not ok:
-            return []
-        nodes = [scene.GetNodes().GetItemAsObject(i) for i in range(scene.GetNumberOfNodes())]
-        loaded = [n for n in nodes if n and n.GetID() and n.GetID() not in before]
-        from . import transforms_hdf5
-
-        transforms_hdf5.read_scene_transforms(loaded)
-        return loaded
+            userMessages.AddMessage(vtk.vtkCommand.ErrorEvent if error else vtk.vtkCommand.WarningEvent, text)
 
     def _unpackArchive(self, fileName, userMessages):
         """Unpack an archive that holds no scene, and say where its files went.
@@ -471,156 +259,100 @@ class IOManager:
 
     # ------------------------------------------------------------------ saving
     def writerForNode(self, node, fileName=None):
-        """The writer that is to write this node, or None.
+        """The writer that is to write this node (vtkMRMLFileWriter), or None.
 
-        A writer a module brought is asked how sure it is (it may look at what the node holds);
-        one of the application answers by the node's class. The surest one wins, as
-        qSlicerCoreIOManager does it. Where a file name is given, a writer whose extensions do not
-        cover it is passed over.
+        Where a file name is given, the writer is the surest one among those whose name filters
+        cover it.
         """
-        from . import io_registry, io_scripted
+        manager = self.fileIOManager()
+        if fileName:
+            for writer in manager.GetWritersForObject(node):
+                if writer.MatchesExtension(str(fileName)):
+                    return writer
+        return manager.GetWriterForObject(node)
 
-        best, bestConfidence = None, 0.0
-        for writer in io_registry.writers_for_node(node):
-            confidence = (io_scripted.confidence_for_node(writer, node) if writer.GetOwner()
-                          else writer.CanWriteObjectConfidence(node))
-            if fileName and writer.GetExtensions() and not writer.MatchesExtension(str(fileName)):
-                continue
-            if confidence > bestConfidence:
-                best, bestConfidence = writer, confidence
-        return best
+    def writer(self, obj, extension=""):
+        return self.fileIOManager().GetWriterForObject(obj, str(extension or ""))
 
-    def fileWriterFileType(self, node):
-        writer = self.writerForNode(node)
-        if writer is not None and writer.GetOwner():
-            return writer.GetFileType()
-        for fileType, cls in (("SegmentationFile", "vtkMRMLSegmentationNode"),
-                              ("VolumeFile", "vtkMRMLVolumeNode"),
-                              ("ModelFile", "vtkMRMLModelNode"),
-                              ("MarkupsFile", "vtkMRMLMarkupsNode"),
-                              ("TransformFile", "vtkMRMLTransformNode"),
-                              ("ColorTableFile", "vtkMRMLColorTableNode"),
-                              ("TableFile", "vtkMRMLTableNode"),
-                              ("TextFile", "vtkMRMLTextNode"),
-                              ("SequenceFile", "vtkMRMLSequenceNode")):
-            if node.IsA(cls):
-                return fileType
-        return "NoFile"
+    def fileWriterFileType(self, obj, extension=""):
+        return self.fileIOManager().GetFileWriterFileType(obj, str(extension or "")) or "NoFile"
 
-    def fileWriterExtensions(self, node):
-        storage = node.GetStorageNode() or node.CreateDefaultStorageNode()
-        if storage is None:
-            return []
-        exts = []
-        types = storage.GetSupportedWriteFileTypes()
-        for i in range(types.GetNumberOfValues()):
-            desc = types.GetValue(i)
-            if "(" in desc:
-                exts.append(desc[desc.rfind("(") + 1:desc.rfind(")")].replace("*", ""))
-        return exts
+    def fileWriterDescriptions(self, fileType):
+        return list(self.fileIOManager().GetFileWriterDescriptions(str(fileType)))
 
-    def extractKnownExtension(self, fileName, node):
-        lower = fileName.lower()
-        for ext in sorted(self.fileWriterExtensions(node), key=len, reverse=True):
-            if ext and lower.endswith(ext.lower()):
-                return ext
-        return ""
+    def fileWriterExtensions(self, obj):
+        return list(self.fileIOManager().GetFileWriterExtensions(obj))
 
-    def saveNodes(self, fileType, properties, userMessages=None, hardenTransform=False):
+    def extractKnownExtension(self, fileName, obj):
+        return self.fileIOManager().ExtractKnownExtension(str(fileName), obj)
+
+    def stripKnownExtension(self, fileName, obj):
+        return self.fileIOManager().StripKnownExtension(str(fileName), obj)
+
+    def completeSlicerWritableFileNameSuffix(self, node):
+        return self.fileIOManager().GetCompleteSlicerWritableFileNameSuffix(node)
+
+    def forceFileNameValidCharacters(self, fileName):
+        import slicer
+
+        return slicer.vtkMRMLFileIOManager.ForceFileNameValidCharacters(str(fileName))
+
+    def forceFileNameMaxLength(self, fileName, extensionLength, maxLength=-1):
+        return self.fileIOManager().ForceFileNameMaxLength(str(fileName), int(extensionLength), int(maxLength))
+
+    def saveNodes(self, fileType, properties, userMessages=None, scene=None):
+        """qSlicerCoreIOManager::saveNodes. Returns True on success."""
         properties = dict(properties)
         fileName = str(properties.get("fileName", ""))
-        if fileType == "SceneFile":
-            return self._writeScene(fileName, properties, userMessages)
-        node = self._scene().GetNodeByID(properties.get("nodeID", ""))
-        if node is None:
-            self._addMessage(userMessages, f"Node not found: {properties.get('nodeID')}")
-            return False
-        scripted = self._scriptedWriter(node, fileName, fileType)
-        if scripted is not None:
-            return self._writeWithScriptedWriter(scripted, node, properties, userMessages)
-        return self._writeNode(node, fileName, properties, userMessages)
+        if fileType == "SceneFile" and _lower_ext(fileName) == ".zip":
+            # A scene saved as .zip is a bundle, as a .mrb is (the scene writer takes it for a directory)
+            return self._writeBundle(fileName, properties, userMessages)
+        io_scripted.clear_missing_module()
+        success = self.fileIOManager().SaveNodes(fileType, _properties(properties), userMessages, scene)
+        io_scripted.raise_missing_module()
+        return success
 
-    def _scriptedWriter(self, node, fileName, fileType=None):
-        """The writer a module registered for this node, where it is the one to use."""
-        from . import io_scripted
-
-        writer = self.writerForNode(node, fileName)
-        if writer is None or not writer.GetOwner():
-            return None
-        if fileType and fileType not in ("NoFile", writer.GetFileType()):
-            return None
-        return writer if io_scripted.confidence_for_node(writer, node) > 0.0 else None
-
-    def _writeWithScriptedWriter(self, writer, node, properties, userMessages):
-        """Let a module's writer write the file."""
-        from . import io_scripted
-
-        properties = dict(properties)
-        properties.setdefault("nodeID", node.GetID())
-        try:
-            io_scripted.write(writer, properties)
-        except ModuleNotFoundError:
-            raise
-        except Exception as e:
-            logger.exception("The writer of %s failed", writer.GetOwner())
-            self._addMessage(userMessages, f"Failed to write {properties.get('fileName')}: {e}")
-            return False
-        if userMessages is not None:
-            userMessages.AddMessages(writer.GetUserMessages())
-        return True
-
-    def exportNodes(self, nodeIDs, fileNames, properties, hardenTransform=False, userMessages=None):
-        ok = True
+    def _writeBundle(self, fileName, properties, userMessages):
         scene = self._scene()
-        for nodeID, fileName in zip(nodeIDs, fileNames):
-            node = scene.GetNodeByID(nodeID)
-            if node is None:
-                ok = False
-                continue
-            storage = node.CreateDefaultStorageNode()
-            storage.SetFileName(str(fileName))
-            if "useCompression" in properties:
-                storage.SetUseCompression(bool(properties["useCompression"]))
-            ok = bool(storage.WriteData(node)) and ok
-        return ok
+        success = bool(scene.WriteToMRB(fileName, properties.get("screenShot"), userMessages))
+        if success:
+            scene.SetStorableNodesModifiedSinceRead()
+            self.fileIOManager().InvokeFileSavedEvent(_properties(properties))
+        return success
 
-    def _writeNode(self, node, fileName, properties, userMessages):
-        """Same as qSlicerNodeWriter::write."""
-        if not node.AddDefaultStorageNode():
-            self._addMessage(userMessages, f"Cannot create storage node for {node.GetName()}")
-            return False
-        storage = node.GetStorageNode()
-        storage.SetFileName(fileName)
-        if "useCompression" in properties:
-            storage.SetUseCompression(bool(properties["useCompression"]))
-        if "compressionParameter" in properties:
-            storage.SetCompressionParameter(str(properties["compressionParameter"]))
-        ok = bool(storage.WriteData(node))
-        if ok:
-            node.StorableModifiedTimeUpdate() if hasattr(node, "StorableModifiedTimeUpdate") else None
-            host.emit("file-written", {"fileName": fileName, "nodeID": node.GetID()})
-        else:
-            self._addMessage(userMessages, f"Failed to write {node.GetName()} to {fileName}")
-        return ok
+    def saveScene(self, fileName, screenShot=None, userMessages=None):
+        properties = {"fileName": str(fileName)}
+        if screenShot is not None:
+            properties["screenShot"] = screenShot
+        return self.saveNodes("SceneFile", properties, userMessages)
 
-    def _writeScene(self, fileName, properties, userMessages):
-        scene = self._scene()
-        ext = _lower_ext(fileName)
-        if ext in (".mrb", ".zip"):
-            ok = scene.WriteToMRB(fileName, None, userMessages)
+    def exportNodes(self, nodeIDs, fileNames=None, properties=None, hardenTransform=False, userMessages=None):
+        """qSlicerCoreIOManager::exportNodes: (nodeIDs, fileNames, properties, hardenTransforms, userMessages)
+        or (propertiesList, hardenTransforms, userMessages)."""
+        manager = self.fileIOManager()
+        io_scripted.clear_missing_module()
+        if fileNames is None or isinstance(fileNames, bool):
+            propertiesList = vtk.vtkCollection()
+            for itemProperties in nodeIDs:
+                propertiesList.AddItem(_properties(itemProperties))
+            hardenTransform = bool(fileNames)
+            if isinstance(properties, bool):
+                hardenTransform = properties
+            success = manager.ExportNodes(propertiesList, hardenTransform, userMessages)
         else:
-            scene.SetURL(fileName)
-            scene.SetRootDirectory(os.path.dirname(fileName))
-            ok = scene.Commit(fileName)
-        if ok:
-            host.emit("file-written", {"fileName": fileName})
-        return bool(ok)
+            success = manager.ExportNodes([str(i) for i in nodeIDs], [str(f) for f in fileNames],
+                                          _properties(properties), bool(hardenTransform), userMessages)
+        io_scripted.raise_missing_module()
+        return success
+
+    def addDefaultStorageNodes(self):
+        self.fileIOManager().AddDefaultStorageNodes()
 
     def setDefaultSceneFileType(self, fileType):
-        self._defaultSceneFileType = fileType
+        self.fileIOManager().SetDefaultSceneFileType(str(fileType))
 
     def defaultSceneFileType(self):
-        return self._defaultSceneFileType
+        return self.fileIOManager().GetDefaultSceneFileType()
 
     # Dialogs are provided by the web page
     def openAddDataDialog(self):

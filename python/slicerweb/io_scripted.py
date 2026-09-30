@@ -1,245 +1,141 @@
 """The readers and writers that modules bring with them, written in Python.
 
 A module declares one by defining a class beside its module class, named after the module:
-``ImportMimicsFileReader`` in ImportMimics.py, ``FooFileWriter`` in Foo.py. Desktop Slicer picks
-those up in qSlicerScriptedLoadableModule::registerIO, wraps each in a C++ class
-(qSlicerScriptedFileReader) and hands it to qSlicerCoreIOManager. The same happens here, with the
-wrapper being a vtkSlicerFileReader and the list being vtkSlicerFileIOManager
-(see :mod:`slicerweb.io_registry`).
+``ImportMimicsFileReader`` in ImportMimics.py, ``FooFileWriter`` in Foo.py. Slicer core turns
+such a class into a reader or writer of its file IO manager (``slicer.ScriptedFileIO``): a subclass
+of ``slicer.vtkSlicerScriptedFileReader`` is used as it is, and a class written the older way -
+``description()``, ``fileType()``, ``extensions()``, ``load(properties)`` and ``self.parent`` - is
+wrapped in ``LegacyScriptedFileReader``. This is what qSlicerScriptedLoadableModule does on the
+desktop, and it is done the same way here, with the file IO manager of the application logic.
 
-What a module's class has to provide is unchanged, so that a module written for the desktop needs
-no change to work here:
-
-    class <Module>FileReader:
-        def __init__(self, parent): ...
-        def description(self): ...            # "Materialise Mimics/3-matic project"
-        def fileType(self): ...               # "MimicsProject"
-        def extensions(self): ...             # ["Materialise ... project (*.mcs *.mxp)"]
-        def canLoadFileConfidence(self, filePath): ...    # optional
-        def canLoadFile(self, filePath): ...              # optional
-        def load(self, properties): ...       # True if it read something
-        # and it says what it read with: self.parent.loadedNodes = [nodeID, ...]
-
-    class <Module>FileWriter:
-        def description / fileType / extensions(obj) / canWriteObjectConfidence(obj) / write(properties)
-        # and: self.parent.writtenNodes = [nodeID, ...]
-
-``parent`` is the handler in the list: :class:`ScriptedIOParent` below, which answers the few
-things those classes ask of it - ``userMessages()``, ``supportedNameFilters()``, ``loadedNodes``,
-``writtenNodes`` - and keeps the C++ handler underneath in step.
+What is added here is for packages: a reader that needs a package that is not installed yet raises
+ModuleNotFoundError, which the page answers by installing it and running the call again (see
+:mod:`slicerweb.packages`). The reader is called from C++, which logs an exception and carries on,
+so the error is kept here instead, and raised again once the call is back in Python
+(:func:`raise_missing_module`).
 """
 
 import logging
-
-import slicer
-import vtk
-
-from . import io_registry
+import traceback
 
 logger = logging.getLogger("slicerweb.io")
 
-#: Python readers and writers of modules, by the name of the handler in the list.
-_handlers = {}
+#: The ModuleNotFoundError that a reader or writer raised during the current call, if any.
+_missing_module = None
+
+#: The readers and writers each module registered, by module name, so that they can be taken away.
+_module_handlers = {}
 
 
-def owner_of(moduleName):
-    """What a module's handlers are registered under."""
-    return "python:" + moduleName
+def clear_missing_module():
+    global _missing_module
+    _missing_module = None
 
 
-class ScriptedIOParent:
-    """What a module's reader or writer calls ``self.parent``.
+def raise_missing_module():
+    """Raise the ModuleNotFoundError a reader or writer raised since clear_missing_module()."""
+    global _missing_module
+    error, _missing_module = _missing_module, None
+    if error is not None:
+        raise error
 
-    It stands for the C++ handler - in desktop Slicer a qSlicerScriptedFileReader, here a
-    vtkSlicerFileReader - and offers what those classes use of it.
-    """
 
-    def __init__(self, handler):
-        self.handler = handler
+def _record_missing_module(error):
+    global _missing_module
+    if _missing_module is None:
+        _missing_module = error
 
-    # --- what a reader or writer says about itself, kept on the handler
-    @property
-    def loadedNodes(self):
-        return io_registry.strings_of(self.handler.GetLoadedNodeIDs())
 
-    @loadedNodes.setter
-    def loadedNodes(self, nodeIDs):
-        self.handler.ClearLoadedNodeIDs()
-        for nodeID in nodeIDs or []:
-            self.handler.AddLoadedNodeID(str(nodeID))
+def _guarded(method):
+    """A method that records a missing package, and otherwise raises what it raised."""
 
-    @property
-    def writtenNodes(self):
-        return io_registry.strings_of(self.handler.GetWrittenNodeIDs())
+    def call(self, *args):
+        try:
+            return method(self, *args)
+        except ModuleNotFoundError as error:
+            _record_missing_module(error)
+            raise
 
-    @writtenNodes.setter
-    def writtenNodes(self, nodeIDs):
-        self.handler.ClearWrittenNodeIDs()
-        for nodeID in nodeIDs or []:
-            self.handler.AddWrittenNodeID(str(nodeID))
+    call.__name__ = method.__name__
+    call.__doc__ = method.__doc__
+    return call
 
-    def userMessages(self):
-        """Messages for the user about the last read or write (a vtkMRMLMessageCollection)."""
-        return self.handler.GetUserMessages()
 
-    def supportedNameFilters(self, filePath):
-        """The name filters of this handler that the file name matches (qSlicerFileReader)."""
-        extension = self.handler.GetMatchedExtension(str(filePath))
-        if not extension:
-            return []
-        return [f for f in io_registry.strings_of_name_filters(self.handler) if extension in f.lower()]
+def _legacy_adapter(base):
+    """A legacy reader or writer adapter that records a missing package the legacy class needs."""
 
-    def scene(self):
-        return slicer.mrmlScene
+    class Adapter(base):
+        def _callLegacy(self, methodName, *args, errorResult=None):
+            try:
+                return getattr(self._legacy, methodName)(*args)
+            except ModuleNotFoundError as error:
+                _record_missing_module(error)
+            except SystemExit:
+                logging.warning(f"SystemExit raised in {self._legacyClassName}.{methodName} was ignored")
+            except Exception:
+                logging.error(f"{self._legacyClassName}.{methodName} failed:\n{traceback.format_exc()}")
+            return errorResult
 
-    def mrmlScene(self):
-        return slicer.mrmlScene
+    Adapter.__name__ = base.__name__
+    return Adapter
+
+
+def create_reader(readerClass):
+    """A reader of the file IO manager from a Python class (slicer.ScriptedFileIO.createScriptedFileReader)."""
+    from slicer.ScriptedFileIO import LegacyScriptedFileReader, vtkSlicerScriptedFileReader
+
+    if isinstance(readerClass, type) and issubclass(readerClass, vtkSlicerScriptedFileReader):
+        # The bridge calls the methods that the class itself defines: a subclass that defines Load
+        # is what makes it record a missing package.
+        guarded = type(readerClass.__name__, (readerClass,), {"Load": _guarded(readerClass.Load)})
+        return guarded()
+    return _legacy_adapter(LegacyScriptedFileReader)(readerClass)
+
+
+def create_writer(writerClass):
+    """A writer of the file IO manager from a Python class (slicer.ScriptedFileIO.createScriptedFileWriter)."""
+    from slicer.ScriptedFileIO import LegacyScriptedFileWriter, vtkSlicerScriptedFileWriter
+
+    if isinstance(writerClass, type) and issubclass(writerClass, vtkSlicerScriptedFileWriter):
+        guarded = type(writerClass.__name__, (writerClass,), {"Write": _guarded(writerClass.Write)})
+        return guarded()
+    return _legacy_adapter(LegacyScriptedFileWriter)(writerClass)
+
+
+def file_io_manager():
+    import slicer
+
+    return slicer.app.applicationLogic().GetFileIOManager()
 
 
 def register_module_handlers(moduleName, moduleNamespace):
-    """Register the reader and writer a module brings, if it has any. Returns their names."""
+    """Register the reader and writer a module brings, if it has any. Returns them.
+
+    Same as slicer.ScriptedFileIO.registerScriptedFileIO, with the readers and writers made here.
+    """
     unregister_module_handlers(moduleName)
+    manager = file_io_manager()
     registered = []
-    for suffix, register in (("FileReader", _register_reader), ("FileWriter", _register_writer)):
-        cls = getattr(moduleNamespace, moduleName + suffix, None)
-        if cls is None:
+    for suffix, create, register in (("FileWriter", create_writer, manager.RegisterWriter),
+                                     ("FileReader", create_reader, manager.RegisterReader)):
+        className = moduleName if moduleName.endswith(suffix) else moduleName + suffix
+        handlerClass = getattr(moduleNamespace, className, None)
+        if handlerClass is None:
             continue
         try:
-            registered.append(register(owner_of(moduleName), cls))
+            handler = create(handlerClass)
         except Exception:
-            logger.exception("The %s of module %s could not be registered", suffix, moduleName)
-    return registered
-
-
-def register_handlers(owner, readerClass=None, writerClass=None):
-    """Register a reader and a writer written in Python that are not a module's.
-
-    The application has a few of its own - the transforms kept in HDF5 files, for one - and they
-    are written the same way a module's are, with the same methods; *owner* says whose they are,
-    so that they can be found again and taken away together.
-    """
-    io_registry.unregister_owner(owner)
-    for key in [k for k, v in _handlers.items() if v[0] == owner]:
-        del _handlers[key]
-    registered = []
-    if readerClass is not None:
-        registered.append(_register_reader(owner, readerClass))
-    if writerClass is not None:
-        registered.append(_register_writer(owner, writerClass))
+            logger.exception("The %s of module %s could not be created", className, moduleName)
+            continue
+        register(handler)
+        registered.append(handler)
+        logger.info("%s %s %s", moduleName, "writes" if handler.IsWriter() else "reads", handler.GetFileType())
+    _module_handlers[moduleName] = registered
     return registered
 
 
 def unregister_module_handlers(moduleName):
     """Take away what a module registered (it is being reloaded, or taken out)."""
-    owner = owner_of(moduleName)
-    io_registry.unregister_owner(owner)
-    for key in [k for k, v in _handlers.items() if v[0] == owner]:
-        del _handlers[key]
-
-
-def _handler_key(handler):
-    # A module's reader and its writer are both "python:<Module>" and the same file type, so which
-    # of the two it is belongs in the key as well.
-    return "%s|%s|%s" % (handler.GetOwner(), handler.GetFileType(),
-                         "writer" if handler.IsWriter() else "reader")
-
-
-def _register_reader(owner, cls):
-    handler = slicer.vtkSlicerFileReader()
-    parent = ScriptedIOParent(handler)
-    instance = cls(parent)
-    handler.SetOwner(owner)
-    handler.SetFileType(str(instance.fileType()))
-    handler.SetDescription(str(instance.description()))
-    handler.SetNameFilters(_filters_of(instance.extensions()))
-    io_registry.manager().RegisterReader(handler)
-    _handlers[_handler_key(handler)] = (handler.GetOwner(), instance, parent)
-    logger.info("%s reads %s (%s)", owner, handler.GetFileType(),
-                ", ".join(io_registry.strings_of_extensions(handler)))
-    return handler.GetFileType()
-
-
-def _register_writer(owner, cls):
-    handler = slicer.vtkSlicerFileWriter()
-    parent = ScriptedIOParent(handler)
-    instance = cls(parent)
-    handler.SetOwner(owner)
-    handler.SetFileType(str(instance.fileType()))
-    handler.SetDescription(str(instance.description()))
-    # A writer's extensions depend on what is being written; with nothing in hand it is asked
-    # without a node, which is what qSlicerScriptedFileWriter does to fill the file dialog.
-    try:
-        handler.SetNameFilters(_filters_of(instance.extensions(None)))
-    except Exception:
-        logger.debug("The writer of %s named no extensions without a node", owner, exc_info=True)
-    io_registry.manager().RegisterWriter(handler)
-    _handlers[_handler_key(handler)] = (handler.GetOwner(), instance, parent)
-    logger.info("%s writes %s", owner, handler.GetFileType())
-    return handler.GetFileType()
-
-
-def _filters_of(extensions):
-    filters = vtk.vtkStringArray()
-    for extension in extensions or []:
-        filters.InsertNextValue(str(extension))
-    return filters
-
-
-def implementation(handler):
-    """The Python object that does the work for a handler, or None."""
-    found = _handlers.get(_handler_key(handler))
-    return found[1] if found else None
-
-
-def confidence_for_file(handler, filePath):
-    """How sure a module's reader is that it can read this file."""
-    reader = implementation(handler)
-    if reader is None:
-        return 0.0
-    if hasattr(reader, "canLoadFileConfidence"):
-        return float(reader.canLoadFileConfidence(str(filePath)))
-    if hasattr(reader, "canLoadFile"):
-        return 0.6 if reader.canLoadFile(str(filePath)) else 0.0
-    return handler.CanLoadFileConfidence(str(filePath))
-
-
-def confidence_for_node(handler, node):
-    """How sure a module's writer is that it can write this node."""
-    writer = implementation(handler)
-    if writer is None:
-        return 0.0
-    if hasattr(writer, "canWriteObjectConfidence"):
-        return float(writer.canWriteObjectConfidence(node))
-    if hasattr(writer, "canWriteObject"):
-        return 0.6 if writer.canWriteObject(node) else 0.0
-    return 0.0
-
-
-def load(handler, properties):
-    """Read a file with a module's reader. Returns the node IDs it loaded."""
-    reader = implementation(handler)
-    if reader is None:
-        raise RuntimeError("No module reads %s any more" % handler.GetFileType())
-    handler.ClearLoadedNodeIDs()
-    handler.GetUserMessages().ClearMessages()
-    if not reader.load(dict(properties)):
-        raise RuntimeError(_message_text(handler) or "The module could not read the file")
-    return io_registry.strings_of(handler.GetLoadedNodeIDs())
-
-
-def write(handler, properties):
-    """Write a node with a module's writer. Returns the node IDs it wrote."""
-    writer = implementation(handler)
-    if writer is None:
-        raise RuntimeError("No module writes %s any more" % handler.GetFileType())
-    handler.ClearWrittenNodeIDs()
-    handler.GetUserMessages().ClearMessages()
-    if not writer.write(dict(properties)):
-        raise RuntimeError(_message_text(handler) or "The module could not write the file")
-    return io_registry.strings_of(handler.GetWrittenNodeIDs())
-
-
-def _message_text(handler):
-    """What the handler told the user about the last read or write, as one string."""
-    messages = handler.GetUserMessages()
-    return messages.GetAllMessagesAsString() if messages is not None else ""
+    manager = file_io_manager()
+    for handler in _module_handlers.pop(moduleName, []):
+        manager.UnregisterHandler(handler)

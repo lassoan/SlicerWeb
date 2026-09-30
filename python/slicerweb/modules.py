@@ -157,8 +157,8 @@ class ScriptedModule(ModuleBase):
         """Register the reader and writer the module brings, if it has any.
 
         Same as qSlicerScriptedLoadableModule::registerIO: a module that defines a class named
-        <ModuleName>FileReader or <ModuleName>FileWriter has it added to the list of readers and
-        writers, so that its files can be opened like any other (see slicerweb.io_scripted).
+        <ModuleName>FileReader or <ModuleName>FileWriter has it added to the file IO manager of the
+        application logic, so that its files can be opened like any other (see slicerweb.io_scripted).
         """
         from . import io_scripted
 

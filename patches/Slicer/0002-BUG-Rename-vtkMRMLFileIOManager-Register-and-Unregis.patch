@@ -1,0 +1,269 @@
+From 3c5a630afc70ff14615d878fcb973ed8a2415c34 Mon Sep 17 00:00:00 2001
+From: Andras Lasso <lasso@queensu.ca>
+Date: Tue, 29 Sep 2026 23:22:24 -0400
+Subject: [PATCH] BUG: Rename vtkMRMLFileIOManager Register and Unregister
+ methods
+
+vtkMRMLFileIOManager::Register(vtkMRMLFileIOHandler*) hid
+vtkObjectBase::Register(vtkObjectBase*) in C++, but in Python
+fileIOManager.Register(handler) called vtkObjectBase::Register: the handler
+was not registered, and the reference count of the manager was incremented
+(leaking the manager), without any error or warning.
+
+The methods are renamed to RegisterHandler and UnregisterHandler
+(Unregister is renamed for consistency).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+---
+ .../SlicerScriptedFileReaderWriterBridgeTest.py    |  4 ++--
+ .../Python/SlicerScriptedFileReaderWriterTest.py   |  6 ++++--
+ Base/Python/slicer/ScriptedFileIO/Registration.py  |  2 +-
+ Base/QTCore/qSlicerCoreIOManager.cxx               | 10 +++++-----
+ Base/QTGUI/qSlicerScriptedLoadableModule.cxx       |  2 +-
+ Docs/developer_guide/mrml_overview.md              |  2 +-
+ .../Testing/Cxx/vtkMRMLFileIOManagerTest1.cxx      | 14 +++++++-------
+ Libs/MRML/Logic/vtkMRMLApplicationLogic.cxx        |  4 ++--
+ Libs/MRML/Logic/vtkMRMLFileIOManager.cxx           |  4 ++--
+ Libs/MRML/Logic/vtkMRMLFileIOManager.h             |  6 ++++--
+ 10 files changed, 29 insertions(+), 25 deletions(-)
+
+diff --git a/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterBridgeTest.py b/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterBridgeTest.py
+index e179f001fa..5d9dc5dc3c 100644
+--- a/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterBridgeTest.py
++++ b/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterBridgeTest.py
+@@ -420,7 +420,7 @@ class SlicerScriptedFileReaderWriterBridgeTestTest(ScriptedLoadableModuleTest):
+ 
+         # Unregistering deletes the reader and releases its Python attributes immediately
+         # (the temporary Python object that is passed to Unregister is released after the call)
+-        fileIOManager.Unregister(readerReference.Get())
++        fileIOManager.UnregisterHandler(readerReference.Get())
+         self.assertIsNone(readerReference.Get())
+         self.assertIsNone(payloadReference())
+ 
+@@ -432,7 +432,7 @@ class SlicerScriptedFileReaderWriterBridgeTestTest(ScriptedLoadableModuleTest):
+         del writer
+         gc.collect()
+         self.assertIsNotNone(writerReference.Get())
+-        fileIOManager.Unregister(writerReference.Get())
++        fileIOManager.UnregisterHandler(writerReference.Get())
+         self.assertIsNone(writerReference.Get())
+ 
+         # Reader deleted from C++ while no Python object refers to it: VTK releases the Python attributes
+diff --git a/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterTest.py b/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterTest.py
+index 8db6c6440f..537cafe6b3 100644
+--- a/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterTest.py
++++ b/Applications/SlicerApp/Testing/Python/SlicerScriptedFileReaderWriterTest.py
+@@ -532,7 +532,9 @@ class SlicerScriptedFileReaderWriterTestTest(ScriptedLoadableModuleTest):
+ 
+         # Loading reports loaded nodes via self.parent.loadedNodes
+         fileIOManager = slicer.vtkMRMLFileIOManager()
+-        fileIOManager.RegisterReader(reader)
++        # RegisterHandler() registers a reader or a writer (in Python, Register() would be vtkObjectBase.Register())
++        fileIOManager.RegisterHandler(reader)
++        self.assertEqual(reader.GetFileIOManager(), fileIOManager)
+         properties = slicer.vtkMRMLIOProperties()
+         properties.SetStringProperty("fileName", self.validFilename)
+         self.assertTrue(reader.Load(properties))
+@@ -547,7 +549,7 @@ class SlicerScriptedFileReaderWriterTestTest(ScriptedLoadableModuleTest):
+         keptParent = instances[0]().parent
+         readerReference = vtk.vtkWeakReference()
+         readerReference.Set(reader)
+-        fileIOManager.Unregister(reader)
++        fileIOManager.UnregisterHandler(reader)
+         self.assertIsNotNone(readerReference.Get())
+         del reader
+         self.assertIsNone(readerReference.Get())
+diff --git a/Base/Python/slicer/ScriptedFileIO/Registration.py b/Base/Python/slicer/ScriptedFileIO/Registration.py
+index 1d0db190e0..575b0613b7 100644
+--- a/Base/Python/slicer/ScriptedFileIO/Registration.py
++++ b/Base/Python/slicer/ScriptedFileIO/Registration.py
+@@ -44,7 +44,7 @@ def registerScriptedFileIO(moduleName, fileIOManager):
+     :param moduleName: name of the scripted module (and its Python module).
+     :param fileIOManager: ``vtkMRMLFileIOManager`` where the writer and reader are registered.
+     :return: list of registered writers and readers. The caller is responsible for unregistering them
+-      by calling ``fileIOManager.Unregister(handler)``.
++      by calling ``fileIOManager.UnregisterHandler(handler)``.
+     """
+     module = sys.modules.get(moduleName)
+     if module is None or fileIOManager is None:
+diff --git a/Base/QTCore/qSlicerCoreIOManager.cxx b/Base/QTCore/qSlicerCoreIOManager.cxx
+index 584a232760..c512e9feb0 100644
+--- a/Base/QTCore/qSlicerCoreIOManager.cxx
++++ b/Base/QTCore/qSlicerCoreIOManager.cxx
+@@ -364,8 +364,8 @@ vtkMRMLFileIOManager* qSlicerCoreIOManagerPrivate::fileIOManager()
+     // Move readers and writers that were registered in the standalone manager
+     for (const vtkSmartPointer<vtkMRMLFileIOHandler>& handler : this->RegisteredHandlers)
+     {
+-      previousFileIOManager->Unregister(handler);
+-      this->FileIOManager->Register(handler);
++      previousFileIOManager->UnregisterHandler(handler);
++      this->FileIOManager->RegisterHandler(handler);
+     }
+   }
+   return this->FileIOManager;
+@@ -481,7 +481,7 @@ qSlicerCoreIOManager::~qSlicerCoreIOManager()
+     QList<vtkSmartPointer<vtkMRMLFileIOHandler>> registeredHandlers = d->RegisteredHandlers;
+     for (const auto& handler : registeredHandlers)
+     {
+-      d->FileIOManager->Unregister(handler);
++      d->FileIOManager->UnregisterHandler(handler);
+     }
+   }
+ }
+@@ -904,7 +904,7 @@ void qSlicerCoreIOManager::registerIO(qSlicerIO* io)
+ 
+   d->QtIOs[handler] = io;
+   d->RegisteredHandlers << handler;
+-  this->fileIOManager()->Register(handler);
++  this->fileIOManager()->RegisterHandler(handler);
+ 
+   // If the reader or writer is deleted then remove it from the VTK-based manager
+   // (the manager that is used at the time the reader or writer is deleted, as the standalone manager
+@@ -917,7 +917,7 @@ void qSlicerCoreIOManager::registerIO(qSlicerIO* io)
+                      Q_D(qSlicerCoreIOManager);
+                      if (d->FileIOManager)
+                      {
+-                       d->FileIOManager->Unregister(handler);
++                       d->FileIOManager->UnregisterHandler(handler);
+                      }
+                    });
+ }
+diff --git a/Base/QTGUI/qSlicerScriptedLoadableModule.cxx b/Base/QTGUI/qSlicerScriptedLoadableModule.cxx
+index 9469b84af3..c3c279ab0b 100644
+--- a/Base/QTGUI/qSlicerScriptedLoadableModule.cxx
++++ b/Base/QTGUI/qSlicerScriptedLoadableModule.cxx
+@@ -103,7 +103,7 @@ void qSlicerScriptedLoadableModulePrivate::unregisterFileIOHandlers()
+   {
+     for (vtkMRMLFileIOHandler* handler : this->RegisteredFileIOHandlers)
+     {
+-      this->RegisteredFileIOManager->Unregister(handler); // deleted handlers (nullptr) are ignored
++      this->RegisteredFileIOManager->UnregisterHandler(handler); // deleted handlers (nullptr) are ignored
+     }
+   }
+   this->RegisteredFileIOHandlers.clear();
+diff --git a/Docs/developer_guide/mrml_overview.md b/Docs/developer_guide/mrml_overview.md
+index ef7bcb6a9e..6d11465029 100644
+--- a/Docs/developer_guide/mrml_overview.md
++++ b/Docs/developer_guide/mrml_overview.md
+@@ -110,7 +110,7 @@ Files are read into the scene and written from the scene by VTK classes in MRML
+ - Readers ([`vtkMRMLFileReader`](https://apidocs.slicer.org/main/classvtkMRMLFileReader.html) subclasses) and writers ([`vtkMRMLFileWriter`](https://apidocs.slicer.org/main/classvtkMRMLFileWriter.html) subclasses) derive from [`vtkMRMLFileIOHandler`](https://apidocs.slicer.org/main/classvtkMRMLFileIOHandler.html). Each has a file type (such as `VolumeFile`), a description that is displayed to users (such as `Volume`), and name filters (such as `Volume (*.nrrd *.nii.gz)`).
+ - To choose a reader, the manager asks each reader for its confidence (between 0.0 and 1.0) that it can load the file (`CanLoadFileConfidence()`) and uses the reader with the highest confidence (readers registered earlier win ties). By default, the confidence is based on the file extension: 0.5 + 0.01 × the length of the longest matched extension, so that more specific readers (`*.seg.nrrd`) are preferred over more generic ones (`*.nrrd`). Writers are chosen similarly (`CanWriteObjectConfidence()`). Groups of files that must be loaded together (for example, when the user adds a folder) are recognized by `ExamineFileListConfidence()` of readers.
+ - Parameters of reading and writing, such as `fileName`, `name`, `nodeID`, and the values of reader and writer [options](#reader-and-writer-options), are passed as a [`vtkMRMLIOProperties`](https://apidocs.slicer.org/main/classvtkMRMLIOProperties.html) object. IDs of loaded or written nodes and messages to be displayed to the user (`GetUserMessages()`) are available in the reader or writer after it was used.
+-- Readers and writers of modules are provided by the module logic ([`vtkMRMLModuleLogic::CreateFileIOHandlers()`](#the-reader)). The application logic registers them in the file IO manager when the logic is set as the module logic and unregisters them when the module logic is replaced, removed, or deleted. Readers and writers of scripted modules are [implemented in Python](#readers-and-writers-implemented-in-python) and registered automatically. Code that registers a reader or writer in the file IO manager by other means (`Register()`, `RegisterReader()`, `RegisterWriter()`) is responsible for unregistering it (`Unregister()`).
++- Readers and writers of modules are provided by the module logic ([`vtkMRMLModuleLogic::CreateFileIOHandlers()`](#the-reader)). The application logic registers them in the file IO manager when the logic is set as the module logic and unregisters them when the module logic is replaced, removed, or deleted. Readers and writers of scripted modules are [implemented in Python](#readers-and-writers-implemented-in-python) and registered automatically. Code that registers a reader or writer in the file IO manager by other means (`RegisterHandler()`, `RegisterReader()`, `RegisterWriter()`) is responsible for unregistering it (`UnregisterHandler()`).
+ - The file IO manager invokes events that user interfaces can observe: `HandlerRegisteredEvent` and `HandlerUnregisteredEvent` (with the reader or writer as call data), `NewFileLoadedEvent` and `FileSavedEvent` (with the properties of the loaded or saved file as call data; for loaded files it contains `fileType` and the IDs of loaded nodes in `nodeIDs`).
+ 
+ #### Qt interface
+diff --git a/Libs/MRML/Logic/Testing/Cxx/vtkMRMLFileIOManagerTest1.cxx b/Libs/MRML/Logic/Testing/Cxx/vtkMRMLFileIOManagerTest1.cxx
+index 6b9e1410bf..1582959ce6 100644
+--- a/Libs/MRML/Logic/Testing/Cxx/vtkMRMLFileIOManagerTest1.cxx
++++ b/Libs/MRML/Logic/Testing/Cxx/vtkMRMLFileIOManagerTest1.cxx
+@@ -277,11 +277,11 @@ int vtkMRMLFileIOManagerTest1(int argc, char* argv[])
+   CHECK_INT(static_cast<int>(manager->GetReadersForFileType("VolumeFile").size()), 1);
+ 
+   // Unregistering removes the reader
+-  manager->Unregister(sureReader);
++  manager->UnregisterHandler(sureReader);
+   CHECK_INT(manager->GetNumberOfReaders(), 1);
+   CHECK_NULL(sureReader->GetFileIOManager());
+ 
+-  // Register() adds a reader or a writer, depending on the type of the handler
++  // RegisterHandler() adds a reader or a writer, depending on the type of the handler
+   vtkSmartPointer<vtkMRMLNodeWriter> nodeWriter = vtkMRMLNodeWriter::CreateNodeWriter("Texts", "TextFile", { "vtkMRMLTextNode" }, false);
+   CHECK_STD_STRING(nodeWriter->GetDescription(), "Texts");
+   CHECK_STD_STRING(nodeWriter->GetFileType(), "TextFile");
+@@ -289,18 +289,18 @@ int vtkMRMLFileIOManagerTest1(int argc, char* argv[])
+   CHECK_INT(static_cast<int>(nodeWriter->GetNodeClassNames().size()), 1);
+   CHECK_NULL(nodeWriter->GetFileIOManager()); // not registered
+   const int numberOfWritersBeforeRegister = manager->GetNumberOfWriters();
+-  manager->Register(nodeWriter);
++  manager->RegisterHandler(nodeWriter);
+   CHECK_INT(manager->GetNumberOfWriters(), numberOfWritersBeforeRegister + 1);
+   CHECK_POINTER(nodeWriter->GetFileIOManager(), manager.GetPointer());
+-  manager->Register(sureReader);
++  manager->RegisterHandler(sureReader);
+   CHECK_INT(manager->GetNumberOfReaders(), 2);
+-  manager->Unregister(nodeWriter);
+-  manager->Unregister(sureReader);
++  manager->UnregisterHandler(nodeWriter);
++  manager->UnregisterHandler(sureReader);
+   CHECK_INT(manager->GetNumberOfWriters(), numberOfWritersBeforeRegister);
+   CHECK_INT(manager->GetNumberOfReaders(), 1);
+   CHECK_POINTER(manager->GetNthReader(0), extensionReader.GetPointer());
+   CHECK_NULL(sureReader->GetFileIOManager());
+-  manager->Unregister(extensionReader);
++  manager->UnregisterHandler(extensionReader);
+   CHECK_INT(manager->GetNumberOfReaders(), 0);
+ 
+   // Loading
+diff --git a/Libs/MRML/Logic/vtkMRMLApplicationLogic.cxx b/Libs/MRML/Logic/vtkMRMLApplicationLogic.cxx
+index 5f10abede2..4b69f16a44 100644
+--- a/Libs/MRML/Logic/vtkMRMLApplicationLogic.cxx
++++ b/Libs/MRML/Logic/vtkMRMLApplicationLogic.cxx
+@@ -172,7 +172,7 @@ void vtkMRMLApplicationLogic::vtkInternal::RegisterModuleFileIOHandlers(const st
+     {
+       continue;
+     }
+-    this->FileIOManager->Register(handler);
++    this->FileIOManager->RegisterHandler(handler);
+     registeredHandlers.emplace_back(handler);
+   }
+   this->ModuleLogicDeletedObserverTags[moduleName] = moduleLogic->AddObserver(vtkCommand::DeleteEvent, this->ModuleLogicDeletedCallback);
+@@ -198,7 +198,7 @@ void vtkMRMLApplicationLogic::vtkInternal::UnregisterModuleFileIOHandlers(const
+   {
+     for (vtkMRMLFileIOHandler* handler : handlersIt->second)
+     {
+-      this->FileIOManager->Unregister(handler); // deleted handlers (nullptr) are ignored
++      this->FileIOManager->UnregisterHandler(handler); // deleted handlers (nullptr) are ignored
+     }
+     this->ModuleFileIOHandlers.erase(handlersIt);
+   }
+diff --git a/Libs/MRML/Logic/vtkMRMLFileIOManager.cxx b/Libs/MRML/Logic/vtkMRMLFileIOManager.cxx
+index 6dfb8db375..f7a95b77da 100644
+--- a/Libs/MRML/Logic/vtkMRMLFileIOManager.cxx
++++ b/Libs/MRML/Logic/vtkMRMLFileIOManager.cxx
+@@ -202,7 +202,7 @@ vtkMRMLNodeWriter* vtkMRMLFileIOManager::RegisterNodeWriter(const std::string& d
+ }
+ 
+ //----------------------------------------------------------------------------
+-void vtkMRMLFileIOManager::Register(vtkMRMLFileIOHandler* handler)
++void vtkMRMLFileIOManager::RegisterHandler(vtkMRMLFileIOHandler* handler)
+ {
+   if (vtkMRMLFileReader* reader = vtkMRMLFileReader::SafeDownCast(handler))
+   {
+@@ -219,7 +219,7 @@ void vtkMRMLFileIOManager::Register(vtkMRMLFileIOHandler* handler)
+ }
+ 
+ //----------------------------------------------------------------------------
+-void vtkMRMLFileIOManager::Unregister(vtkMRMLFileIOHandler* handler)
++void vtkMRMLFileIOManager::UnregisterHandler(vtkMRMLFileIOHandler* handler)
+ {
+   if (!handler)
+   {
+diff --git a/Libs/MRML/Logic/vtkMRMLFileIOManager.h b/Libs/MRML/Logic/vtkMRMLFileIOManager.h
+index e0963ecc12..f70b2b78a2 100644
+--- a/Libs/MRML/Logic/vtkMRMLFileIOManager.h
++++ b/Libs/MRML/Logic/vtkMRMLFileIOManager.h
+@@ -79,7 +79,9 @@ public:
+   void RegisterReader(vtkMRMLFileReader* reader);
+   void RegisterWriter(vtkMRMLFileWriter* writer);
+   /// Add a reader or a writer (calls RegisterReader() or RegisterWriter(), depending on the type of the handler).
+-  void Register(vtkMRMLFileIOHandler* handler);
++  /// It is not named Register(), because that would hide vtkObjectBase::Register() in C++ and it would be
++  /// called instead of this method in Python (which would increment the reference count of the manager).
++  void RegisterHandler(vtkMRMLFileIOHandler* handler);
+   /// Convenience method for creating and registering a vtkMRMLNodeWriter,
+   /// which writes nodes of the specified classes using their storage nodes.
+   /// Returns the registered writer.
+@@ -89,7 +91,7 @@ public:
+                                         const std::vector<std::string>& nodeClassNames,
+                                         bool supportUseCompression = true);
+   /// Remove a reader or a writer. Whoever registered a handler is responsible for unregistering it.
+-  void Unregister(vtkMRMLFileIOHandler* handler);
++  void UnregisterHandler(vtkMRMLFileIOHandler* handler);
+   //@}
+ 
+   //@{
+-- 
+2.44.0.windows.1
+

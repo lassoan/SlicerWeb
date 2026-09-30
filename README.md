@@ -53,7 +53,8 @@ extension. The page installs them with micropip at startup.
 
 There is no Qt, so what Qt did is done here instead: `SlicerWebCore/` holds Qt-free views, a layout
 manager and the CLI module glue, and `python/slicerweb/` holds the application, the module manager
-and the IO manager, together with `qt` and `ctk` modules that build Vue widgets.
+and the IO manager (which, like qSlicerCoreIOManager, hands files to the readers and writers of
+Slicer's `vtkMRMLFileIOManager`), together with `qt` and `ctk` modules that build Vue widgets.
 
 ## Building
 

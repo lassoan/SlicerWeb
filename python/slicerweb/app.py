@@ -288,22 +288,27 @@ class SlicerWebApplication:
         return self._ioManager
 
     def _registerFileHandlers(self):
-        """Put the readers and writers of the application into the list (vtkSlicerFileIOManager).
+        """Readers and writers of the application, besides those of Slicer core.
 
-        A module adds its own when it is loaded (ScriptedModuleDescriptor.registerIO), which is how
-        a module that brings a file format - ImportMimics and its .mcs projects, say - is asked to
-        open such a file wherever files are opened.
+        The readers and writers of files are Slicer's own, kept by the file IO manager of the
+        application logic: each module logic registers its own when it is set in the application
+        logic, and a scripted module when it is loaded (ScriptedModule.registerIO), which is how a
+        module that brings a file format - ImportMimics and its .mcs projects, say - is asked to
+        open such a file wherever files are opened. What is added here is what this build needs
+        besides: transforms in HDF5 files, which its ITK cannot read.
         """
-        from . import io, io_registry, transforms_hdf5
+        import slicer
 
-        try:
-            io_registry.register_application_handlers(io.FILE_TYPES, io.WRITER_DESCRIPTIONS)
-        except Exception:
-            logger.exception("The readers and writers of the application could not be registered")
+        from . import transforms_hdf5
+
         try:
             transforms_hdf5.install()
         except Exception:
             logger.exception("Transforms in HDF5 files will not be read or written")
+        # A reader asks for the 3D views to be reset (the first model that is loaded, say)
+        appLogic = self.applicationLogic()
+        appLogic.AddObserver(slicer.vtkMRMLApplicationLogic.ResetThreeDViewsRequestEvent,
+                             lambda caller, event: self._layoutManager.resetThreeDViews() if self._layoutManager else None)
 
     def coreIOManager(self):
         return self._ioManager

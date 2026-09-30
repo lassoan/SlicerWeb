@@ -234,7 +234,7 @@ async function saveScene() {
   const path = `/data/save/${name}`;
   await bridge.evalPython(`import os; os.makedirs("/data/save", exist_ok=True)`);
   const ok = await bridge.call<boolean>("saveScene", [path]);
-  if (ok) runtime.saveFileToDisk(path);
+  if (ok) runtime.offerSavedFile(path);
   else alert("Saving the scene failed; see the Python console for details.");
 }
 

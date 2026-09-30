@@ -3,12 +3,14 @@
 import { inject, onBeforeUnmount, onMounted, ref } from "vue";
 import { Download, Trash2 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
+import type { SlicerRuntime } from "@/core/runtime";
 import { captureView } from "../captureView";
 import { store } from "../store";
 
 interface SceneView { id: string; name: string; description: string; thumbnail: string | null }
 
 const bridge = inject<SlicerBridge>("bridge")!;
+const runtime = inject<SlicerRuntime>("runtime")!;
 const views = ref<SceneView[]>([]);
 const name = ref("");
 const description = ref("");
@@ -57,12 +59,7 @@ async function restore(view: SceneView) {
 async function savePicture() {
   const layoutName = store.activeView || store.layout.maximized || "1";
   const image = await captureView(bridge, layoutName);
-  if (!image) return;
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(image);
-  link.download = `Slicer-${layoutName}.png`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  if (image) await runtime.offerSavedBytes(`Slicer-${layoutName}.png`, image);
 }
 
 async function remove(view: SceneView) {

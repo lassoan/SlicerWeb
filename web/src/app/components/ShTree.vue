@@ -92,7 +92,7 @@ async function save(item: SubjectHierarchyItem) {
     : item.className.includes("Transform") ? ".tfm" : item.className.includes("Table") ? ".tsv" : ".txt";
   const path = `/data/save/${item.name.replace(/[^\w.-]+/g, "_")}${ext}`;
   await bridge.evalPython(`import os; os.makedirs("/data/save", exist_ok=True)`);
-  if (await bridge.call<boolean>("saveNode", [item.nodeID, path])) runtime.saveFileToDisk(path);
+  if (await bridge.call<boolean>("saveNode", [item.nodeID, path])) runtime.offerSavedFile(path);
 }
 
 /**

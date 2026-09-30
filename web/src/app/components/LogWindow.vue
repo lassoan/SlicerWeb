@@ -4,6 +4,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { Check, Copy, Download, Trash2, X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
+import type { SlicerRuntime } from "@/core/runtime";
 import { store } from "../store";
 
 interface LogEntry { time: number; level: string; origin: string; message: string }
@@ -16,6 +17,7 @@ const LEVELS = [
 ];
 
 const bridge = inject<SlicerBridge>("bridge")!;
+const runtime = inject<SlicerRuntime>("runtime")!;
 const entries = ref<LogEntry[]>([]);
 const shown = ref<Record<string, boolean>>({ ERROR: true, WARNING: true, INFO: true, DEBUG: false });
 const search = ref("");
@@ -84,11 +86,7 @@ async function copy() {
 
 function download() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(new Blob([asText()], { type: "text/plain" }));
-  link.download = `SlicerWeb-log-${stamp}.txt`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  runtime.offerSavedBytes(`SlicerWeb-log-${stamp}.txt`, asText());
 }
 
 async function clear() {

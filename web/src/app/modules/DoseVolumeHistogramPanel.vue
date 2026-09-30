@@ -95,7 +95,7 @@ async function exportTo(what: "dvh" | "metrics", comma: boolean) {
   error.value = "";
   try {
     const path = await bridge.call<string>("exportDoseVolumeHistogram", [nodeID.value, what, comma]);
-    runtime.saveFileToDisk(path);
+    runtime.offerSavedFile(path);
   } catch (e: any) {
     error.value = e.message ?? String(e);
   }

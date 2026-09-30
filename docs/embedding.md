@@ -54,10 +54,11 @@ const slicer = await new Promise((ready) => {
 });
 ```
 
-### Loading data
+### Loading and saving data
 
-Files live in the application's own file system, so loading is two steps: put the bytes there, then
-read them into the scene.
+Files live in the application's own file system, so loading and saving are two steps each.
+
+To load, put the bytes there, then read them into the scene.
 
 ```js
 // something your site serves (same origin, or a server that allows cross-origin requests)
@@ -72,6 +73,14 @@ await slicer.bridge.call("loadFiles", [[scene]]);
 await slicer.bridge.call("loadFiles", [[volumePath, segmentationPath]]);
 ```
 
+To save, write the file there, then read its bytes out.
+
+```js
+await slicer.bridge.call("saveScene", ["/data/out/case42.mrb"]); // save to application's virtual file system
+const [mrb] = await slicer.readFiles(["/data/out/case42.mrb"]);  // copy the file to browser file object
+await fetch("/cases/42/scene", { method: "PUT", body: mrb }); // use a web request to store the file
+```
+
 `loadFiles` reads what the extension says it is - volumes, models, markups, segmentations,
 transforms, tables, and `.mrml`/`.mrb` scenes - and returns the IDs of the nodes it added.
 `downloadFile` reports progress through its `onProgress` option, and `saveFileToDisk(path)` offers a
@@ -80,9 +89,39 @@ next to files the visitor chose (with `writeFiles`, the Data panel or a module's
 offered as a download by itself, since on the desktop it would have landed in the visitor's folder:
 RawImageGuess's NRRD header of a raw file, for instance. Files written anywhere else are not.
 
-### Doing more than loading
+`readFiles` rejects, naming the path, if a path is not a file.
 
-Three levels, in order of how much they assume:
+### User-initiated data saving
+
+The user may initiate saving of the scene or various other files inside the application too, such as
+"Save scene" in the Data panel, "Save to file" on a node, a segmentation's "Export to files",
+a dose volume histogram export, "Save picture" in Scene Views, the log, and files that modules
+write to be saved (a save path box, a file next to one the visitor chose).
+
+By default, each of these is written to the application's file system and then offered by the browser as a
+download.
+
+A page that stores files somewhere of its own can define its own save handler instead:
+
+```js
+slicer.saveHandler = async (path) => {
+  const [file] = await slicer.readFiles([path]);
+  await fetch(`/cases/42/files/${encodeURIComponent(file.name)}`, { method: "PUT", body: file });
+};
+```
+
+While a handler is set, nothing is downloaded - not even when the handler throws or its promise is
+rejected (that is logged as an error, and nothing more). A handler that wants a download after all,
+for example when its upload fails, can call `slicer.saveFileToDisk(path)` itself.
+Set `saveHandler = null` to go back to downloads.
+
+A save the page itself asks for (`bridge.call("saveScene", ...)` above) does not reach the handler;
+the page knows the path already. Every file the user saves also sends the `file-saved` event
+(`{path}`), with a handler or without, for a page that only wants to know.
+
+### Accessing other application features
+
+Three levels of access are available:
 
 ```js
 // 1. named operations of the application (python/slicerweb: every @method())
@@ -106,7 +145,7 @@ const count = await slicer.bridge.evalPython("len(slicer.util.getNodesByClass('v
 `evalPython` in `"eval"` mode returns the value's Python `repr` as a string, so parse it or return
 JSON from the expression itself.
 
-### Being told what happened
+### Get event notifications from the application
 
 ```js
 slicer.bridge.events.on("nodes-loaded", ({ fileName, nodeIDs }) => console.log(fileName, nodeIDs));
@@ -115,7 +154,8 @@ slicer.bridge.events.on("busy", ({ busy }) => showSpinner(busy));
 ```
 
 The events the application sends on its own: `app-ready`, `busy`, `scene-changed`, `nodes-loaded`,
-`node-modified`, `layout-changed`, `file-written`, `modules-changed`, `cli-module` (a command line
+`node-modified`, `layout-changed`, `file-written` (a node written to a file, including each file of
+a scene), `file-saved` (a file the user saved, see above), `modules-changed`, `cli-module` (a command line
 module starting, finishing or failing), `log`, and `open-dialog`. A module of your own can send any
 others it likes (below).
 
@@ -131,8 +171,14 @@ window.parent.caseApi.saveMeasurements({ case: 42, volumeMl: 87.3 });
 
 ### From Python
 
-Python reaches the page through Pyodide's `js` module, which is how a module of your own would
-report a result or ask the site a question:
+Python reaches the page through Pyodide's `js` module.
+
+```python
+import js
+js.window.alert("Hello from Slicer's Python")
+```
+
+A Slicer module can use this for example to report a result or get information from the website:
 
 ```python
 import json
@@ -163,8 +209,7 @@ host.emit("measurement-ready", {"case": 42, "volumeMl": 87.3})
 slicer.bridge.events.on("measurement-ready", (payload) => caseApi.save(payload));
 ```
 
-This keeps the module free of anything about the page it happens to be embedded in, which matters
-if the same module is also to run on the desktop.
+This keeps the module free of anything about the page it happens to be embedded in.
 
 ### Shipping your own code
 

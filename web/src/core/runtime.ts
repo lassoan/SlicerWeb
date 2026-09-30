@@ -760,6 +760,55 @@ bridge.call
     return paths;
   }
 
+  /** The files at these paths of the virtual file system, as browser files (what writeFiles does, the other way). */
+  async readFiles(paths: string[]): Promise<File[]> {
+    const FS = this.pyodide!.FS;
+    return paths.map((path) => {
+      let data: Uint8Array;
+      try {
+        if (FS.isDir(FS.stat(path).mode)) throw new Error("it is a folder");
+        data = FS.readFile(path);
+      } catch (e: any) {
+        throw new Error(`Cannot read ${path}: ${e?.message ?? "no such file"}`);
+      }
+      return new File([data.slice()], path.split("/").pop() || "file", { lastModified: this.modificationTime(path) });
+    });
+  }
+
+  // ------------------------------------------------------------------ files the user saves
+  /**
+   * Set by an embedding page to be given every file the user saves in the application (a scene, a
+   * node, an export, a picture of a view, a file a module writes to be saved), by its path in the
+   * virtual file system, instead of the browser downloading it. Nothing is downloaded while one is
+   * set, not even when it fails: what then happens to the file is the page's to decide.
+   */
+  saveHandler: ((path: string) => void | Promise<void>) | null = null;
+
+  /** A file the user saved: to the embedding page's saveHandler if it has one, else a download. */
+  offerSavedFile(path: string) {
+    this.bridge.events.emit("file-saved", { path });
+    const handler = this.saveHandler;
+    if (!handler) {
+      this.saveFileToDisk(path);
+      return;
+    }
+    const failed = (e: unknown) => console.error(`The page could not take the saved file ${path}:`, e);
+    try {
+      Promise.resolve(handler(path)).catch(failed);
+    } catch (e) {
+      failed(e);
+    }
+  }
+
+  /** Write bytes the page made (a picture, a text) to the folder of saved files, and offer them as a saved file. */
+  async offerSavedBytes(name: string, data: Blob | string) {
+    const FS = this.pyodide!.FS;
+    FS.mkdirTree("/data/save");
+    const path = `/data/save/${name}`;
+    FS.writeFile(path, typeof data === "string" ? data : new Uint8Array(await data.arrayBuffer()));
+    this.offerSavedFile(path);
+  }
+
   // ------------------------------------------------------------------ files modules write
   // A module that writes a file next to one the user chose (RawImageGuess writes the NRRD header of
   // a raw file beside it) writes it into the virtual file system, which the user cannot see: on the
@@ -816,7 +865,7 @@ bridge.call
       for (const [path, mtime] of now) {
         if (!offer || this.userFiles.get(path) === mtime) continue;
         console.info(`A module wrote ${path}; it is saved to your downloads`);
-        this.saveFileToDisk(path);
+        this.offerSavedFile(path);
       }
       this.userFiles = now;
     }, 1000);

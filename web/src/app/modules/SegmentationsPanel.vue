@@ -251,7 +251,7 @@ async function exportToFiles() {
       lps: coordinateSystem.value === 0, compression: compression.value,
       referenceVolumeID: referenceVolumeID.value, colorTableID: useColorTable.value ? colorTableID.value : null,
     }]);
-    runtime.saveFileToDisk(made.path);
+    runtime.offerSavedFile(made.path);
     filesMessage.value = `${made.files.length} file${made.files.length === 1 ? "" : "s"}: ${made.files.join(", ")}`;
   } catch (e: any) {
     filesError.value = e?.message ?? String(e);

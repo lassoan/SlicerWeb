@@ -15,6 +15,8 @@ const props = withDefaults(
     checkBoxVisible?: boolean;
     checkBoxChecked?: boolean;
     checkBoxToolTip?: string;
+    /** the edge of the button the check box is at (ctkCheckablePushButton indicatorAlignment) */
+    checkBoxAlignment?: "left" | "right";
   }>(),
   {
     text: "",
@@ -28,6 +30,7 @@ const props = withDefaults(
     checkBoxVisible: false,
     checkBoxChecked: false,
     checkBoxToolTip: "",
+    checkBoxAlignment: "left",
   },
 );
 const emit = defineEmits<{ clicked: [boolean]; toggled: [boolean]; checkBoxToggled: [boolean] }>();
@@ -49,9 +52,11 @@ function toggleCheckBox() {
 
 <template>
   <button type="button" :title="toolTip" :disabled="!enabled"
-    class="sw-button inline-flex min-h-7 items-center justify-center gap-1.5 rounded-md px-3 py-0.5 text-[13px] leading-tight transition-colors disabled:opacity-40"
+    class="sw-button relative inline-flex min-h-7 items-center justify-center gap-1.5 rounded-md px-3 py-0.5 text-[13px] leading-tight transition-colors disabled:opacity-40"
     :class="[
       text ? '' : 'px-1.5',
+      // the check box at an edge, the text centred between room for it on both sides (as CTK draws it)
+      checkBoxVisible ? 'px-8' : '',
       primary || (checkable && checked)
         ? 'bg-primary text-primary-foreground hover:bg-primary/85'
         : 'bg-secondary/60 text-secondary-foreground hover:bg-secondary',
@@ -59,8 +64,9 @@ function toggleCheckBox() {
     @click="click">
     <!-- ctkCheckablePushButton check box: large enough to hit with a finger -->
     <span v-if="checkBoxVisible" role="checkbox" :aria-checked="checkBoxChecked" :title="checkBoxToolTip || toolTip"
-      class="sw-button-checkbox -ml-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border"
-      :class="checkBoxChecked ? 'border-primary bg-primary text-primary-foreground' : 'border-current/50'"
+      class="sw-button-checkbox absolute top-1/2 flex h-5 w-5 shrink-0 -translate-y-1/2 items-center justify-center rounded border"
+      :class="[checkBoxChecked ? 'border-primary bg-primary text-primary-foreground' : 'border-current/50',
+        checkBoxAlignment === 'right' ? 'right-1.5' : 'left-1.5']"
       @click.stop="toggleCheckBox">
       <svg v-if="checkBoxChecked" viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5">
         <path d="M3 8.5l3.5 3.5L13 4.5" stroke-linecap="round" stroke-linejoin="round" />

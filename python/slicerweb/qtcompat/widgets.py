@@ -25,6 +25,45 @@ def _int(v):
     return int(v)
 
 
+def _children(el):
+    return [el.children.item(i) for i in range(el.children.length)]
+
+
+def _empty(el):
+    """Whether an item of a form row shows nothing, as Qt's layout items are empty: a hidden widget,
+    a layout of items that are all empty, a label given as empty text."""
+    if el.style.display == "none":
+        return True
+    if el.hasAttribute("data-layout"):
+        return all(_empty(child) for child in _children(el))
+    if el.hasAttribute("data-form-label"):
+        return not (el.textContent or "").strip()
+    return False
+
+
+def _refresh_form_row(el):
+    """Hide a row of a form layout when everything in it is empty - its label and its field, or the
+    widget across it - and show it again when anything is shown: a row takes room of its own (and
+    the spacing around it), which hidden widgets must not leave behind. Qt skips such rows too. A
+    label given as text keeps its row, as a label does in Qt when only its field is hidden.
+    el: the row, or an element in it (a widget of a layout in the field's cell, say)."""
+    try:
+        row = el
+        # up through the layouts and the field's cell a widget can be in
+        while row is not None and not row.hasAttribute("data-form-row") and (
+                row.hasAttribute("data-layout") or row.hasAttribute("data-form-field")):
+            row = row.parentElement
+        if row is None or not row.hasAttribute("data-form-row"):
+            return
+        items = []
+        for child in _children(row):
+            items.extend(_children(child) if child.hasAttribute("data-form-field") else [child])
+        hidden = bool(items) and all(_empty(item) for item in items)
+        row.style.display = "none" if hidden else ""
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------------------- base widget
 class QWidget(QObject):
     _tag = "div"
@@ -111,6 +150,7 @@ class QWidget(QObject):
         self._visible = bool(visible)
         try:
             self._el.style.display = "" if self._visible else "none"
+            _refresh_form_row(self._el.parentElement)
         except Exception:
             pass
 
@@ -308,6 +348,12 @@ class QLayout(QObject):
     def __init__(self, parent=None):
         super().__init__(None)
         self._el = dom.create("div", self._classes)
+        # a layout has nothing to show of its own: a form row of one whose widgets are all hidden is
+        # hidden too (_refresh_form_row)
+        try:
+            self._el.setAttribute("data-layout", "")
+        except Exception:
+            pass
         self._parentWidget = None
         self._items = []
         if isinstance(parent, QWidget):
@@ -454,6 +500,7 @@ class QFormLayout(QLayout):
     def _row(self, label, field=None):
         # sw-form-row: label and field side by side, stacked when the panel is narrow (main.css)
         row = dom.create("div", "sw-form-row min-w-0")
+        row.setAttribute("data-form-row", "")
         if field is None:
             # single widget/layout spanning the row
             item = label
@@ -463,12 +510,15 @@ class QFormLayout(QLayout):
             if isinstance(label, str):
                 span = dom.create("span", "sw-form-label truncate text-[12px] text-muted-foreground")
                 span.textContent = label
+                span.setAttribute("data-form-label", "")
                 row.appendChild(span)
             else:
                 self._appendItem(row, label)
             cell = dom.create("div", "min-w-0")
+            cell.setAttribute("data-form-field", "")
             self._appendItem(cell, field)
             row.appendChild(cell)
+        _refresh_form_row(row)
         return row
 
     def _appendItem(self, container, item):
@@ -805,6 +855,9 @@ class QCheckBox(_ElementWidget):
 
     def _onToggled(self, checked):
         type(self).checked.set_silently(self, bool(checked))
+        # the element's own value too: a click changes only the native control, and an uncheck by the
+        # button group later would otherwise not change the value and leave the control checked
+        dom.set_prop(self._el, "checked", self.checked)
         self.toggled.emit(self.checked)
         self.stateChanged.emit(2 if self.checked else 0)
         self.clicked.emit(self.checked)
@@ -837,7 +890,31 @@ class QCheckBox(_ElementWidget):
 
 
 class QRadioButton(QCheckBox):
-    pass
+    """A radio button: round, and exclusive - checking it unchecks the others of its button group, or,
+    when it is in none, the other radio buttons of the same parent that are in none either (Qt's
+    autoExclusive)."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        dom.set_prop(self._el, "radio", True)
+
+    def _uncheckSiblings(self):
+        if self.group() is not None or not self.checked:
+            return
+        parent = self.parent()
+        if parent is None:
+            return
+        for sibling in parent.findChildren(QRadioButton):
+            if sibling is not self and sibling.parent() is parent and sibling.group() is None and sibling.checked:
+                sibling.setChecked(False)
+
+    def _onToggled(self, checked):
+        super()._onToggled(checked)
+        self._uncheckSiblings()
+
+    def setChecked(self, v):
+        super().setChecked(v)
+        self._uncheckSiblings()
 
 
 class QComboBox(_ElementWidget):

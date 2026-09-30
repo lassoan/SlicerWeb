@@ -453,7 +453,17 @@ class ctkCheckablePushButton(QPushButton):
     checkState = count_property(lambda self: 2 if self.isChecked() else 0, lambda self, state: self.setCheckState(state))
 
     def setIndicatorAlignment(self, alignment):
-        pass
+        """Which edge of the button the check box is at: the left one (Qt.AlignLeft, CTK's default)
+        or the right one (Qt.AlignRight). A .ui file gives the flags as text (Qt::AlignRight|...)."""
+        if isinstance(alignment, str):
+            right = "AlignRight" in alignment
+        else:
+            right = bool(int(alignment) & 0x2)
+        self._indicatorAlignment = 0x2 if right else 0x1
+        dom.set_prop(self._el, "checkBoxAlignment", "right" if right else "left")
+
+    def indicatorAlignment(self):
+        return getattr(self, "_indicatorAlignment", 0x1)
 
 
 class ctkCheckBox(QCheckBox):

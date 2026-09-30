@@ -719,9 +719,10 @@ class qSlicerSimpleMarkupsWidget(qMRMLWidget):
 class qSlicerMarkupsPlaceWidget(QWidget):
     """Buttons that place control points in the current markups node, and remove them again."""
 
-    # How many markups a press of Place places (qSlicerMarkupsPlaceWidget::PlaceMultipleMarkups)
-    ForcePlaceSingleMarkup, ForcePlaceMultipleMarkups = 0, 1
-    ShowPlaceMultipleMarkupsOption, HidePlaceMultipleMarkupsOption = 2, 3
+    # How many markups a press of Place places (qSlicerMarkupsPlaceWidget::PlaceMultipleMarkupsType,
+    # with the same values)
+    ShowPlaceMultipleMarkupsOption, HidePlaceMultipleMarkupsOption = 0, 1
+    ForcePlaceSingleMarkup, ForcePlaceMultipleMarkups = 2, 3
 
     activeMarkupsPlaceModeChanged = Signal("activeMarkupsPlaceModeChanged(bool)")
     # The name the signal had when the widget only placed fiducials; modules still connect to it.
@@ -895,6 +896,7 @@ class qSlicerMarkupsPlaceWidget(QWidget):
             selection = appLogic.GetSelectionNode()
             selection.SetReferenceActivePlaceNodeClassName(self._node.GetClassName())
             selection.SetActivePlaceNodeID(self._node.GetID())
+            self._applyPlaceMultipleMarkups()
             interaction.SetCurrentInteractionMode(interaction.Place)
         elif self.placeModeEnabled():
             # only placing into this node is ended here, not another widget's
@@ -923,9 +925,30 @@ class qSlicerMarkupsPlaceWidget(QWidget):
                                                   setUnsetLastControlPointOptionVisible)
 
     def setPlaceMultipleMarkups(self, v):
-        self._placeMultipleMarkups = v
+        """Whether Place places one markup or keeps placing, as qSlicerMarkupsPlaceWidget has it:
+        ForcePlaceSingleMarkup turns place mode persistence off when placing starts (a line ends after
+        its two points), ForcePlaceMultipleMarkups turns it on, ShowPlaceMultipleMarkupsOption leaves it
+        as the user set it. A .ui file gives it as text ("qSlicerMarkupsPlaceWidget::ForcePlaceSingleMarkup")."""
+        if isinstance(v, str):
+            name = v.split("::")[-1]
+            v = getattr(type(self), name, self.ShowPlaceMultipleMarkupsOption)
+        self._placeMultipleMarkups = int(v)
+        # applied at once while placing into this node, as on the desktop
+        if self.placeModeEnabled():
+            self._applyPlaceMultipleMarkups()
 
     placeMultipleMarkups = property(lambda self: self._placeMultipleMarkups, setPlaceMultipleMarkups)
+
+    def _applyPlaceMultipleMarkups(self):
+        if self._placeMultipleMarkups == self.ForcePlaceSingleMarkup:
+            self.setPlaceModePersistency(False)
+        elif self._placeMultipleMarkups == self.ForcePlaceMultipleMarkups:
+            self.setPlaceModePersistency(True)
+
+    def placeModePersistency(self):
+        import slicer
+
+        return bool(slicer.app.applicationLogic().GetInteractionNode().GetPlaceModePersistence())
 
 
 class qMRMLSliderWidget(_ElementWidget):

@@ -63,7 +63,7 @@ async function savePicture() {
 }
 
 async function remove(view: SceneView) {
-  await bridge.call("removeNode", [view.id]);
+  await bridge.call("removeSceneView", [view.id]);
   await refresh();
 }
 

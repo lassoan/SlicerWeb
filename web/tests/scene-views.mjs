@@ -24,14 +24,15 @@ console.log("the toolbar button opens:", await page.locator("[data-name='moduleT
 // a scene view of the scene as it is, with the volume shown
 await page.locator("[data-name='create']").click();
 await page.waitForTimeout(2500);
-console.log("scene views:", await value(`str(__import__("slicer").mrmlScene.GetNumberOfNodesByClass("vtkMRMLSceneViewNode"))`));
+const logic = `__import__("slicer").app.applicationLogic().GetModuleLogic("SceneViews")`;
+console.log("scene views:", await value(`str(${logic}.GetNumberOfSceneViews())`));
 const thumbnail = await page.locator("[data-name^='sceneView:'] img").first();
 console.log("the list shows a picture:", await thumbnail.count() > 0);
 if (await thumbnail.count()) {
   const size = await thumbnail.evaluate((img) => `${img.naturalWidth}x${img.naturalHeight}`);
   console.log("picture size:", size);
 }
-console.log("stored with the node:", await value(`str(__import__("slicer").mrmlScene.GetFirstNodeByClass("vtkMRMLSceneViewNode").GetScreenShot().GetDimensions())`));
+console.log("stored with the scene view:", await value(`str(${logic}.GetNthSceneViewScreenshot(0).GetDimensions())`));
 console.log("there is no Restore button:", await page.locator("button", { hasText: /^Restore$/ }).count() === 0);
 
 // Change how the volume is shown, then click the scene view to put the scene back. A scene view
@@ -51,6 +52,12 @@ await page.waitForTimeout(3000);
 const restored = await window_();
 console.log(`window ${stored} -> ${changed} -> ${restored} after clicking the scene view`);
 console.log("the scene view put it back:", restored === stored);
+
+// the delete button takes the scene view away
+await page.locator("[data-name^='sceneView:'] [data-name='delete']").first().click();
+await page.waitForTimeout(1500);
+console.log("deleted: scene views left:", await value(`str(${logic}.GetNumberOfSceneViews())`),
+  "listed:", await page.locator("[data-name^='sceneView:']").count());
 
 if (shot) await page.screenshot({ path: shot });
 await browser.close();

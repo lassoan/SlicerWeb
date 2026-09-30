@@ -76,14 +76,14 @@ check("file-saved is sent", await page.evaluate(() => window.savedEvents), (p) =
 // a node's Save to file
 await page.evaluate(() => { window.handled = []; });
 before = downloads.length;
-const row = page.locator("[data-name=shItem]", { hasText: "MRHead" }).first();
+const row = page.locator("[data-name=shItem]", { hasText: "MR-head" }).first();
 await row.hover();
 await row.locator("button[title^='More for']").click();
 await page.getByRole("menuitem", { name: "Save to file" }).click();
 await page.waitForFunction(() => window.handled.length > 0, null, { timeout: 60000 }).catch(() => null);
 await page.waitForTimeout(1000);
 handled = await page.evaluate(() => window.handled);
-check("a node's Save to file goes to the handler", handled[0]?.path, "/data/save/MRHead.nrrd");
+check("a node's Save to file goes to the handler", handled[0]?.path, "/data/save/MR-head.nrrd");
 check("and nothing is downloaded", downloads.length - before, 0);
 
 // Scene Views: Save picture, and a scene view kept in the scene

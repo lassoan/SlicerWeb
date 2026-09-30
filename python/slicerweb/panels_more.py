@@ -139,22 +139,28 @@ def terminologyCategories(terminologyName, search=""):
 
 
 # ----------------------------------------------------------------------------------- Scene views
+def _sceneViewsLogic():
+    """Slicer's scene views: kept in a sequence browser, as the Scene Views module keeps them (a
+    scene that holds scene views of the old kind, vtkMRMLSceneViewNode, is converted to these as it
+    is read)."""
+    return slicer.app.applicationLogic().GetModuleLogic("SceneViews")
+
+
 @method()
 def sceneViews():
-    """Scene views of the scene (Scene Views module)."""
+    """Scene views of the scene (Scene Views module). A view's id is its index."""
+    logic = _sceneViewsLogic()
     result = []
-    for i in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLSceneViewNode")):
-        node = slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLSceneViewNode")
-        result.append({"id": node.GetID(), "name": node.GetName(),
-                       "description": node.GetSceneViewDescription() or "",
-                       "screenshotType": node.GetScreenShotType(),
-                       "thumbnail": _screenshot_data_url(node)})
+    for i in range(logic.GetNumberOfSceneViews() if logic else 0):
+        result.append({"id": str(i), "name": logic.GetNthSceneViewName(i),
+                       "description": logic.GetNthSceneViewDescription(i) or "",
+                       "screenshotType": logic.GetNthSceneViewScreenshotType(i),
+                       "thumbnail": _screenshot_data_url(logic.GetNthSceneViewScreenshot(i))})
     return result
 
 
-def _screenshot_data_url(node):
+def _screenshot_data_url(image):
     """The picture a scene view was stored with, as a data URL the page can show."""
-    image = node.GetScreenShot()
     if image is None or image.GetNumberOfPoints() == 0:
         return None
     import base64
@@ -176,15 +182,11 @@ def createSceneView(name=None, description="", screenshot=None):
     :param screenshot: a PNG of the views at that moment, base64 encoded, kept with the scene view
         and shown as its thumbnail. The page takes it: only the page can read a canvas.
     """
-    node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSceneViewNode", name or "Scene view")
-    node.SetSceneViewDescription(description or "")
-    if screenshot:
-        image = _image_from_png(screenshot)
-        if image is not None:
-            node.SetScreenShot(image)
-            node.SetScreenShotType(0)   # what the layout looked like
-    node.StoreScene()
-    return node.GetID()
+    logic = _sceneViewsLogic()
+    image = _image_from_png(screenshot) if screenshot else None
+    # the page captures the whole layout
+    logic.CreateSceneView(name or "Scene view", description or "", logic.ScreenShotTypeFullLayout, image)
+    return str(logic.GetNumberOfSceneViews() - 1)
 
 
 def _image_from_png(encoded):
@@ -209,10 +211,15 @@ def _image_from_png(encoded):
 
 
 @method()
-def restoreSceneView(nodeID):
-    """Put the scene back as a scene view holds it."""
-    _node(nodeID).RestoreScene()
-    return True
+def restoreSceneView(index):
+    """Put the scene back as a scene view holds it (*index* as sceneViews gives it)."""
+    return bool(_sceneViewsLogic().RestoreSceneView(int(index)))
+
+
+@method()
+def removeSceneView(index):
+    """Delete a scene view (*index* as sceneViews gives it)."""
+    return bool(_sceneViewsLogic().RemoveSceneView(int(index)))
 
 
 # ---------------------------------------------------------------------------------------- Tables

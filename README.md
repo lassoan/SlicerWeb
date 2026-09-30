@@ -72,7 +72,9 @@ python build.py 50-slicer 60-wheels   # or just the stages that matter after a c
 
 What differs from one computer to another - where the wheels are copied (`SW_DIST`, by default
 `~/SlicerWeb-build/dist`), the extension folder - goes in `local.env`, which is not committed (see
-`local.env.example`); an environment variable of the same name overrides it.
+`local.env.example`); an environment variable of the same name overrides it. This repository holds
+no secrets: a build with private extensions takes its token from the folder of that deployment
+(`--deployment`, see [docs/extensions.md](docs/extensions.md)).
 
 The stages are in `scripts/stages/`: the sources and patches (`00`), VTK's compile tools for the
 host (`10`) and VTK itself (`20`), ITK (`30`), teem, libarchive and the rest (`40`),

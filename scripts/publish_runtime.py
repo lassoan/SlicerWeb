@@ -5,6 +5,13 @@
     python scripts/publish_runtime.py
     python scripts/publish_runtime.py --publish       # also start the workflow that rebuilds the site
     python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --publish
+    python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --channel stable --publish
+    python scripts/publish_runtime.py --deployment ../SlicerHeartWebViewer-deploy --channel latest --publish
+
+A deployment repository can publish several channels - latest, stable, 1.0.0, ... - each to a
+branch of its own, deploy/<channel>, from a runtime release of its own, runtime-<channel>, so that a
+version keeps the build it was published with (docs/extensions.md). --channel uploads to that
+release and, with --publish, runs the repository's workflow for that channel.
 
 The wheels take hours to compile and no GitHub runner could build them, so they are built here and
 uploaded: the workflow only builds the web application around them. They are not committed,
@@ -15,7 +22,9 @@ Needs the GitHub CLI, signed in with a token that may write to the repository (g
 
 A build with extensions of another folder (build.py --extensions-dir), private ones among them,
 goes to a release of a private repository of its own, whose "Publish app" workflow calls this
-repository's (docs/extensions.md). It is not uploaded to a public repository: extensions that
+repository's (docs/extensions.md). With --deployment, a checkout of that repository, the dist folder
+and the repository are those of the deployment (its local.env, else the dist folder build.py
+--deployment used, and the repository it is a checkout of). It is not uploaded to a public repository: extensions that
 extensions/ of this repository does not have would be published with it.
 """
 import argparse
@@ -29,6 +38,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import localsettings  # noqa: E402
 from localsettings import ROOT, setting  # noqa: E402
 
 
@@ -46,14 +56,26 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
-    parser.add_argument("--dist", default=setting("SW_DIST", os.path.join(os.path.expanduser("~"), "SlicerWeb-build", "dist")),
-                        help="where the build copied the wheels and extensions (SW_DIST)")
-    parser.add_argument("--repository", default=setting("SW_RUNTIME_REPOSITORY", "lassoan/SlicerWeb"),
-                        help="the repository whose release receives them")
-    parser.add_argument("--tag", default="runtime", help="the release")
+    parser.add_argument("--deployment", default=None, help="a deployment folder, a checkout of the repository to publish (see above)")
+    parser.add_argument("--dist", default=None, help="where the build copied the wheels and extensions (SW_DIST)")
+    parser.add_argument("--repository", default=None, help="the repository whose release receives them (SW_RUNTIME_REPOSITORY)")
+    parser.add_argument("--tag", default=None, help="the release (default: runtime, or runtime-<channel>)")
+    parser.add_argument("--channel", default=None,
+                        help="a deployment channel (latest, stable, 1.0.0, ...): release runtime-<channel>, published to branch deploy/<channel>")
     parser.add_argument("--publish", action="store_true", help="then start the workflow that rebuilds the site")
     parser.add_argument("--dry-run", action="store_true", help="check and package, but upload nothing")
     args = parser.parse_args()
+    if args.deployment:
+        localsettings.use_deployment(args.deployment)
+        args.repository = args.repository or setting("SW_RUNTIME_REPOSITORY") or localsettings.deployment_repository()
+        if not args.repository:
+            parser.error("the deployment folder is not a checkout of a GitHub repository: give --repository")
+    args.dist = args.dist or localsettings.default_dist()
+    args.repository = args.repository or setting("SW_RUNTIME_REPOSITORY", "lassoan/SlicerWeb")
+    if args.channel and not all(c.isalnum() or c in "._-" for c in args.channel):
+        parser.error(f"a channel is a name like latest, stable or 1.0.0, not {args.channel!r}")
+    if args.tag is None:
+        args.tag = f"runtime-{args.channel}" if args.channel else "runtime"
 
     for name in ("wheels", "extensions"):
         if not os.path.isdir(os.path.join(args.dist, name)):
@@ -104,7 +126,8 @@ def main():
         shutil.rmtree(staging, ignore_errors=True)
 
     if args.publish:
-        if not gh("workflow", "run", "publish-app.yml", "--repo", args.repository):
+        inputs = ["-f", f"channel={args.channel}"] if args.channel else []
+        if not gh("workflow", "run", "publish-app.yml", "--repo", args.repository, *inputs):
             sys.exit("The workflow could not be started")
         print(f"Publishing: gh run watch --repo {args.repository}")
     else:

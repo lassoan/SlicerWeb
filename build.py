@@ -3,6 +3,7 @@
 
     python build.py 00-sources 10-vtk-compiletools 20-vtk
     python build.py all
+    python build.py --deployment ../SlicerHeartWebViewer-deploy 60-wheels 80-extensions
     python build.py --extensions-dir ../SlicerWebExtensions 80-extensions
     python build.py --extensions SlicerHeart 80-extensions      # only rebuild some of them
     python build.py shell
@@ -12,8 +13,13 @@ Needs Docker and Python 3.8 or later. The stages themselves run in the container
 wheels and web bundles are copied to (--dist, or SW_DIST in local.env or the environment), and the
 extension folder (--extensions-dir, or SW_EXTENSIONS_DIR) mounted.
 
+A deployment (--deployment, docs/extensions.md) is a checkout of a repository of its own: its
+extensions/ is the extension folder, its local.env has its settings (SW_DIST, by default
+~/SlicerWeb-build/dist-<name of the folder>), and its .secrets/ its secrets.
+
 A GitHub token for private repositories is taken from the SW_GIT_TOKEN environment variable, or
-from the file .secrets/github-token; without one, only public repositories can be fetched. It is
+from the file .secrets/github-token of the deployment - this repository holds no secrets; without
+one, only public repositories can be fetched. It is
 passed by name, so that its value is not on the command line. Everything the build runs can read
 it - the extensions' own code included - so the token to use is a fine-grained one that can only
 read the repositories it is needed for.
@@ -24,6 +30,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
+import localsettings  # noqa: E402
 from localsettings import ROOT, secret, setting  # noqa: E402
 
 IMAGE = "slicerweb-toolchain:emsdk5.0.3"
@@ -37,15 +44,21 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
     parser.add_argument("stages", nargs="*", default=["all"], help="stages to run (default: all), or shell")
-    parser.add_argument("--extensions-dir", default=setting("SW_EXTENSIONS_DIR"),
+    parser.add_argument("--deployment", default=None,
+                        help="a deployment folder: its extensions/, local.env and .secrets/ (see above)")
+    parser.add_argument("--extensions-dir", default=None,
                         help="folder of extension description files for 80-extensions (default: extensions/ of this repository); "
                              "the build then has those extensions only - the others are removed from it and from --dist, so "
                              "give a build of another folder a --dist of its own")
     parser.add_argument("--extensions", default=os.environ.get("SW_EXTENSIONS", ""),
                         help="names of the extensions to build this time, separated by spaces (default: all)")
-    parser.add_argument("--dist", default=setting("SW_DIST", os.path.join(os.path.expanduser("~"), "SlicerWeb-build", "dist")),
-                        help="where the wheels and web bundles are copied")
+    parser.add_argument("--dist", default=None, help="where the wheels and web bundles are copied (SW_DIST)")
     args = parser.parse_args()
+    if args.deployment:
+        deployment = localsettings.use_deployment(args.deployment)
+        args.extensions_dir = args.extensions_dir or os.path.join(deployment, "extensions")
+    args.extensions_dir = args.extensions_dir or setting("SW_EXTENSIONS_DIR")
+    args.dist = args.dist or localsettings.default_dist()
 
     dist = os.path.abspath(args.dist)
     os.makedirs(dist, exist_ok=True)

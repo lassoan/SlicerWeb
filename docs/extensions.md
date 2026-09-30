@@ -97,7 +97,8 @@ fetched source; they are for the libraries SlicerWeb builds itself (Slicer, VTK,
 ### Sources
 
 The build fetches private repositories with a GitHub token: the environment variable `SW_GIT_TOKEN`,
-or the file `.secrets/github-token` (git-ignored). Git and pip get it from a credential helper, so it is not
+or the file `.secrets/github-token` of the deployment folder (`build.py --deployment`, below). This
+repository holds no secrets. Git and pip get it from a credential helper, so it is not
 part of any URL or log. SSH URLs of GitHub (`git@github.com:org/repo.git`) are fetched over HTTPS
 with it.
 
@@ -111,13 +112,20 @@ scripts of the Python packages. Use a
 A build with private extensions must not go to the public `runtime` release of this repository;
 `publish_runtime.py` refuses to upload extensions to a public repository unless they are in
 `extensions/` here. It goes to a private repository of its own, for example `myorg/slicerweb-deploy`,
-which also works well as the extension folder:
+and a checkout of it next to this one is the deployment folder the scripts take (`--deployment`):
 
 ```
 slicerweb-deploy/
-├── extensions/*.json                  the description files (build.py --extensions-dir .../slicerweb-deploy/extensions)
-└── .github/workflows/publish-app.yml  builds and publishes the site
+├── extensions/*.json                  the description files
+├── .github/workflows/publish-app.yml  builds and publishes the site
+├── .gitignore                         /.secrets/ and /local.env
+├── .secrets/github-token              read access to the private repositories (not committed)
+└── local.env                          SW_DIST=... of this computer (optional, not committed)
 ```
+
+Its build goes to a dist folder of its own - `SW_DIST` of its `local.env`, by default
+`~/SlicerWeb-build/dist-<name of the folder>` - since a build of an extension folder has only those
+extensions.
 
 The workflow calls the one of this repository, which takes the runtime from the deployment
 repository's `runtime` release and pushes the site - one commit, no history - to its `gh-pages`
@@ -142,9 +150,17 @@ jobs:
 Build and publish:
 
 ```sh
-python build.py --extensions-dir ../slicerweb-deploy/extensions 60-wheels 80-extensions
-python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --publish
+python build.py --deployment ../slicerweb-deploy 60-wheels 80-extensions
+python scripts/publish_runtime.py --deployment ../slicerweb-deploy --publish     # to the repository it is a checkout of
 ```
+
+**Channels.** A deployment can publish several versions side by side - `latest`, `stable`, `1.0.0` - each
+to a branch of its own, `deploy/<channel>`, from a runtime release of its own, `runtime-<channel>`, so
+that a version keeps the build it was published with. The workflow then takes the channel as an
+input (`appBranch: deploy/${{ inputs.channel }}`, `runtime: runtime-${{ inputs.channel }}`), and
+`publish_runtime.py --channel stable --publish` uploads to that release and runs it for that channel.
+[JolleyLab/SlicerHeartWebViewer-deploy](https://github.com/JolleyLab/SlicerHeartWebViewer-deploy) is
+set up this way (private).
 
 Other inputs: `appRepository` may be another private repository (give the workflow a deploy key as
 the secret `SLICERWEB_APP_KEY`, or a token as `SLICERWEB_APP_TOKEN`); `runtimeRepository` and
@@ -156,4 +172,4 @@ private repository is public unless the organization is on GitHub Enterprise Clo
 be restricted to the organization's members. Without Enterprise Cloud, do not turn on Pages for
 the branch. Serve it from a host that checks who is asking instead, for example Cloudflare Pages or
 a Cloudflare tunnel behind Cloudflare Access, as `scripts/publish_test_site.py` does for the test
-site.
+site (its settings and API token in a folder of their own, `--deployment`).

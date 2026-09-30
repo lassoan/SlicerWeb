@@ -2,9 +2,10 @@
 """Publish a local build of SlicerWeb as a test site through a Cloudflare tunnel, restricted by
 Cloudflare Access to the email addresses of one domain.
 
-    python scripts/publish_test_site.py
+    python scripts/publish_test_site.py --deployment ../SlicerWeb-test-site
 
-What it needs, in local.env (or the environment):
+What it needs, in local.env of that folder (or the environment) - a folder of its own, outside this
+repository, which holds no secrets:
 
     TEST_SITE_HOSTNAME=slicerweb.example.org     the hostname of the tunnel
     TEST_SITE_EMAIL_DOMAIN=example.org           who may sign in
@@ -14,7 +15,7 @@ What it needs, in local.env (or the environment):
     TEST_SITE_LOCAL_URL=http://localhost:4173/   where the site is served here (default)
 
 and an API token with the "Access: Apps and Policies - Edit" account permission, in the file
-.secrets/cloudflare-api-token (git-ignored) or in CLOUDFLARE_API_TOKEN. The tunnel and its DNS
+.secrets/cloudflare-api-token of that folder or in CLOUDFLARE_API_TOKEN. The tunnel and its DNS
 record are made once with cloudflared. The site is served here with: cd web; npx vite preview --port 4173
 
 The tunnel is started only after Access protection of the hostname has been verified.
@@ -29,6 +30,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import localsettings  # noqa: E402
 from localsettings import secret, setting  # noqa: E402
 
 
@@ -67,7 +69,10 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
-    parser.parse_args()
+    parser.add_argument("--deployment", default=None, help="the folder of the settings and secrets of the test site (see above)")
+    args = parser.parse_args()
+    if args.deployment:
+        localsettings.use_deployment(args.deployment, extensions=False)
     missing = [name for name in ("TEST_SITE_HOSTNAME", "TEST_SITE_EMAIL_DOMAIN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARED_CONFIG")
                if not setting(name)]
     if missing:
@@ -75,7 +80,7 @@ def main():
     hostname, emailDomain = setting("TEST_SITE_HOSTNAME"), setting("TEST_SITE_EMAIL_DOMAIN")
     token = secret("CLOUDFLARE_API_TOKEN", "cloudflare-api-token")
     if not token:
-        sys.exit("Save the API token (Access: Apps and Policies - Edit) in .secrets/cloudflare-api-token")
+        sys.exit("Save the API token (Access: Apps and Policies - Edit) in .secrets/cloudflare-api-token of the --deployment folder")
     apps = f"https://api.cloudflare.com/client/v4/accounts/{setting('CLOUDFLARE_ACCOUNT_ID')}/access/apps"
 
     app = {

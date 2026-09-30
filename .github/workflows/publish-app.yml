@@ -80,8 +80,10 @@ on:
         type: boolean
         default: true
 
+# A newer build of a site replaces one still being published to the same place; builds of other
+# places - another channel of a deployment (deploy/latest, deploy/stable) - go on side by side.
 concurrency:
-  group: publish-app
+  group: publish-app-${{ inputs.appRepository || 'lassoan/slicerweb-app' }}-${{ inputs.appBranch || 'main' }}
   cancel-in-progress: true
 
 env:

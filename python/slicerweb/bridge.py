@@ -1139,9 +1139,33 @@ def setActivePlaceNode(nodeID):
 # --------------------------------------------------------------------------- data
 @method()
 def loadFiles(fileNames, properties=None):
+    """Load files the user chose or dropped. Errors and warnings of the loading are shown to the
+    user, as the Add data dialog of desktop Slicer does."""
     import slicer
 
-    return slicer.app.coreIOManager().loadFiles(fileNames, properties or {})
+    messages = slicer.vtkMRMLMessageCollection()
+    loadedIDs = slicer.app.coreIOManager().loadFiles(fileNames, properties or {}, messages)
+    _showUserMessages(messages, "Loading failed" if not loadedIDs else "Loading completed with problems")
+    return loadedIDs
+
+
+def _showUserMessages(messages, title):
+    """Show errors and warnings of a message collection to the user (nothing if there are none)."""
+    import logging
+
+    import vtk
+
+    import slicer
+
+    errors = messages.GetNumberOfMessagesOfType(vtk.vtkCommand.ErrorEvent)
+    warnings = messages.GetNumberOfMessagesOfType(vtk.vtkCommand.WarningEvent)
+    if not errors and not warnings:
+        return
+    text = messages.GetAllMessagesAsString()
+    logging.getLogger("slicerweb.io").log(logging.ERROR if errors else logging.WARNING, "%s:\n%s", title, text)
+    # (not slicer.util.errorDisplay: without a main window it only logs)
+    slicer.util.messageBox(title, detailedText=text,
+                           windowTitle=slicer.app.applicationName + (" error" if errors else " warning"))
 
 
 @method()

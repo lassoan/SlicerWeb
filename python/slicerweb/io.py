@@ -205,10 +205,12 @@ class IOManager:
     def loadFile(self, fileName, userMessages=None):
         return self.loadNodes(self.fileType(fileName), {"fileName": str(fileName)}, None, userMessages)
 
-    def loadFiles(self, fileNames, properties=None):
+    def loadFiles(self, fileNames, properties=None, userMessages=None):
         """Load files selected in the web page (fileType is determined from the extension).
 
         DICOM files (.dcm) given together are loaded as one series. Returns loaded node IDs.
+        What the user should know about the loading - a file that nothing reads, what a reader
+        reports - is added to *userMessages*.
         """
         properties = properties or {}
         fileNames = [str(f) for f in fileNames]
@@ -218,15 +220,15 @@ class IOManager:
         if dicom:
             nodes = vtk.vtkCollection()
             props = dict(properties, fileName=dicom[0], fileNames=dicom, singleFile=False)
-            self.loadNodes("VolumeFile", props, nodes)
+            self.loadNodes("VolumeFile", props, nodes, userMessages)
             loadedIDs += [nodes.GetItemAsObject(i).GetID() for i in range(nodes.GetNumberOfItems())]
         for fileName in others:
             fileType = self.fileType(fileName)
             if fileType == "NoFile":
-                logger.warning("Nothing reads %s", fileName)
+                self._addMessage(userMessages, f"No reader is available for {os.path.basename(fileName)}.")
                 continue
             nodes = vtk.vtkCollection()
-            self.loadNodes(fileType, dict(properties, fileName=fileName), nodes)
+            self.loadNodes(fileType, dict(properties, fileName=fileName), nodes, userMessages)
             loadedIDs += [nodes.GetItemAsObject(i).GetID() for i in range(nodes.GetNumberOfItems())]
         return loadedIDs
 

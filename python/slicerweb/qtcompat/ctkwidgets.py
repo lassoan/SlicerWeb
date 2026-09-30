@@ -597,7 +597,10 @@ class ctkMessageBox(QWidget):
         self._dontShowAgainSettingsKey = key
 
     def exec_(self):
-        message = "\n\n".join(t for t in map(_message_line, (self.windowTitle, self.text, self.informativeText)) if t)
+        # The details, which the desktop shows under "Show Details...", are part of the message here
+        parts = (self.windowTitle, self.text, self.informativeText, self.detailedText)
+        # (stripped: slicer.util.messageBox pads the title with spaces to make the desktop dialog wider)
+        message = "\n\n".join(t for t in (_message_line(part).strip() for part in parts) if t)
         # A box that offers a way out is a question, and the browser has one of those too
         asks = self.standardButtons & (QMessageBox.Cancel | QMessageBox.No)
         if asks:

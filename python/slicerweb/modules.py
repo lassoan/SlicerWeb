@@ -651,7 +651,7 @@ def create_scripted_module_widget(moduleName):
     parent = getattr(module, "_hostWidget", None)
     if parent is not None:
         return module._widget
-    parent = mrmlwidgets.qMRMLWidget()
+    parent = mrmlwidgets.qSlicerAbstractModuleWidget()
     parent.setLayout(widgets.QVBoxLayout())
     parent.setMRMLScene(slicer.mrmlScene)
     parent.setObjectName(moduleName + "WidgetParent")
@@ -702,8 +702,8 @@ def show_scripted_module_widget(moduleName, containerSelector):
     # Selected from Python (select_module), the module has already been entered
     if getattr(module, "_enteredBeforeShown", False):
         module._enteredBeforeShown = False
-    elif hasattr(module._widget, "enter"):
-        module._widget.enter()
+    else:
+        _enter_module_widget(module)
     # what went wrong in setup(), for the page to show above the GUI
     setupError = getattr(module, "_setupError", None)
     return {"setupError": setupError} if setupError else True
@@ -732,10 +732,9 @@ def select_module(moduleName):
     if module is None:
         raise RuntimeError(f"Module {moduleName} is not loaded")
     if module.kind == "scripted" and _selectedModule[0] != moduleName:
-        widget = create_scripted_module_widget(moduleName)
-        if hasattr(widget, "enter"):
-            widget.enter()
-            module._enteredBeforeShown = True
+        create_scripted_module_widget(moduleName)
+        _enter_module_widget(module)
+        module._enteredBeforeShown = True
     _set_selected_module(moduleName)
     host.emit("select-module", {"name": moduleName})
 
@@ -878,6 +877,28 @@ def _release_module_widget(widget, parent=None):
         parent._destroy()
 
 
+def _enter_module_widget(module):
+    """Enter the GUI of a scripted module, as the desktop does: the isEntered of its Qt widget (the
+    parent it was made with) is true from before its enter() runs."""
+    host = getattr(module, "_hostWidget", None)
+    if host is None or host._entered:
+        return
+    host._entered = True
+    if hasattr(module._widget, "enter"):
+        module._widget.enter()
+
+
+def _exit_module_widget(module):
+    """Exit the GUI of a scripted module that is entered: isEntered is false from before its exit()
+    runs, and a module that is not entered is not exited (again)."""
+    host = getattr(module, "_hostWidget", None)
+    if host is None or not host._entered:
+        return
+    host._entered = False
+    if hasattr(module._widget, "exit"):
+        module._widget.exit()
+
+
 def hide_scripted_module_widget(moduleName):
     import slicer
 
@@ -885,8 +906,7 @@ def hide_scripted_module_widget(moduleName):
     parent = getattr(module, "_hostWidget", None) if module else None
     if parent is None:
         return False
-    if hasattr(module._widget, "exit"):
-        module._widget.exit()
+    _exit_module_widget(module)
     try:
         parent.element().remove()
     except Exception:

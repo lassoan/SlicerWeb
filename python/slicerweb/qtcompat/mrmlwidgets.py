@@ -1392,7 +1392,24 @@ class qMRMLTableView(QWidget):
         pass
 
 
-class qSlicerModuleWidget(qMRMLWidget):
+class qSlicerAbstractModuleWidget(qSlicerWidget):
+    """The Qt widget of a module's GUI: the parent a scripted module widget is made with.
+
+    isEntered says whether the module is the one shown, as on the desktop: true from just before the
+    module's enter() runs until just before its exit() does (slicerweb.modules sets it). Module code
+    asks it of self.parent, to do something only while the module is shown.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._entered = False
+
+    @property
+    def isEntered(self):
+        return self._entered
+
+
+class qSlicerModuleWidget(qSlicerAbstractModuleWidget):
     pass
 
 

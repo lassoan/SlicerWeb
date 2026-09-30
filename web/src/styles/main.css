@@ -124,6 +124,20 @@ canvas.sw-view-canvas {
   }
 }
 
+/* A push button of a Python module GUI takes the width its layout gives it, as a QPushButton does
+   (its size policy lets it grow): the whole row in a vertical layout, a form row or a grid cell -
+   an Apply button across the panel - and its own width in a horizontal row, where the element is
+   as wide as its content. */
+.sw-push-button {
+  display: flex;
+  min-width: 0;
+}
+
+.sw-push-button > .sw-button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* A download that a widget is waiting for: the bar fills under whatever asked for the file
    (see slicerweb/qtcompat/core.py, which sets data-progress while the page fetches it). */
 [data-progress] {

@@ -41,7 +41,8 @@ def provided():
     """The names of the qt and ctk modules and the slicer widget classes, as qtcompat/__init__.py
     assembles them: Q* of core, types and widgets (and a few set there), ctk* of ctkwidgets, and
     qMRML*/qSlicer* of mrmlwidgets."""
-    qt = {"Qt", "Signal", "Slot", "QUiLoader", "QT_VERSION", "QT_VERSION_STR"}
+    # (Line: Qt Designer's line, which the .ui loader makes a QFrame)
+    qt = {"Qt", "Signal", "Slot", "QUiLoader", "QT_VERSION", "QT_VERSION_STR", "Line"}
     for module in ("core", "types", "widgets"):
         qt |= {n for n in top_level_names(os.path.join(QTCOMPAT, module + ".py")) if n.startswith("Q")}
     ctk = {n for n in top_level_names(os.path.join(QTCOMPAT, "ctkwidgets.py")) if n.startswith("ctk")}

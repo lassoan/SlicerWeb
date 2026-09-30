@@ -504,6 +504,13 @@ class QGridLayout(QLayout):
     def addWidget(self, widget, row=0, column=0, rowSpan=1, columnSpan=1, *args):
         self._place(widget, row, column, rowSpan, columnSpan)
 
+    # the spacing between cells is the page's (as setSpacing of any layout)
+    def setHorizontalSpacing(self, spacing):
+        pass
+
+    def setVerticalSpacing(self, spacing):
+        pass
+
     def addLayout(self, layout, row=0, column=0, rowSpan=1, columnSpan=1, *args):
         self._place(layout, row, column, rowSpan, columnSpan)
 
@@ -645,6 +652,10 @@ class QAbstractButton(_ElementWidget):
     def toggle(self):
         self.setChecked(not self.checked)
 
+    def group(self):
+        """The QButtonGroup the button is in, or None."""
+        return getattr(self, "_group", None)
+
     def setIcon(self, icon):
         """Show the icon of the button (a module resource file, or a Slicer application icon)."""
         from . import icons
@@ -688,7 +699,8 @@ class QAbstractButton(_ElementWidget):
 
 
 class QPushButton(QAbstractButton):
-    pass
+    # fills the width its layout gives it, as a push button does in Qt (main.css)
+    _classes = "sw-push-button"
 
 
 class QDialogButtonBox(QWidget):
@@ -818,6 +830,10 @@ class QCheckBox(_ElementWidget):
 
     def setTristate(self, v):
         pass
+
+    def group(self):
+        """The QButtonGroup the button is in, or None (QAbstractButton::group)."""
+        return getattr(self, "_group", None)
 
 
 class QRadioButton(QCheckBox):
@@ -2412,12 +2428,19 @@ class QButtonGroup(QObject):
             return
         if id == -1:
             id = -2 - len(self._buttons)
+        # a button is in one group at a time, as in Qt
+        previous = getattr(button, "_group", None)
+        if previous is not None and previous is not self:
+            previous.removeButton(button)
         self._buttons.append((button, id))
+        button._group = self
         button.clicked.connect(lambda checked=False, b=button: self._onClicked(b))
         button.toggled.connect(lambda checked, b=button: self._onToggled(b, checked))
 
     def removeButton(self, button):
         self._buttons = [(b, i) for b, i in self._buttons if b is not button]
+        if getattr(button, "_group", None) is self:
+            button._group = None
 
     def buttons(self):
         return [b for b, _ in self._buttons]
@@ -2441,8 +2464,14 @@ class QButtonGroup(QObject):
     def setExclusive(self, exclusive):
         self._exclusive = bool(exclusive)
 
+    # a property, as PythonQt has it: group.exclusive = False
+    @property
     def exclusive(self):
         return self._exclusive
+
+    @exclusive.setter
+    def exclusive(self, exclusive):
+        self._exclusive = bool(exclusive)
 
     def _onClicked(self, button):
         self.buttonClicked.emit(button)

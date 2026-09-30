@@ -87,8 +87,42 @@ class QUiLoader:
         if widget_el is None:
             return None
         widget = self._create_widget(widget_el, parentWidget)
+        self._buttonGroups(root, widget)
         self._connect(root, widget)
         return widget
+
+    def _buttonGroups(self, root, widget):
+        """The button groups of the .ui file, as Qt's loader makes them: a QButtonGroup for each of
+        <buttongroups>, a child of the top widget named as there (ui.<name>), holding the buttons whose
+        "buttonGroup" attribute names it, in the order of the file. A group a button names that is not
+        declared is made all the same, as Qt does. Module code asks a radio button for its group()."""
+        from .widgets import QButtonGroup
+
+        groups = {}
+
+        def group(name):
+            if name not in groups:
+                groups[name] = QButtonGroup(widget)
+                groups[name].setObjectName(name)
+            return groups[name]
+
+        for element in root.findall("buttongroups/buttongroup"):
+            name = element.get("name")
+            if not name:
+                continue
+            for prop in element.findall("property"):
+                if prop.get("name") == "exclusive" and len(prop):
+                    group(name).setExclusive(_parse_value(prop[0]))
+            group(name)
+        for element in root.iter("widget"):
+            name = next((a.findtext("string", "") for a in element.findall("attribute") if a.get("name") == "buttonGroup"), "")
+            if not name:
+                continue
+            button = next(iter(widget.findChildren(None, element.get("name"))), None)
+            if button is None or not hasattr(button, "toggled"):
+                logger.debug("Button group %s: button %s not found", name, element.get("name"))
+                continue
+            group(name).addButton(button)
 
     def _connect(self, root, widget):
         """The signal-slot connections made in Qt Designer (<connections>), as Qt's loader makes
@@ -123,7 +157,14 @@ class QUiLoader:
 
         class_name = element.get("class", "QWidget")
         cls = _resolve_class(class_name)
-        if cls is None:
+        if class_name == "Line":
+            # Qt Designer's line: a QFrame drawn as a horizontal or a vertical line
+            from .widgets import QFrame
+
+            widget = QFrame(parent)
+            vertical = any(p.get("name") == "orientation" and "Vertical" in (p.findtext("enum") or "") for p in element.findall("property"))
+            widget.setFrameShape(QFrame.VLine if vertical else QFrame.HLine)
+        elif cls is None:
             logger.warning("Widget class %s is not available in the browser; showing a placeholder", class_name)
             widget = QWidget(parent)
             from .widgets import QVBoxLayout
@@ -202,6 +243,10 @@ class QUiLoader:
             cells = rows[row]
             if 0 in cells and 1 in cells:
                 layout.addRow(cells[0][0], cells[1][0])
+            elif 1 in cells:
+                # a field without a label: in the field column, under the fields of the rows above
+                if cells[1][0] != "stretch":
+                    layout.addRow("", cells[1][0])
             else:
                 only = next(iter(cells.values()))[0]
                 if only != "stretch":

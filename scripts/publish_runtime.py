@@ -28,7 +28,7 @@ and the repository are those of the deployment (its local.env, else the dist fol
 extensions/ of this repository does not have would be published with it.
 """
 import argparse
-import datetime
+import base64
 import glob
 import json
 import os
@@ -48,6 +48,39 @@ def gh(*args, capture=False):
     if capture:
         return result.stdout.strip() if result.returncode == 0 else None
     return result.returncode == 0
+
+
+#: the repository the web application is built from by the workflow (its input slicerwebRepository)
+SLICERWEB_REPOSITORY = "lassoan/SlicerWeb"
+
+
+def read_build_info(dist):
+    """wheels/build-info.json of the build (build.py), or None for a build made before it was written."""
+    path = os.path.join(dist, "wheels", "build-info.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def describe(info):
+    if not info:
+        return "Build of unknown date and commit (no wheels/build-info.json: rebuild with build.py)."
+    def version(v):
+        return f"{v['commit'][:7]}{' with uncommitted changes' if v.get('modified') else ''}" if v and v.get("commit") else "?"
+    text = f"Built {info.get('date', '?')} from SlicerWeb {version(info.get('slicerweb'))}"
+    if info.get("deployment"):
+        text += f" and {info['deployment'].get('name', 'the deployment')} {version(info['deployment'])}"
+    return text + "."
+
+
+def workflow_has_input(repository, name):
+    """Whether the "Publish app" workflow of the repository takes an input of that name."""
+    content = gh("api", f"repos/{repository}/contents/.github/workflows/publish-app.yml", "--jq", ".content", capture=True)
+    if not content:
+        return False
+    text = base64.b64decode(content).decode("utf-8", "replace")
+    return f"\n      {name}:" in text and "workflow_dispatch" in text
 
 
 def main():
@@ -93,6 +126,20 @@ def main():
             sys.exit(f"{args.repository} is public, and the build has extensions that extensions/ of SlicerWeb has not: "
                      f"{', '.join(others)}. Upload it to a private repository (--repository).")
 
+    # What the build is made of (build.py writes it), and the web application built around it: of the
+    # same commit of SlicerWeb, where the workflow can be told which (an input slicerwebRef)
+    info = read_build_info(args.dist)
+    print(describe(info))
+    slicerwebRef = None
+    if args.publish and info and info.get("slicerweb") and workflow_has_input(args.repository, "slicerwebRef"):
+        slicerwebRef = info["slicerweb"]["commit"]
+        if gh("api", f"repos/{SLICERWEB_REPOSITORY}/commits/{slicerwebRef}", "--silent", capture=True) is None:
+            sys.exit(f"The build is of SlicerWeb {slicerwebRef[:7]}, which is not in {SLICERWEB_REPOSITORY}: push it first, "
+                     "so that the web application is built from the same commit")
+        if info["slicerweb"].get("modified"):
+            print(f"Warning: the build was made with changes of SlicerWeb that are not committed; the web application is "
+                  f"built from {slicerwebRef[:7]} without them")
+
     staging = tempfile.mkdtemp(prefix="slicerweb-runtime-")
     try:
         assets = []
@@ -107,10 +154,8 @@ def main():
 
         # The release is a place to keep files, not an announcement: it is a prerelease, and its notes
         # say which build the files came from.
-        commit = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
         notes = ("WebAssembly runtime of SlicerWeb: the wheels the application is built on (VTK, ITK, the Slicer libraries and "
-                 "modules) and the extension wheels.\n\n"
-                 f"Built {datetime.datetime.now():%Y-%m-%d %H:%M} from {commit}.")
+                 "modules) and the extension wheels.\n\n" + describe(info))
         if gh("release", "view", args.tag, "--repo", args.repository, capture=True) is not None:
             print(f"Updating release {args.tag}")
             ok = gh("release", "edit", args.tag, "--repo", args.repository, "--notes", notes)
@@ -127,6 +172,8 @@ def main():
 
     if args.publish:
         inputs = ["-f", f"channel={args.channel}"] if args.channel else []
+        if slicerwebRef:
+            inputs += ["-f", f"slicerwebRef={slicerwebRef}"]
         if not gh("workflow", "run", "publish-app.yml", "--repo", args.repository, *inputs):
             sys.exit("The workflow could not be started")
         print(f"Publishing: gh run watch --repo {args.repository}")

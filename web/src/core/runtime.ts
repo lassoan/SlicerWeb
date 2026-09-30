@@ -40,6 +40,20 @@ interface WheelIndex {
   packages: { name: string; version: string; file: string }[];
 }
 
+/** A commit of a checkout, and whether the build had changes of it that were not committed. */
+export interface GitVersion {
+  commit: string;
+  modified?: boolean;
+}
+
+/** wheels/build-info.json (build.py): when the runtime was built, and from what. */
+export interface BuildInfo {
+  date: string;
+  slicerweb?: GitVersion | null;
+  /** the repository of the deployment, for a build of one (build.py --deployment) */
+  deployment?: GitVersion & { name: string };
+}
+
 /** Base64 of bytes, in pieces: a megabyte of arguments at once overflows the call stack. */
 function toBase64(data: Uint8Array): string {
   const CHUNK = 0x8000;
@@ -511,6 +525,14 @@ bridge.call
     // system like the others; what it loaded is dropped the same way. During the start the wheels
     // are dropped together, once everything is loaded (see start()).
     if (this.started) await this.dropLoadedLibraryFiles();
+  }
+
+  /** What the runtime was built from - wheels/build-info.json, written by build.py - or null for a
+   *  runtime built before it was written. */
+  async buildInfo(): Promise<BuildInfo | null> {
+    const response = await fetch(this.config.wheelsURL + "build-info.json", { cache: "no-cache" }).catch(() => null);
+    if (!response?.ok) return null;
+    return response.json().catch(() => null);
   }
 
   /** URL of a SlicerWeb wheel by distribution name (e.g. "slicerweb-itk-extra"), from the wheel index. */

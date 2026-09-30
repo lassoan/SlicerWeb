@@ -25,6 +25,8 @@ it - the extensions' own code included - so the token to use is a fine-grained o
 read the repositories it is needed for.
 """
 import argparse
+import datetime
+import json
 import os
 import subprocess
 import sys
@@ -86,7 +88,39 @@ def main():
     if "shell" in args.stages and sys.stdin.isatty():
         command.append("-t")
     command += [IMAGE, "bash", "/work/scripts/build.sh"] + args.stages
-    return subprocess.run(command, env=env).returncode
+    result = subprocess.run(command, env=env).returncode
+    if result == 0 and "shell" not in args.stages:
+        write_build_info(dist)
+    return result
+
+
+def git_version(folder):
+    """{commit, modified} of a checkout: its commit, and whether files of it differ from that commit."""
+    def git(*args):
+        return subprocess.run(["git", "-C", folder, *args], capture_output=True, text=True).stdout.strip()
+    commit = git("rev-parse", "HEAD")
+    if not commit:
+        return None
+    return {"commit": commit, "modified": bool(git("status", "--porcelain", "--untracked-files=no"))}
+
+
+def write_build_info(dist):
+    """What the build is made of, next to the wheels (wheels/build-info.json): when it was built and
+    from which commits of this repository and of the deployment. It goes wherever the wheels go - the
+    runtime release, the site - and the application shows it at the end of its menu. (The revisions
+    of the extensions are in extensions/index.json.)"""
+    wheels = os.path.join(dist, "wheels")
+    if not os.path.isdir(wheels):
+        return
+    info = {"date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "slicerweb": git_version(ROOT)}
+    deployment = localsettings.deployment()
+    if deployment:
+        info["deployment"] = {"name": localsettings.deployment_repository() or os.path.basename(deployment),
+                              **(git_version(deployment) or {})}
+    with open(os.path.join(wheels, "build-info.json"), "w", encoding="utf-8") as handle:
+        json.dump(info, handle, indent=1)
+    print(f"Build info: {json.dumps(info)}")
 
 
 if __name__ == "__main__":

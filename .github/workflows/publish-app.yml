@@ -72,6 +72,9 @@ on:
       runtime:
         description: Release holding the runtime wheels
         default: runtime
+      slicerwebRef:
+        description: Commit of SlicerWeb whose web application is built (the one the runtime was built from; publish_runtime.py gives it)
+        default: ""
       sampleData:
         description: Copy the sample data into the site
         type: boolean

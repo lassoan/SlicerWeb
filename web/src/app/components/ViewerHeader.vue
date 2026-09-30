@@ -30,6 +30,7 @@ import {
   Square,
 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
+import type { BuildInfo, GitVersion, SlicerRuntime } from "@/core/runtime";
 import { openModule as openModuleInPanel, store } from "../store";
 import { moduleList } from "../modules/list";
 import ToolButton from "./ToolButton.vue";
@@ -40,7 +41,34 @@ import ScrollSlicesIcon from "./icons/ScrollSlicesIcon.vue";
 import LayoutSelector from "./LayoutSelector.vue";
 
 const bridge = inject<SlicerBridge>("bridge")!;
+const runtime = inject<SlicerRuntime>("runtime")!;
 const ready = computed(() => store.status === "ready");
+
+// The version, at the end of the application menu: when the runtime was built and from which commits
+// of SlicerWeb and of the deployment (wheels/build-info.json), and the commit of the application
+// where it is not the one the runtime was built from.
+const buildInfo = ref<BuildInfo | null>(null);
+onMounted(async () => { buildInfo.value = await runtime.buildInfo().catch(() => null); });
+const appVersion = typeof __SLICERWEB_APP_VERSION__ === "string" ? __SLICERWEB_APP_VERSION__ : "";
+const versionLines = computed(() => {
+  const lines: { text: string; title: string }[] = [];
+  const version = (v: GitVersion) => `${v.commit.slice(0, 7)}${v.modified ? " (modified)" : ""}`;
+  const info = buildInfo.value;
+  if (info?.date) {
+    const date = new Date(info.date);
+    lines.push({ text: `Built ${Number.isNaN(date.getTime()) ? info.date : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, title: info.date });
+  }
+  if (info?.deployment?.commit) {
+    lines.push({ text: `${info.deployment.name.split("/").pop()} ${version(info.deployment)}`, title: `${info.deployment.name} ${info.deployment.commit}` });
+  }
+  if (info?.slicerweb?.commit) lines.push({ text: `SlicerWeb ${version(info.slicerweb)}`, title: `SlicerWeb ${info.slicerweb.commit}` });
+  const app = appVersion.replace(/\+$/, "");
+  if (app && app !== info?.slicerweb?.commit) {
+    const modified = appVersion.endsWith("+") ? " (modified)" : "";
+    lines.push({ text: `${info?.slicerweb ? "Application" : "SlicerWeb"} ${app.slice(0, 7)}${modified}`, title: `web application ${app}${modified}` });
+  }
+  return lines;
+});
 const layoutOpen = ref(false);
 const layoutAnchor = useTemplateRef<HTMLElement>("layoutAnchor");
 
@@ -327,6 +355,11 @@ const currentMarkupTool = computed(() =>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.pythonConsoleOpen ? 'text-highlight' : ''" data-name="menu:python"
           @click="store.pythonConsoleOpen = !store.pythonConsoleOpen"><Terminal :size="16" />Python console</button>
+        <!-- What this is: the build of the runtime and the commits it was made from (selectable, to be quoted) -->
+        <div v-if="versionLines.length" class="mt-1 cursor-text select-text border-t border-input px-2 pb-0.5 pt-1.5 text-[11px] leading-snug text-muted-foreground"
+          data-name="menu:version" @click.stop>
+          <div v-for="line in versionLines" :key="line.text" :title="line.title">{{ line.text }}</div>
+        </div>
       </ToolMenu>
       <!-- A phone held upright: the module panel opens from here -->
       <ToolButton v-if="store.panelButtons" label="Module panel" :active="store.rightPanelOpen" data-name="rightPanelButton"

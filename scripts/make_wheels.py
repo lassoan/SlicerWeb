@@ -386,7 +386,58 @@ def extension_metadata(source_dir, install_dir=None):
         with open(built, encoding="utf8") as handle:
             packages = json.load(handle).get("pythonPackages") or []
         meta["pythonPackages"] = list(dict.fromkeys((meta.get("pythonPackages") or []) + packages))
+    # and the packages that come with desktop Slicer that its Python code imports (see bundled_packages_imported)
+    if install_dir:
+        imported = bundled_packages_imported(install_dir)
+        if imported:
+            meta["pythonPackages"] = list(dict.fromkeys((meta.get("pythonPackages") or []) + imported))
     return meta
+
+
+#: Python packages that desktop Slicer comes with (SuperBuild/External_python-*.cmake), which an
+#: extension can import without installing them, by the name they are imported as. Only small
+#: packages are listed: they are installed with the extension, at every start of the application,
+#: whether or not the code that imports them runs. (NumPy is always there; large packages, such as
+#: SciPy, are installed when a module that imports them at the top fails to load - see
+#: SlicerRuntime.loadModulesWithPackages - or when a call raises ModuleNotFoundError.)
+BUNDLED_PACKAGES = {
+    "pydicom": "pydicom",
+    "highdicom": "highdicom",
+    "dicomweb_client": "dicomweb-client",
+    "PIL": "pillow",
+    "dateutil": "python-dateutil",
+    "six": "six",
+    "pyparsing": "pyparsing",
+    "packaging": "packaging",
+    "retrying": "retrying",
+}
+
+
+def bundled_packages_imported(directory):
+    """The packages of BUNDLED_PACKAGES that the Python files under a directory import.
+
+    Imports anywhere in the code count, also those inside functions: a module that imports pydicom
+    only when it reads an image (ImportMimics) needs it as much as one that imports it at the top,
+    and on the desktop it would simply be there.
+    """
+    import re
+
+    pattern = re.compile(r"^\s*(?:import|from)\s+(%s)\b" % "|".join(re.escape(n) for n in BUNDLED_PACKAGES), re.M)
+    found = []
+    for root, _dirs, files in os.walk(directory):
+        for name in files:
+            if not name.endswith(".py"):
+                continue
+            try:
+                with open(os.path.join(root, name), encoding="utf8", errors="replace") as handle:
+                    text = handle.read()
+            except OSError:
+                continue
+            for match in pattern.finditer(text):
+                package = BUNDLED_PACKAGES[match.group(1)]
+                if package not in found:
+                    found.append(package)
+    return sorted(found)
 
 
 def write_extension_wheels(args, slicer_ver):

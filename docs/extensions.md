@@ -60,6 +60,11 @@ in a browser, such as JAX for svMorph), so list every package the extension impo
 An extension can also say this itself, in a `slicerweb-extension.json` of its source
 (`{"pythonPackages": ["scipy"]}`, Pyodide packages only); both lists are used.
 
+Packages that come with desktop Slicer are there for an extension without it saying so, so they
+are added too: the small ones of them that the extension's Python code imports anywhere - also
+inside a function, as ImportMimics imports pydicom only when it reads an image - are listed by
+`scripts/make_wheels.py` (`BUNDLED_PACKAGES`, for example pydicom and Pillow).
+
 ### How an extension is built
 
 Every extension is built as Slicer's extension build builds it, with nothing specific to one

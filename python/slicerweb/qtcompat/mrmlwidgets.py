@@ -1,11 +1,14 @@
 """qMRML* and qSlicer* widgets (installed in the ``slicer`` namespace)."""
 
+import logging
+
 from . import dom
 from .core import property_value
 from .core import QProp, Signal
 from .ctkwidgets import ctkCollapsibleButton, ctkCoordinatesWidget, ctkRangeWidget
 from .widgets import QVBoxLayout, QWidget, _ElementWidget
 
+logger = logging.getLogger("slicerweb.qt")
 
 def _list(v):
     if isinstance(v, str):
@@ -735,6 +738,9 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         self._button = QPushButton("Place", self)
         self._button.setCheckable(True)
         self._button.toggled.connect(self.setPlaceModeEnabled)
+        # a click records the state it clicked the button into after toggled has been handled: the
+        # button is set back to what is true then (pressed only if placing into this node started)
+        self._button.clicked.connect(lambda *args: self._updatePlaceButton())
         layout.addWidget(self._button)
         # Beside Place, as the desktop widget has it: a press removes the point placed last.
         self._deleteButton = QPushButton("Delete", self)
@@ -774,6 +780,45 @@ class qSlicerMarkupsPlaceWidget(QWidget):
             action.text = text
             self._actions[name] = action
             self._moreButton.menu().addAction(action)
+        # The Place button shows whether points are being placed into this widget's node, whatever
+        # started or ended it (the toolbar, another place widget, a placement that is not persistent
+        # ending by itself), as the desktop widget does: it follows the interaction node (the mouse
+        # mode) and the selection node (the node points are placed into).
+        self._lastSignaledPlaceMode = False
+        self._observations = []
+        try:
+            import slicer
+            import vtk
+
+            appLogic = slicer.app.applicationLogic()
+            for node in (appLogic.GetInteractionNode(), appLogic.GetSelectionNode()):
+                if node is not None:
+                    self._observations.append((node, node.AddObserver(vtk.vtkCommand.ModifiedEvent, self._onPlaceStateModified)))
+        except Exception:
+            logger.debug("The place widget cannot follow the place mode", exc_info=True)
+
+    def _onPlaceStateModified(self, caller=None, event=None):
+        self._updatePlaceButton()
+
+    def _updatePlaceButton(self):
+        """The Place button pressed exactly while points are placed into the current node (set without
+        the button's toggled, which would start or end placing), and activeMarkupsPlaceModeChanged
+        when that changes."""
+        enabled = self.placeModeEnabled()
+        if self._button.checked != enabled:
+            type(self._button).checked.set_silently(self._button, enabled)
+            dom.set_prop(self._button._el, "checked", enabled)
+        if enabled != self._lastSignaledPlaceMode:
+            self._lastSignaledPlaceMode = enabled
+            self.activeMarkupsPlaceModeChanged.emit(enabled)
+            self.activeMarkupsFiducialPlaceModeChanged.emit(enabled)
+
+    def _destroy(self):
+        # the interaction and selection nodes outlive the widget: they must not keep calling it
+        for node, tag in self._observations:
+            node.RemoveObserver(tag)
+        self._observations = []
+        super()._destroy()
 
     def colorButton(self):
         return self._colorButton
@@ -818,28 +863,44 @@ class qSlicerMarkupsPlaceWidget(QWidget):
 
     def setCurrentNode(self, node):
         self._node = node
+        self._updatePlaceButton()
 
     def currentNode(self):
         return self._node
 
     def placeModeEnabled(self):
+        """Whether points are being placed into the current node: the mouse mode is Place, and the node
+        points are placed into is this one (qSlicerMarkupsPlaceWidget::placeModeEnabled)."""
         import slicer
 
-        interaction = slicer.app.applicationLogic().GetInteractionNode()
-        return interaction.GetCurrentInteractionMode() == interaction.Place
+        if self._node is None:
+            return False
+        appLogic = slicer.app.applicationLogic()
+        interaction, selection = appLogic.GetInteractionNode(), appLogic.GetSelectionNode()
+        if interaction is None or selection is None:
+            return False
+        return (interaction.GetCurrentInteractionMode() == interaction.Place
+                and selection.GetActivePlaceNodeID() == self._node.GetID())
 
     def setPlaceModeEnabled(self, enabled):
         import slicer
 
         appLogic = slicer.app.applicationLogic()
-        if enabled and self._node is not None:
+        interaction = appLogic.GetInteractionNode()
+        if enabled:
+            if self._node is None:
+                # nothing to place into: the button goes back to what is true
+                self._updatePlaceButton()
+                return
             selection = appLogic.GetSelectionNode()
             selection.SetReferenceActivePlaceNodeClassName(self._node.GetClassName())
             selection.SetActivePlaceNodeID(self._node.GetID())
-        interaction = appLogic.GetInteractionNode()
-        interaction.SetCurrentInteractionMode(interaction.Place if enabled else interaction.ViewTransform)
-        self.activeMarkupsPlaceModeChanged.emit(bool(enabled))
-        self.activeMarkupsFiducialPlaceModeChanged.emit(bool(enabled))
+            interaction.SetCurrentInteractionMode(interaction.Place)
+        elif self.placeModeEnabled():
+            # only placing into this node is ended here, not another widget's
+            interaction.SetCurrentInteractionMode(interaction.ViewTransform)
+        # the button and the signal follow from the nodes (_updatePlaceButton), whatever changed them
+        self._updatePlaceButton()
 
     def setPlaceModePersistency(self, persistent):
         import slicer

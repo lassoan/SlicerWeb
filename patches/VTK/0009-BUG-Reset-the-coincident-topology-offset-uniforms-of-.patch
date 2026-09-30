@@ -1,0 +1,56 @@
+From: SlicerWeb <slicerweb@example.invalid>
+Subject: [PATCH] BUG: Reset the coincident topology offset uniforms of the low memory mapper
+
+The low memory polydata mapper (the one OpenGL ES builds use for every model) applies
+the coincident topology offset in the fragment shader, through the cOffset and cFactor
+uniforms of vtkGLSLModCoincidentTopology. The mod only uploaded them when the offset it
+computed for the primitive at hand was not zero. Shader programs are shared, by source,
+between every primitive type and every mapper, so a triangle draw with a zero polygon
+offset ran with whatever the point or line draw before it had left in the program: the
+default line offset of -4 units, or the point offset of -8. Every surface was therefore
+drawn 4 depth units closer to the camera than it is; the mod's shader term is compiled in
+even for surfaces, because the substitution is decided before the primitive type is set.
+
+Markups control points, drawn by the regular mapper with the intended -1 unit, sank into
+a model's surface wherever 4 units outweigh their radius: zooming in on a point placed on
+a vessel wall made it disappear. The desktop mapper has the same "only when not zero"
+rule, but never compiles the term into a zero-offset shader, so it cannot leak.
+
+Upload the uniforms whenever the program has them, also when they are zero. And take the
+point and line offsets for a surface shown as points or as wireframe, as the regular
+mapper does. This is the vtkGLSLModCoincidentTopology part of VTK commit e3c5c6f8
+(2026-08-24, "Fix coincident topology offsets for the low memory mapper"), which also
+re-enabled TestCoincident for the WebAssembly CI; the wireframe edge shading change of
+that commit is not needed here.
+---diff --git a/Rendering/OpenGL2/vtkGLSLModCoincidentTopology.cxx b/Rendering/OpenGL2/vtkGLSLModCoincidentTopology.cxx
+index 0131b8f477..38cfd6f24c 100644
+--- a/Rendering/OpenGL2/vtkGLSLModCoincidentTopology.cxx
++++ b/Rendering/OpenGL2/vtkGLSLModCoincidentTopology.cxx
+@@ -82,8 +82,10 @@ bool vtkGLSLModCoincidentTopology::SetShaderParameters(vtkOpenGLRenderer* render
+   float factor = 0.0;
+   float offset = 0.0;
+   this->GetCoincidentParameters(renderer, vtkMapper::SafeDownCast(mapper), actor, factor, offset);
+-  if ((factor != 0.0 || offset != 0.0) && program->IsUniformUsed("cOffset") &&
+-    program->IsUniformUsed("cFactor"))
++  // Set the uniforms whenever the program has them, also to zero: the program is shared by every
++  // primitive type and mapper whose shader source is the same, and a triangle draw that skipped
++  // them would keep the offset of the point or line draw before it.
++  if (program->IsUniformUsed("cOffset") && program->IsUniformUsed("cFactor"))
+   {
+     program->SetUniformf("cOffset", offset);
+     program->SetUniformf("cFactor", factor);
+@@ -116,11 +118,12 @@ void vtkGLSLModCoincidentTopology::GetCoincidentParameters(
+   {
+     double f = 0.0;
+     double u = 0.0;
+-    if (this->PrimitiveType == GL_POINTS)
++    if (this->PrimitiveType == GL_POINTS || ppty->GetRepresentation() == VTK_POINTS)
+     {
+       mapper->GetCoincidentTopologyPointOffsetParameter(u);
+     }
+-    else if (this->PrimitiveType == GL_LINES || this->PrimitiveType == GL_LINE_STRIP)
++    else if (this->PrimitiveType == GL_LINES || this->PrimitiveType == GL_LINE_STRIP ||
++      ppty->GetRepresentation() == VTK_WIREFRAME)
+     {
+       mapper->GetCoincidentTopologyLineOffsetParameters(f, u);
+     }

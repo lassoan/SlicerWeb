@@ -184,10 +184,17 @@ async function onDrop(e: DragEvent) {
       } while (batch.length);
     }
   };
+  // The dropped items can only be read while the drop event is handled: their entries (or files, where
+  // an item has no entry) are all taken before the first await - after it, the items of a
+  // multiple-file drop give nothing.
+  const entries: any[] = [];
   for (const item of items) {
     const entry = (item as any).webkitGetAsEntry?.();
-    if (entry) await readEntry(entry);
+    const file = entry ? null : item.getAsFile();
+    if (entry) entries.push(entry);
+    else if (file) files.push(file);
   }
+  for (const entry of entries) await readEntry(entry);
   await loadBrowserFiles(files);
 }
 

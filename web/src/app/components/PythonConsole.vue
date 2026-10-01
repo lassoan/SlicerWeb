@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Python interactor (like Slicer's Python console): the full Slicer Python API is available.
-import { inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store } from "../store";
@@ -171,6 +171,35 @@ function matchParts(name: string): [string, string, string] {
   return [name.slice(0, at), name.slice(at, at + typed.length), name.slice(at + typed.length)];
 }
 
+/** A docstring in blocks to show: the signature lines (a VTK method's "Name(self, ...) -> ..." and
+ *  "C++: ...") as code, the rest as paragraphs (separated by blank lines, the line breaks within
+ *  kept for lists), each a run of text and inline code (``code``, `name`, :py:meth:`name`). */
+interface DocBlock { code: boolean; parts: { text: string; code: boolean }[] }
+const SIGNATURE_LINE = /^(\w+\s*\(|C\+\+:|V\.|virtual |static )/;
+function formatDoc(doc: string): DocBlock[] {
+  const blocks: DocBlock[] = [];
+  const lines = doc.replace(/\s+$/, "").split("\n");
+  let i = 0;
+  const signature: string[] = [];
+  while (i < lines.length && (SIGNATURE_LINE.test(lines[i]) || (signature.length && /^\s+\S/.test(lines[i])))) signature.push(lines[i++]);
+  if (signature.length) blocks.push({ code: true, parts: [{ text: signature.join("\n"), code: true }] });
+  for (const paragraph of lines.slice(i).join("\n").split(/\n\s*\n/)) {
+    const text = paragraph.replace(/^\n+|\s+$/g, "");
+    if (!text) continue;
+    const parts = text.split(/(?:(?::\w+)+:)?(``[^`]+``|`[^`]+`)/).map((part, p) =>
+      p % 2 ? { text: part.replace(/^`+|`+$/g, ""), code: true } : { text: part, code: false }).filter((part) => part.text);
+    blocks.push({ code: false, parts });
+  }
+  return blocks;
+}
+const activeDoc = computed(() => {
+  const doc = suggestions.value[activeSuggestion.value]?.doc;
+  return doc ? formatDoc(doc) : [];
+});
+// the box has room for the docstring as soon as any suggestion has one, so that it keeps its size
+// while going through the list
+const suggestionsHaveDocs = computed(() => suggestions.value.some((s) => s.doc));
+
 onBeforeUnmount(() => window.clearTimeout(completionTimer));
 
 function onKey(e: KeyboardEvent) {
@@ -280,10 +309,11 @@ function startResize(e: PointerEvent) {
     <!-- Completions: a list above the prompt, as a console on the web usually has, so that long
          names can be read (a row of them along the prompt leaves no room for any of it). -->
     <div v-if="suggestions.length" class="relative h-0">
-      <!-- one box above the prompt: the suggestions, and under them the docstring of the one the list is on -->
-      <div class="absolute right-2 bottom-1 left-2 z-30 flex flex-col overflow-hidden rounded-md border border-input bg-popover shadow-xl"
-        :style="{ maxHeight: `${Math.max(120, height - 64)}px` }">
-      <ul ref="suggestionList" class="shrink-0 overflow-y-auto py-1" style="max-height: 11rem"
+      <!-- one box above the prompt, as high as the console has room for: the suggestions on the left,
+           the docstring of the one the list is on at the right (which does not change the box's size) -->
+      <div class="absolute right-2 bottom-1 left-2 z-30 flex overflow-hidden rounded-md border border-input bg-popover shadow-xl"
+        :style="{ maxHeight: `${Math.max(120, height - 64)}px`, minHeight: suggestionsHaveDocs ? `${Math.min(160, Math.max(120, height - 64))}px` : undefined }">
+      <ul ref="suggestionList" class="min-h-0 overflow-y-auto py-1" :class="suggestionsHaveDocs ? 'w-1/2 shrink-0' : 'flex-1'"
         role="listbox" aria-label="Completions">
         <li v-for="(s, i) in suggestions" :key="s.text">
           <button type="button" role="option" :aria-selected="i === activeSuggestion" :data-active="i === activeSuggestion"
@@ -294,13 +324,22 @@ function startResize(e: PointerEvent) {
               v-if="p === 1" class="font-semibold text-highlight" data-name="completionMatch">{{ part }}</span><template v-else>{{ part }}</template></template><span
               v-if="s.callable" class="opacity-60">()</span></span>
             <!-- what it does: the first line of its docstring (the full name when it has none) -->
-            <span class="ml-auto min-w-0 truncate font-sans text-[11px] opacity-70" :title="s.doc ?? s.text"
+            <span class="min-w-0 truncate font-sans text-[11px] opacity-70" :title="s.doc ?? s.text"
               data-name="completionSummary">{{ s.summary ?? s.text }}</span>
           </button>
         </li>
       </ul>
-      <div v-if="suggestions[activeSuggestion]?.doc" data-name="completionDoc"
-        class="max-h-24 min-h-0 shrink overflow-y-auto border-t border-input px-2 py-1.5 font-mono text-[11px] leading-4 whitespace-pre-wrap text-muted-foreground">{{ suggestions[activeSuggestion].doc }}</div>
+      <div v-if="suggestionsHaveDocs" class="relative min-w-0 flex-1 border-l border-input">
+        <div v-if="activeDoc.length" data-name="completionDoc"
+          class="absolute inset-0 space-y-2 overflow-y-auto px-3 py-2 text-[12px] leading-[1.15rem] text-muted-foreground">
+          <template v-for="(block, b) in activeDoc" :key="b">
+            <pre v-if="block.code" class="font-mono text-[11px] whitespace-pre-wrap text-foreground/90">{{ block.parts[0].text }}</pre>
+            <p v-else class="whitespace-pre-wrap"><template v-for="(part, p) in block.parts" :key="p"><code
+              v-if="part.code" class="rounded bg-accent/60 px-1 font-mono text-[11px] text-foreground/90">{{ part.text }}</code><template
+              v-else>{{ part.text }}</template></template></p>
+          </template>
+        </div>
+      </div>
       </div>
     </div>
     <textarea ref="inputEl" v-model="input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"

@@ -100,21 +100,29 @@ const list = page.getByRole("listbox", { name: "Completions" });
 
 // the docstring of the suggestion the list is on, and the summaries in the rows
 const docPanel = page.locator("[data-name=completionDoc]");
+const box = () => page.evaluate(() => {
+  const l = document.querySelector("[role=listbox]").getBoundingClientRect();
+  return { height: l.height, top: l.top };
+});
 const firstDoc = await docPanel.innerText().catch(() => "");
+const firstBox = await box();
 const summaries = await list.locator("[data-name=completionSummary]").allInnerTexts();
 await page.keyboard.press("ArrowDown");
 await page.waitForTimeout(200);
 const secondDoc = await docPanel.innerText().catch(() => "");
-// under the list, above the prompt, and within the console (not over the views above it)
+const secondBox = await box();
+// at the right of the list, above the prompt, within the console (not over the views above it)
 const panelPlaced = await page.evaluate(() => {
   const d = document.querySelector("[data-name=completionDoc]")?.getBoundingClientRect();
   const l = document.querySelector("[role=listbox]")?.getBoundingClientRect();
   const c = document.querySelector("[data-name=pythonConsole]")?.getBoundingClientRect();
   const t = document.querySelector("[data-name=pythonConsole] textarea")?.getBoundingClientRect();
-  return !!d && !!l && !!c && !!t && d.top >= l.bottom - 1 && d.bottom <= t.top + 1 && l.top >= c.top - 1;
+  return !!d && !!l && !!c && !!t && d.left >= l.right - 1 && Math.abs(d.top - l.top) < 2 && d.bottom <= t.top + 1 && l.top >= c.top - 1;
 });
-check("the docstring of the highlighted suggestion shows, under the list, in the console", firstDoc.length > 20 && secondDoc.length > 20 && firstDoc !== secondDoc && panelPlaced,
+check("the docstring of the highlighted suggestion shows, at the right of the list, in the console", firstDoc.length > 20 && secondDoc.length > 20 && firstDoc !== secondDoc && panelPlaced,
   `${JSON.stringify(firstDoc.split("\n").slice(0, 2).join(" | "))} then ${JSON.stringify(secondDoc.split("\n").slice(0, 2).join(" | "))}`);
+check("the list keeps its place and size, and fills the room there is", firstBox.height === secondBox.height && firstBox.top === secondBox.top && firstBox.height >= 7 * 22,
+  `${JSON.stringify(firstBox)} then ${JSON.stringify(secondBox)}`);
 check("the rows show summaries", summaries.filter((s) => s && !s.startsWith("slicer.")).length > summaries.length / 2,
   `${summaries.filter((s) => s && !s.startsWith("slicer.")).length} of ${summaries.length}: ${JSON.stringify(summaries.slice(0, 3))}`);
 const shotPath = process.argv[3];
@@ -137,6 +145,22 @@ const atStart = await active();
 check("Page Down / Page Up page the suggestions", total > shown && afterDown >= 1 && afterTwo === 2 * afterDown && afterUp === afterDown && atEnd === total - 1 && atStart === 0 && visible,
   `${total} suggestions, ${shown} shown: down ${afterDown}, down ${afterTwo}, up ${afterUp}, to the end ${atEnd} (in view: ${visible}), to the start ${atStart}`);
 await page.keyboard.press("Escape");
+
+// the docstring formatted: a VTK method's signature as code, ``code`` and :py:meth:`name` in the text as code
+const codeIn = async (text) => {
+  await input.fill("");
+  await input.pressSequentially(text, { delay: 20 });
+  await page.keyboard.press("Tab");
+  await page.waitForTimeout(800);
+  const found = await page.evaluate(() => [...document.querySelectorAll("[data-name=completionDoc] pre, [data-name=completionDoc] code")]
+    .map((e) => [e.tagName, e.textContent]));
+  await page.keyboard.press("Escape");
+  return found;
+};
+const vtkCode = await codeIn("slicer.mrmlScene.GetNumberOfNodes");
+check("a VTK method's signature as code", vtkCode.some(([tag, t]) => tag === "PRE" && t.startsWith("GetNumberOfNodes(self) -> int") && t.includes("C++:")), JSON.stringify(vtkCode));
+const pyCode = await codeIn("getNod");
+check("code in the text as code", pyCode.some(([, t]) => t === "pattern") && pyCode.some(([, t]) => t === "getFirstNodeByClassByName"), JSON.stringify(pyCode));
 
 // shortcuts, also while typing in the console
 await input.click();

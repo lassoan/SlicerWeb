@@ -8,6 +8,19 @@ packages on top of it. A scene here is a `vtkMRMLScene`, a slice view is drawn b
 displayable managers as on the desktop, and a scripted module's `setup()` runs unchanged. What is
 left behind is Qt: the widgets are Vue components that talk to the same objects.
 
+## Opening data with a link
+
+Add the address of a file to the link, URL-encoded, and the application opens on it:
+
+```
+https://lassoan.github.io/slicerweb-app/?url=https%3A%2F%2Fgithub.com%2Flassoan%2FPublicTestingData%2Freleases%2Fdownload%2Fdata%2FColoredVolumeRenderingScene.mrb
+```
+
+Any file it reads works, a whole `.mrb` scene too, from any server: one that does not allow other
+sites to read its files is reached through the site's download proxy, and a Dropbox share link can
+be used as it is. `&volumeRendering=1` also volume renders the volume, `&layout=OneUp3D` starts in
+another layout; all the arguments are listed in [docs/embedding.md](docs/embedding.md).
+
 ## What works
 
 - **Views**: slice and 3D views with Slicer's own interactor styles, the layouts of

@@ -212,23 +212,28 @@ function keepSession() {
 }
 
 /**
- * Sample data set loaded at startup: `?sample=<name>` URL parameter, else the VITE_DEFAULT_SAMPLE build
- * setting (`?sample=` with an empty value disables it). With `&volumeRendering=1` the volume it
- * loads is also volume rendered, with the preset that suits it (`&volumeRendering=<preset name>`
- * for a given one), so that a link opens on the rendering.
+ * Data loaded at startup: the files of the `?url=<address of a file>` URL parameters (one or more),
+ * else the sample data set of `?sample=<name>`, else that of the VITE_DEFAULT_SAMPLE build setting
+ * (`?sample=` with an empty value disables it). A file of a server that does not allow cross-origin
+ * requests is read through the site's download proxy, where it has one (runtime.downloadFile). With
+ * `&volumeRendering=1` the volume it loads is also volume rendered, with the preset that suits it
+ * (`&volumeRendering=<preset name>` for a given one), so that a link opens on the rendering.
  */
 async function loadStartupSample() {
   const params = new URLSearchParams(window.location.search);
+  const urls = params.getAll("url").filter(Boolean);
   const name = params.has("sample") ? params.get("sample") : (import.meta.env.VITE_DEFAULT_SAMPLE as string | undefined);
-  if (!name) return;
-  const sample = SAMPLE_DATA.find((s) => s.name.toLowerCase() === name.toLowerCase());
-  if (!sample) {
+  if (!urls.length && !name) return;
+  const sample = urls.length ? null : SAMPLE_DATA.find((s) => s.name.toLowerCase() === name!.toLowerCase());
+  if (!urls.length && !sample) {
     console.warn(`Unknown sample data set: ${name}`);
     return;
   }
   try {
-    const path = await runtime.downloadFile(sample.url, sample.fileName);
-    const loaded = await runtime.bridge.call<string[]>("loadFiles", [[path], sample.properties ?? {}]);
+    const paths = sample
+      ? [await runtime.downloadFile(sample.url, sample.fileName)]
+      : await Promise.all(urls.map((url) => runtime.downloadFile(url)));
+    const loaded = await runtime.bridge.call<string[]>("loadFiles", [paths, sample?.properties ?? {}]);
     const rendering = params.get("volumeRendering");
     if (rendering && !/^(0|false|no)$/i.test(rendering)) {
       const volumeID = (loaded ?? []).find((id) => /^vtkMRML\w*VolumeNode\d+$/.test(id) && !/LabelMap/.test(id));
@@ -240,7 +245,7 @@ async function loadStartupSample() {
       }
     }
   } catch (e) {
-    console.error(`Loading sample data ${name} failed`, e);
+    console.error(`Loading ${urls.length ? urls.join(", ") : "sample data " + name} failed`, e);
   }
 }
 

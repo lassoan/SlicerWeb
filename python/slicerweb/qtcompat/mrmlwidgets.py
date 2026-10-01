@@ -139,6 +139,34 @@ class qMRMLNodeComboBox(_ElementWidget):
             count += slicer.mrmlScene.GetNumberOfNodesByClass(t)
         return count
 
+    def nodes(self):
+        """The nodes the list holds, in the order of the scene: those of the node types, without the
+        ones hidden from editors (unless showHidden), those without the attributes asked for, and
+        those left out by ID (sortFilterProxyModel().hiddenNodeIDs)."""
+        import slicer
+
+        hidden = set(self._proxyModel.hiddenNodeIDs)
+        result, seen = [], set()
+        for nodeType in self.nodeTypes:
+            for node in slicer.util.getNodesByClass(nodeType):
+                nodeID = node.GetID()
+                if nodeID in seen or nodeID in hidden or (node.GetHideFromEditors() and not self.showHidden):
+                    continue
+                if not all(self._hasAttribute(node, filterType, name, value)
+                           for (filterType, name), value in self._attributeFilters.items()):
+                    continue
+                seen.add(nodeID)
+                result.append(node)
+        return result
+
+    @staticmethod
+    def _hasAttribute(node, nodeType, name, value):
+        """Whether a node passes the filter of addAttribute: one of another type always does."""
+        if not node.IsA(nodeType):
+            return True
+        found = node.GetAttribute(name)
+        return found is not None if value is None else found == str(value)
+
     def nodeFromIndex(self, index):
         return None
 
@@ -177,12 +205,93 @@ class _NodeComboBoxProxyModel:
 
 
 class qMRMLCheckableNodeComboBox(qMRMLNodeComboBox):
+    """Node selector whose nodes are each checked on and off (Lights: the views it manages).
+
+    Every node starts unchecked, as on the desktop. The check states are kept here, by node ID, and
+    shown by the element (its checkable mode); a node the user checks or unchecks comes back as the
+    list of checked nodes.
+    """
+
     _addRemoveByDefault = False
+    _events = dict(qMRMLNodeComboBox._events, checkedNodesChanged="_onCheckedNodesChanged")
     checkedNodesChanged = Signal("checkedNodesChanged()")
 
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._checkStates = {}   # node ID -> Qt.CheckState, for the nodes not unchecked
+        self._notUserCheckable = set()
+        dom.set_prop(self._el, "checkable", True)
+
+    def _showCheckStates(self):
+        from .types import Qt
+
+        dom.set_prop(self._el, "checkedNodeIDs", [nodeID for nodeID, state in self._checkStates.items() if state == Qt.Checked])
+
+    def _onCheckedNodesChanged(self, nodeIDs=None):
+        from .types import Qt
+
+        checked = set(nodeIDs or [])
+        states = {nodeID: Qt.Checked for nodeID in checked}
+        # a node the user cannot check keeps its state
+        states.update({nodeID: state for nodeID, state in self._checkStates.items() if nodeID in self._notUserCheckable})
+        if states != self._checkStates:
+            self._checkStates = states
+            self._showCheckStates()
+            self.checkedNodesChanged.emit()
+
+    def checkState(self, node):
+        from .types import Qt
+
+        return self._checkStates.get(node.GetID(), Qt.Unchecked) if node is not None else Qt.Unchecked
+
+    def setCheckState(self, node, state):
+        from .types import Qt
+
+        if node is None or node.GetID() not in {n.GetID() for n in self.nodes()}:
+            return   # not in the list: as on the desktop, nothing to check
+        state = int(state)
+        if self._checkStates.get(node.GetID(), Qt.Unchecked) == state:
+            return
+        if state == Qt.Unchecked:
+            del self._checkStates[node.GetID()]
+        else:
+            self._checkStates[node.GetID()] = state
+        self._showCheckStates()
+        self.checkedNodesChanged.emit()
+
+    def check(self, node):
+        from .types import Qt
+
+        self.setCheckState(node, Qt.Checked)
+
+    def uncheck(self, node):
+        from .types import Qt
+
+        self.setCheckState(node, Qt.Unchecked)
+
     def checkedNodes(self):
-        node = self.currentNode()
-        return [node] if node else []
+        from .types import Qt
+
+        return [node for node in self.nodes() if self._checkStates.get(node.GetID()) == Qt.Checked]
+
+    def uncheckedNodes(self):
+        checked = {node.GetID() for node in self.checkedNodes()}
+        return [node for node in self.nodes() if node.GetID() not in checked]
+
+    def allChecked(self):
+        return not self.uncheckedNodes()
+
+    def noneChecked(self):
+        return not self.checkedNodes()
+
+    def setUserCheckable(self, node, userCheckable):
+        if node is None:
+            return
+        if userCheckable:
+            self._notUserCheckable.discard(node.GetID())
+        else:
+            self._notUserCheckable.add(node.GetID())
+        dom.set_prop(self._el, "uncheckableNodeIDs", sorted(self._notUserCheckable))
 
 
 class qMRMLSubjectHierarchyComboBox(qMRMLNodeComboBox):

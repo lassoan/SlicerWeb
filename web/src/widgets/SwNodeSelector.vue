@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // qMRMLNodeComboBox: lists MRML nodes of the given classes, keeps the list updated when nodes are
-// added/removed/renamed, and can create, rename and delete nodes.
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+// added/removed/renamed, and can create, rename and delete nodes. Checkable (qMRMLCheckableNodeComboBox):
+// each node is checked on and off in a drop-down list instead, and no node is current.
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { bridge, type NodeSummary } from "@/core/bridge";
 
 const props = withDefaults(
@@ -22,6 +23,12 @@ const props = withDefaults(
     baseName?: string;
     noneDisplay?: string;
     enabled?: boolean;
+    /** qMRMLCheckableNodeComboBox: the nodes are checked on and off rather than one chosen. */
+    checkable?: boolean;
+    /** The nodes checked (checkable). */
+    checkedNodeIDs?: string[];
+    /** Nodes the user may not check on or off (qMRMLCheckableNodeComboBox::setUserCheckable). */
+    uncheckableNodeIDs?: string[];
   }>(),
   {
     nodeTypes: () => ["vtkMRMLNode"],
@@ -36,9 +43,12 @@ const props = withDefaults(
     baseName: "",
     noneDisplay: "None",
     enabled: true,
+    checkable: false,
+    checkedNodeIDs: () => [],
+    uncheckableNodeIDs: () => [],
   },
 );
-const emit = defineEmits<{ currentNodeChanged: [string | null]; nodeAdded: [string] }>();
+const emit = defineEmits<{ currentNodeChanged: [string | null]; nodeAdded: [string]; checkedNodesChanged: [string[]] }>();
 
 const nodes = ref<NodeSummary[]>([]);
 const current = () => (props.currentNodeID !== undefined ? props.currentNodeID : props.currentNodeId) ?? null;
@@ -65,6 +75,7 @@ async function refresh() {
   const seen = new Set<string>();
   const hidden = new Set(props.hiddenNodeIDs ?? []);
   nodes.value = all.filter((n) => !hidden.has(n.id) && (seen.has(n.id) ? false : (seen.add(n.id), true)));
+  if (props.checkable) return;   // no node is current
   // The list is fetched asynchronously, so the module may have chosen a node in the meantime (it
   // does so while a scene is loaded or a test runs): that choice wins, and is never reported back
   // as a change of the selection, which would overwrite it with what this list happens to hold.
@@ -103,6 +114,32 @@ async function onChange(e: Event) {
   (e.target as HTMLSelectElement).value = selected.value ?? "";
 }
 
+// --- checkable
+const open = ref(false);
+const root = ref<HTMLElement | null>(null);
+const checked = computed(() => new Set(props.checkedNodeIDs ?? []));
+/** What the closed list shows: the checked nodes, as ctkCheckableComboBox does. */
+const summary = computed(() => {
+  const names = nodes.value.filter((n) => checked.value.has(n.id)).map((n) => n.name);
+  return names.length ? names.join(", ") : "None";
+});
+function toggle(id: string, on: boolean) {
+  const ids = nodes.value.map((n) => n.id).filter((n) => (n === id ? on : checked.value.has(n)));
+  emit("checkedNodesChanged", ids);
+}
+function closeOutside(e: Event) {
+  if (open.value && root.value && !e.composedPath().includes(root.value)) open.value = false;
+}
+watch(open, (isOpen) => {
+  if (isOpen) {
+    refresh();
+    document.addEventListener("pointerdown", closeOutside, true);
+  } else {
+    document.removeEventListener("pointerdown", closeOutside, true);
+  }
+});
+onBeforeUnmount(() => document.removeEventListener("pointerdown", closeOutside, true));
+
 let off: (() => void) | undefined;
 onMounted(() => {
   refresh();
@@ -114,7 +151,27 @@ onBeforeUnmount(() => off?.());
 </script>
 
 <template>
-  <select class="sw-node-selector h-7 w-full min-w-0 rounded-md border border-input bg-background px-2 text-[13px] text-foreground outline-none focus:border-primary disabled:opacity-40"
+  <div v-if="checkable" ref="root" class="sw-node-selector relative w-full min-w-0">
+    <button type="button" :disabled="!enabled" :title="summary" :aria-expanded="open"
+      class="flex h-7 w-full min-w-0 items-center rounded-md border border-input bg-background px-2 text-left text-[13px] text-foreground outline-none focus:border-primary disabled:opacity-40"
+      @click="open = !open" @keydown.escape="open = false">
+      <span class="min-w-0 flex-1 truncate">{{ summary }}</span>
+      <span class="ml-1 text-muted-foreground">▾</span>
+    </button>
+    <div v-if="open" role="listbox" aria-multiselectable="true"
+      class="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-md border border-input bg-background py-1 shadow-lg"
+      @keydown.escape="open = false">
+      <label v-for="n in nodes" :key="n.id"
+        class="flex cursor-pointer items-center gap-2 px-2 py-1 text-[13px] text-foreground hover:bg-accent"
+        :class="{ 'cursor-default opacity-60': uncheckableNodeIDs.includes(n.id) }">
+        <input type="checkbox" :checked="checked.has(n.id)" :disabled="uncheckableNodeIDs.includes(n.id)"
+          @change="toggle(n.id, ($event.target as HTMLInputElement).checked)" />
+        <span class="min-w-0 truncate">{{ n.name }}</span>
+      </label>
+      <div v-if="!nodes.length" class="px-2 py-1 text-[13px] text-muted-foreground">No nodes</div>
+    </div>
+  </div>
+  <select v-else class="sw-node-selector h-7 w-full min-w-0 rounded-md border border-input bg-background px-2 text-[13px] text-foreground outline-none focus:border-primary disabled:opacity-40"
     :disabled="!enabled" :value="selected ?? ''" @change="onChange">
     <!-- selection is set on the options: a value bound on the select is lost when options arrive later -->
     <option v-if="noneEnabled" value="" :selected="!selected">{{ noneDisplay }}</option>

@@ -37,6 +37,7 @@ class Qt:
     RichText, PlainText, AutoText = 1, 0, 2
     TextSelectableByMouse = 1
     ItemIsEnabled, ItemIsSelectable, ItemIsEditable, ItemIsUserCheckable = 32, 1, 2, 16
+    NoItemFlags, ItemIsDragEnabled, ItemIsDropEnabled, ItemNeverHasChildren = 0, 4, 8, 128
     # cursor shapes (Qt::CursorShape), with the ones a module is likely to ask for
     ArrowCursor, UpArrowCursor, CrossCursor, WaitCursor, IBeamCursor = 0, 1, 2, 3, 4
     SizeVerCursor, SizeHorCursor, SizeBDiagCursor, SizeFDiagCursor, SizeAllCursor = 5, 6, 7, 8, 9
@@ -46,7 +47,8 @@ class Qt:
     NoFocus, StrongFocus = 0, 11
     red, green, blue, black, white, gray, yellow, cyan, magenta = range(7, 16)
     AscendingOrder, DescendingOrder = 0, 1
-    MatchExactly, MatchContains = 0, 1
+    MatchExactly, MatchContains, MatchStartsWith, MatchEndsWith = 0, 1, 2, 3
+    MatchCaseSensitive = 16
 
 
 class QEvent:
@@ -1044,22 +1046,121 @@ class QFileDialog:
 
 
 class QTableWidgetItem:
-    def __init__(self, text=""):
-        self._text = str(text)
+    """A cell of a QTableWidget: its text, flags, check state, tool tip and data.
+
+    An item belongs to one cell of one table once it is set there (QTableWidget.setItem); a change
+    of it is shown in that cell and reported as the table's itemChanged and cellChanged, as in Qt.
+    """
+
+    DisplayRole, EditRole, ToolTipRole, CheckStateRole, UserRole = 0, 2, 3, 10, 256
+    Type, UserType = 0, 1000
+
+    def __init__(self, *args):
+        self._text = next((str(a) for a in args if isinstance(a, str)), "")
+        self._flags = (Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsEnabled | Qt.ItemIsDragEnabled
+                       | Qt.ItemIsDropEnabled | Qt.ItemIsUserCheckable)
+        self._checkState = None   # no check box until a check state is set
+        self._toolTip = ""
+        self._data = {}
+        self._table = None
+
+    def _changed(self):
+        if self._table is not None:
+            self._table._onItemChanged(self)
+
+    def tableWidget(self):
+        return self._table
+
+    def row(self):
+        return self._table._positionOf(self)[0] if self._table is not None else -1
+
+    def column(self):
+        return self._table._positionOf(self)[1] if self._table is not None else -1
 
     def text(self):
         return self._text
 
     def setText(self, text):
         self._text = str(text)
+        self._changed()
+
+    def flags(self):
+        return self._flags
 
     def setFlags(self, flags):
-        pass
+        self._flags = int(flags)
+        self._changed()
+
+    def checkState(self):
+        return self._checkState if self._checkState is not None else Qt.Unchecked
+
+    def setCheckState(self, state):
+        self._checkState = int(state)
+        self._changed()
+
+    def toolTip(self):
+        return self._toolTip
+
+    def setToolTip(self, text):
+        self._toolTip = str(text)
+        self._changed()
+
+    def data(self, role):
+        role = int(role)
+        if role in (self.DisplayRole, self.EditRole):
+            return self._text
+        if role == self.CheckStateRole:
+            return self._checkState
+        if role == self.ToolTipRole:
+            return self._toolTip
+        return self._data.get(role)
 
     def setData(self, role, value):
+        role = int(role)
+        if role in (self.DisplayRole, self.EditRole):
+            self.setText(value)
+        elif role == self.CheckStateRole:
+            self.setCheckState(value)
+        elif role == self.ToolTipRole:
+            self.setToolTip(value)
+        else:
+            self._data[role] = value
+
+    def isSelected(self):
+        return self._table is not None and self._table._positionOf(self) in self._table._selected
+
+    def setSelected(self, selected):
+        if self._table is not None:
+            self._table._setCellSelected(self._table._positionOf(self), selected)
+
+    def clone(self):
+        item = QTableWidgetItem(self._text)
+        item._flags, item._checkState, item._toolTip, item._data = self._flags, self._checkState, self._toolTip, dict(self._data)
+        return item
+
+    # how the text looks: the table shows it in its own style
+    def setTextAlignment(self, alignment):
         pass
 
-    def setToolTip(self, t):
+    def textAlignment(self):
+        return 0
+
+    def setForeground(self, brush):
+        pass
+
+    def setBackground(self, brush):
+        pass
+
+    def setFont(self, font):
+        pass
+
+    def setIcon(self, icon):
+        pass
+
+    def setStatusTip(self, text):
+        pass
+
+    def setWhatsThis(self, text):
         pass
 
 

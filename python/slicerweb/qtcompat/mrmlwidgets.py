@@ -6,6 +6,7 @@ from . import dom
 from .core import property_value
 from .core import QProp, Signal
 from .ctkwidgets import ctkCollapsibleButton, ctkCoordinatesWidget, ctkRangeWidget
+from .types import QAbstractItemView
 from .widgets import QVBoxLayout, QWidget, _ElementWidget
 
 logger = logging.getLogger("slicerweb.qt")
@@ -684,6 +685,8 @@ class qSlicerSimpleMarkupsWidget(qMRMLWidget):
         self._table = QTableWidget(self)
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["Label", "R", "A", "S"])
+        # shows the control points; nothing typed into it would reach the markups node
+        self._table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(self._table)
         self._observed = None
         self._observerTag = None

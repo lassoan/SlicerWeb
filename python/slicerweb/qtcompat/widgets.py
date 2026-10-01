@@ -8,7 +8,7 @@ import logging
 
 from . import dom
 from .core import QObject, QProp, Signal, count_property, text_property
-from .types import QAbstractItemView
+from .types import QAbstractItemView, QTableWidgetItem
 
 logger = logging.getLogger("slicerweb.qt")
 
@@ -1988,100 +1988,476 @@ class QProgressDialog(QWidget):
         self.autoReset = value
 
 
+class _TableIndex:
+    """A cell of a QTableWidget, as its selectedIndexes() gives it (QModelIndex)."""
+
+    def __init__(self, table, row, column):
+        self._table, self._row, self._column = table, int(row), int(column)
+
+    def row(self):
+        return self._row
+
+    def column(self):
+        return self._column
+
+    def isValid(self):
+        return self._row >= 0 and self._column >= 0
+
+    def data(self, role=0):
+        item = self._table.item(self._row, self._column)
+        return item.data(role) if item is not None else None
+
+    def __eq__(self, other):
+        return isinstance(other, _TableIndex) and (other._row, other._column) == (self._row, self._column)
+
+    def __hash__(self):
+        return hash((self._row, self._column))
+
+
 class QTableWidget(QWidget, QAbstractItemView):
-    """Minimal table (read-only display). Qt's item view enums are its own (qt.QTableWidget.SelectRows)."""
+    """A table of items (QTableWidgetItem), each cell with its own text, check box and tool tip.
+
+    A cell whose item is editable is edited in place - typed into, Enter or leaving it keeps what was
+    typed, Escape puts the text back - and reported as itemChanged and cellChanged; a click selects
+    the cell or its row (setSelectionBehavior). Qt's item view enums are its own
+    (qt.QTableWidget.SelectRows).
+    """
+
+    cellChanged = Signal("cellChanged(int,int)")
+    cellClicked = Signal("cellClicked(int,int)")
+    cellDoubleClicked = Signal("cellDoubleClicked(int,int)")
+    currentCellChanged = Signal("currentCellChanged(int,int,int,int)")
+    itemChanged = Signal("itemChanged(QTableWidgetItem*)")
+    itemClicked = Signal("itemClicked(QTableWidgetItem*)")
+    currentItemChanged = Signal("currentItemChanged(QTableWidgetItem*,QTableWidgetItem*)")
+    itemSelectionChanged = Signal("itemSelectionChanged()")
+    customContextMenuRequested = Signal("customContextMenuRequested(QPoint)")
 
     def __init__(self, *args):
         parent = next((a for a in args if isinstance(a, QWidget)), None)
         super().__init__(parent)
-        self._rows, self._cols = 0, 0
-        self._data = {}
+        counts = [a for a in args if isinstance(a, int) and not isinstance(a, bool)]
+        self._rows, self._cols = (counts + [0, 0])[:2]
+        self._items = {}        # (row, column) -> QTableWidgetItem
         self._cellWidgets = {}  # (row, column) -> widget shown in the cell
+        self._cells = {}        # (row, column) -> the cell's element, as last drawn
         self._headers = []
+        self._selected = set()  # (row, column) of the selected cells
+        self._current = None    # (row, column) of the current cell
+        self._editTriggers = (QAbstractItemView.DoubleClicked | QAbstractItemView.EditKeyPressed
+                              | QAbstractItemView.AnyKeyPressed)
+        self._selectionMode = QAbstractItemView.ExtendedSelection
+        self._selectionBehavior = QAbstractItemView.SelectItems
+        self._horizontalHeader = QHeaderView()
+        self._verticalHeader = QHeaderView()
+        self._render()
 
+    # --- size
     def setRowCount(self, n):
-        self._rows = int(n)
+        self._rows = max(0, int(n))
+        self._dropOutside()
         self._render()
 
     def setColumnCount(self, n):
-        self._cols = int(n)
+        self._cols = max(0, int(n))
+        self._dropOutside()
         self._render()
+
+    def _inside(self, key):
+        return 0 <= key[0] < self._rows and 0 <= key[1] < self._cols
+
+    def _dropOutside(self):
+        """Let go of the cells that are no longer in the table."""
+        for key in [k for k in self._items if not self._inside(k)]:
+            self._items.pop(key)._table = None
+        for key in [k for k in self._cellWidgets if not self._inside(k)]:
+            self._cellWidgets.pop(key)
+        if self._current is not None and not self._inside(self._current):
+            self._current = None
+        self._setSelection({k for k in self._selected if self._inside(k)}, render=False)
 
     # properties in PythonQt: modules set them (table.rowCount = n) as well as read them
     rowCount = count_property(lambda self: self._rows, lambda self, n: self.setRowCount(n))
     columnCount = count_property(lambda self: self._cols, lambda self, n: self.setColumnCount(n))
 
+    def insertRow(self, row):
+        self._shiftRows(int(row), 1)
+        self._rows += 1
+        self._render()
+
+    def removeRow(self, row):
+        row = int(row)
+        if not 0 <= row < self._rows:
+            return
+        for column in range(self._cols):
+            item = self._items.pop((row, column), None)
+            if item is not None:
+                item._table = None
+            self._cellWidgets.pop((row, column), None)
+        self._selected = {k for k in self._selected if k[0] != row}
+        self._shiftRows(row + 1, -1)
+        self._rows -= 1
+        self._dropOutside()
+        self._render()
+
+    def _shiftRows(self, fromRow, by):
+        """Move the cells of the rows from fromRow on by *by* rows (a row inserted or removed)."""
+        def move(key):
+            return (key[0] + by, key[1]) if key[0] >= fromRow else key
+        self._items = {move(k): v for k, v in self._items.items()}
+        self._cellWidgets = {move(k): v for k, v in self._cellWidgets.items()}
+        self._selected = {move(k) for k in self._selected}
+        if self._current is not None:
+            self._current = move(self._current)
+
+    # --- headers
     def setHorizontalHeaderLabels(self, labels):
-        self._headers = list(labels)
+        self._headers = [str(label) for label in labels]
+        self._cols = max(self._cols, len(self._headers))
         self._render()
 
-    def setItem(self, row, col, item):
-        self._data[(row, col)] = item.text() if hasattr(item, "text") and callable(item.text) else str(item)
-        self._render()
+    def setVerticalHeaderLabels(self, labels):
+        pass  # rows are not labeled
 
-    def item(self, row, col):
-        from .types import QTableWidgetItem
+    def horizontalHeader(self):
+        return self._horizontalHeader
 
-        return QTableWidgetItem(self._data.get((row, col), ""))
+    def verticalHeader(self):
+        return self._verticalHeader
 
+    # --- items
+    def setItem(self, row, column, item):
+        key = (int(row), int(column))
+        if item is None:
+            self.takeItem(*key)
+            return
+        if not isinstance(item, QTableWidgetItem):
+            item = QTableWidgetItem(str(item))
+        if item._table is not None:
+            if item._table is self and self._positionOf(item) == key:
+                return
+            # as in Qt: an item is in one cell of one table
+            logger.warning("QTableWidget: cannot insert an item that is already owned by another QTableWidget")
+            return
+        previous = self._items.get(key)
+        if previous is not None:
+            previous._table = None
+        item._table = self
+        self._items[key] = item
+        if not self._inside(key):
+            self._rows = max(self._rows, key[0] + 1)
+            self._cols = max(self._cols, key[1] + 1)
+            self._render()
+        else:
+            self._renderCell(key)
+
+    def item(self, row, column):
+        return self._items.get((int(row), int(column)))
+
+    def takeItem(self, row, column):
+        key = (int(row), int(column))
+        item = self._items.pop(key, None)
+        if item is not None:
+            item._table = None
+            self._renderCell(key)
+        return item
+
+    def itemAt(self, *args):
+        return None
+
+    def row(self, item):
+        return self._positionOf(item)[0]
+
+    def column(self, item):
+        return self._positionOf(item)[1]
+
+    def _positionOf(self, item):
+        for key, value in self._items.items():
+            if value is item:
+                return key
+        return (-1, -1)
+
+    def findItems(self, text, flags=0):
+        from .types import Qt
+
+        text, flags = str(text), int(flags)
+        caseSensitive = bool(flags & Qt.MatchCaseSensitive)
+        match = flags & 0x0F
+        wanted = text if caseSensitive else text.lower()
+
+        def matches(value):
+            value = value if caseSensitive else value.lower()
+            if match == Qt.MatchContains:
+                return wanted in value
+            if match == Qt.MatchStartsWith:
+                return value.startswith(wanted)
+            if match == Qt.MatchEndsWith:
+                return value.endswith(wanted)
+            return value == wanted
+
+        return [self._items[key] for key in sorted(self._items) if matches(self._items[key].text())]
+
+    def _onItemChanged(self, item):
+        key = self._positionOf(item)
+        if key == (-1, -1):
+            return
+        self._renderCell(key)
+        self.itemChanged.emit(item)
+        self.cellChanged.emit(key[0], key[1])
+
+    # --- cell widgets
     def setCellWidget(self, row, column, widget):
         """A widget shown in a cell instead of its text (a label, a button)."""
-        self._cellWidgets[(int(row), int(column))] = widget
+        key = (int(row), int(column))
+        self._cellWidgets[key] = widget
         if widget is not None:
             widget._parent = self
-        self._render()
+        self._renderCell(key)
 
     def cellWidget(self, row, column):
         return self._cellWidgets.get((int(row), int(column)))
 
     def removeCellWidget(self, row, column):
-        self._cellWidgets.pop((int(row), int(column)), None)
+        key = (int(row), int(column))
+        self._cellWidgets.pop(key, None)
+        self._renderCell(key)
+
+    def clearContents(self):
+        for item in self._items.values():
+            item._table = None
+        self._items = {}
+        self._cellWidgets = {}
         self._render()
 
-    def setRowHeight(self, row, height):
-        pass  # rows are as high as what is in them
+    def clear(self):
+        self._headers = []
+        self.clearContents()
 
+    # --- selection
+    def setSelectionMode(self, mode):
+        self._selectionMode = int(mode)
+
+    def selectionMode(self):
+        return self._selectionMode
+
+    def setSelectionBehavior(self, behavior):
+        self._selectionBehavior = int(behavior)
+
+    def selectionBehavior(self):
+        return self._selectionBehavior
+
+    def selectedIndexes(self):
+        return [_TableIndex(self, r, c) for r, c in sorted(self._selected)]
+
+    def selectedItems(self):
+        return [self._items[key] for key in sorted(self._selected) if key in self._items]
+
+    def currentRow(self):
+        return self._current[0] if self._current is not None else -1
+
+    def currentColumn(self):
+        return self._current[1] if self._current is not None else -1
+
+    def currentItem(self):
+        return self._items.get(self._current) if self._current is not None else None
+
+    def setCurrentCell(self, row, column, *args):
+        self._select((int(row), int(column)))
+
+    def setCurrentItem(self, item, *args):
+        if item is not None and item._table is self:
+            self._select(self._positionOf(item))
+
+    def selectRow(self, row):
+        self._select((int(row), 0), behavior=QAbstractItemView.SelectRows)
+
+    def selectColumn(self, column):
+        self._select((0, int(column)), behavior=QAbstractItemView.SelectColumns)
+
+    def selectAll(self):
+        self._setSelection({(r, c) for r in range(self._rows) for c in range(self._cols)})
+
+    def clearSelection(self):
+        self._setSelection(set())
+
+    def _cellsOf(self, key, behavior=None):
+        behavior = self._selectionBehavior if behavior is None else behavior
+        if behavior == QAbstractItemView.SelectRows:
+            return {(key[0], c) for c in range(self._cols)}
+        if behavior == QAbstractItemView.SelectColumns:
+            return {(r, key[1]) for r in range(self._rows)}
+        return {key}
+
+    def _select(self, key, toggle=False, behavior=None):
+        """Make a cell the current one and select it (or its row or column); *toggle* (a click with
+        Ctrl) adds it to the selection or takes it out where more than one cell may be selected."""
+        if not self._inside(key):
+            return
+        previous = self._current
+        self._current = key
+        if self._selectionMode != QAbstractItemView.NoSelection:
+            cells = self._cellsOf(key, behavior)
+            many = self._selectionMode in (QAbstractItemView.MultiSelection, QAbstractItemView.ExtendedSelection)
+            if toggle and many:
+                selection = self._selected - cells if cells <= self._selected else self._selected | cells
+            else:
+                selection = cells
+            self._setSelection(selection, render=False)
+        self._render()
+        if previous != key:
+            old = previous if previous is not None else (-1, -1)
+            self.currentCellChanged.emit(key[0], key[1], old[0], old[1])
+            self.currentItemChanged.emit(self._items.get(key), self._items.get(previous) if previous is not None else None)
+
+    def _setSelection(self, selection, render=True):
+        selection = set(selection)
+        if selection != self._selected:
+            self._selected = selection
+            if render:
+                self._render()
+            self.itemSelectionChanged.emit()
+
+    def _setCellSelected(self, key, selected):
+        if self._inside(key):
+            self._setSelection(self._selected | {key} if selected else self._selected - {key})
+
+    # --- editing
+    def setEditTriggers(self, triggers):
+        self._editTriggers = int(triggers)
+        self._render()
+
+    editTriggers = count_property(lambda self: self._editTriggers, lambda self, v: self.setEditTriggers(v))
+
+    def _editable(self, item):
+        from .types import Qt
+
+        return (item is not None and self._editTriggers != QAbstractItemView.NoEditTriggers
+                and bool(item.flags() & Qt.ItemIsEditable) and bool(item.flags() & Qt.ItemIsEnabled))
+
+    def editItem(self, item):
+        cell = self._cells.get(self._positionOf(item))
+        try:
+            field = cell.querySelector("input[data-cell-edit]") if cell is not None else None
+            if field is not None:
+                field.focus()
+        except AttributeError:
+            pass
+
+    def _onEdited(self, key, field):
+        item = self._items.get(key)
+        if item is not None and str(field.value) != item.text():
+            item.setText(str(field.value))   # itemChanged, cellChanged
+
+    def _onEditKey(self, key, field, event):
+        if event.key == "Escape":
+            item = self._items.get(key)
+            field.value = item.text() if item is not None else ""
+            field.blur()
+        elif event.key == "Enter":
+            field.blur()   # leaving the field keeps what was typed (its change event)
+
+    def _onCheckClicked(self, key):
+        from .types import Qt
+
+        item = self._items.get(key)
+        if item is not None:
+            item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+
+    def _onCellClicked(self, key, event):
+        if self._current == key and key in self._selected and event.target.tagName == "INPUT":
+            return  # a click into the field of the cell being edited: nothing changes
+        toggle = bool(getattr(event, "ctrlKey", False) or getattr(event, "metaKey", False))
+        self._select(key, toggle=toggle)
+        self.cellClicked.emit(key[0], key[1])
+        if key in self._items:
+            self.itemClicked.emit(self._items[key])
+
+    # --- drawing
     def _render(self):
         el = self._el
         if el is None:
             return
-        while el.firstChild:
-            el.removeChild(el.firstChild)
-        table = dom.create("table", "w-full text-[12px]")
+        try:
+            while el.firstChild:
+                el.removeChild(el.firstChild)
+        except AttributeError:
+            return  # no browser (FakeElement): nothing to draw
+        self._cells = {}
+        table = dom.create("table", "w-full border-collapse text-[12px]")
         if self._headers:
             tr = dom.create("tr")
-            for header in self._headers:
-                th = dom.create("th", "text-left text-muted-foreground")
-                th.textContent = str(header)
+            for column in range(self._cols):
+                th = dom.create("th", "px-1 text-left font-normal text-muted-foreground")
+                th.textContent = self._headers[column] if column < len(self._headers) else str(column + 1)
                 tr.appendChild(th)
             table.appendChild(tr)
         for r in range(self._rows):
             tr = dom.create("tr")
             for c in range(self._cols):
                 td = dom.create("td")
-                widget = self._cellWidgets.get((r, c))
-                if widget is not None and widget._el is not None:
-                    td.appendChild(widget._el)
-                else:
-                    td.textContent = str(self._data.get((r, c), ""))
+                self._cells[(r, c)] = td
+                td.addEventListener("click", dom.proxy(lambda e, k=(r, c): self._onCellClicked(k, e)))
+                self._fillCell((r, c), td)
                 tr.appendChild(td)
             table.appendChild(tr)
         el.appendChild(table)
 
-    def horizontalHeader(self):
-        return QHeaderView()
+    def _renderCell(self, key):
+        """Draw one cell again (the whole table where that cell has not been drawn yet)."""
+        cell = self._cells.get(key)
+        if cell is None:
+            self._render()
+            return
+        try:
+            while cell.firstChild:
+                cell.removeChild(cell.firstChild)
+        except AttributeError:
+            return
+        self._fillCell(key, cell)
 
-    def verticalHeader(self):
-        return QHeaderView()
+    def _fillCell(self, key, td):
+        from .types import Qt
 
-    def setEditTriggers(self, t):
+        td.className = "px-1 align-middle cursor-default" + (" bg-accent" if key in self._selected else "")
+        widget = self._cellWidgets.get(key)
+        if widget is not None and widget._el is not None:
+            td.title = ""
+            td.appendChild(widget._el)
+            return
+        item = self._items.get(key)
+        td.title = item.toolTip() if item is not None else ""
+        if item is None:
+            return
+        line = dom.create("div", "flex min-w-0 items-center gap-1")
+        if item._checkState is not None:
+            box = dom.create("input", "shrink-0")
+            box.type = "checkbox"
+            box.checked = item.checkState() == Qt.Checked
+            box.indeterminate = item.checkState() == Qt.PartiallyChecked
+            box.disabled = not (item.flags() & Qt.ItemIsUserCheckable and item.flags() & Qt.ItemIsEnabled)
+            box.addEventListener("change", dom.proxy(lambda e, k=key: self._onCheckClicked(k)))
+            line.appendChild(box)
+        if self._editable(item):
+            field = dom.create("input", "h-6 min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 "
+                                        "text-[12px] text-foreground outline-none hover:border-input focus:border-primary "
+                                        "focus:bg-background")
+            field.value = item.text()
+            field.setAttribute("data-cell-edit", "")
+            field.addEventListener("change", dom.proxy(lambda e, k=key, f=field: self._onEdited(k, f)))
+            field.addEventListener("keydown", dom.proxy(lambda e, k=key, f=field: self._onEditKey(k, f, e)))
+            line.appendChild(field)
+        else:
+            text = dom.create("span", "min-w-0 truncate px-1" + ("" if item.flags() & Qt.ItemIsEnabled else " opacity-50"))
+            text.textContent = item.text()
+            line.appendChild(text)
+        td.appendChild(line)
+
+    # --- how the table looks: it sizes its columns and rows itself
+    def setRowHeight(self, row, height):
         pass
 
-    # Selection and layout options (display only: the table is read-only)
-    cellChanged = Signal("cellChanged(int,int)")
-    cellClicked = Signal("cellClicked(int,int)")
-    itemSelectionChanged = Signal("itemSelectionChanged()")
-    customContextMenuRequested = Signal("customContextMenuRequested(QPoint)")
+    def setColumnWidth(self, column, width):
+        pass
 
     def setColumnHidden(self, column, hidden):
         pass
@@ -2090,15 +2466,6 @@ class QTableWidget(QWidget, QAbstractItemView):
         pass
 
     def showColumn(self, column):
-        pass
-
-    def setColumnWidth(self, column, width):
-        pass
-
-    def setSelectionMode(self, mode):
-        pass
-
-    def setSelectionBehavior(self, behavior):
         pass
 
     def setContextMenuPolicy(self, policy):
@@ -2113,32 +2480,25 @@ class QTableWidget(QWidget, QAbstractItemView):
     def setSortingEnabled(self, enabled):
         pass
 
-    def selectedItems(self):
-        return []
-
-    def currentRow(self):
-        return -1
-
-    def clearContents(self):
-        self._data = {}
-        self._render()
-
-    def clear(self):
-        self._data = {}
-        self._cellWidgets = {}
-        self._headers = []
-        self._render()
-
-    def setSelectionBehavior(self, b):
+    def setAlternatingRowColors(self, enabled):
         pass
 
-    def resizeColumnsToContents(self):
+    def setShowGrid(self, show):
+        pass
+
+    def setWordWrap(self, wrap):
+        pass
+
+    def scrollToItem(self, *args):
+        pass
+
+    def scrollToBottom(self):
         pass
 
 
 class QTableView(QTableWidget):
-    """A table of a model in Qt; here the same read-only table as QTableWidget. Modules mostly use it
-    for Qt's item view enums (qt.QTableView.SelectRows)."""
+    """A table of a model in Qt; here the same table as QTableWidget. Modules mostly use it for Qt's
+    item view enums (qt.QTableView.SelectRows)."""
 
 
 class QTreeWidgetItem:

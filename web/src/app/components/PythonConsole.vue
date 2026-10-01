@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Python interactor (like Slicer's Python console): the full Slicer Python API is available.
-import { inject, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { X } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import { store } from "../store";
@@ -27,6 +27,10 @@ const offs = [
   bridge.events.on<string>("stderr", (s) => append("err", s)),
 ];
 onBeforeUnmount(() => offs.forEach((off) => off()));
+
+// Shown (from the menu or with Ctrl+3): ready to type at the prompt. After the frame, so that a menu
+// closing on the same click does not take the focus back.
+onMounted(() => requestAnimationFrame(() => inputEl.value?.focus()));
 
 async function run() {
   const code = input.value;
@@ -96,6 +100,8 @@ async function requestCompletions(applySingle = false) {
   const items = result.items.filter((i) => i.text !== word || i.callable);
   completionStart = result.start;
   completionCursor = cursor;
+  // the part of the name being completed, to show where each suggestion matches it
+  completionPrefix.value = word.slice(word.lastIndexOf(".") + 1);
   if (applySingle && items.length === 1) {
     applyCompletion(items[0]);
     return;
@@ -145,6 +151,17 @@ function shortName(text: string) {
   return text.slice(text.lastIndexOf(".") + 1);
 }
 
+/** The name of a suggestion in three parts: before the typed text, the typed text as it matched
+ *  (at the start if it matches there, else where it first matches, in any case), and after it. */
+const completionPrefix = ref("");
+function matchParts(name: string): [string, string, string] {
+  const typed = completionPrefix.value;
+  if (!typed) return [name, "", ""];
+  let at = name.startsWith(typed) || name.toLowerCase().startsWith(typed.toLowerCase()) ? 0 : name.toLowerCase().indexOf(typed.toLowerCase());
+  if (at < 0) return [name, "", ""];
+  return [name.slice(0, at), name.slice(at, at + typed.length), name.slice(at + typed.length)];
+}
+
 onBeforeUnmount(() => window.clearTimeout(completionTimer));
 
 function onKey(e: KeyboardEvent) {
@@ -175,16 +192,6 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault();
     requestCompletions(true);
     return;
-  }
-  // ")" where one is already next (the one a completion added): typed over, not doubled
-  if (e.key === ")" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const el = inputEl.value;
-    const at = el?.selectionStart ?? -1;
-    if (el && at >= 0 && at === el.selectionEnd && input.value[at] === ")") {
-      e.preventDefault();
-      el.setSelectionRange(at + 1, at + 1);
-      return;
-    }
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -264,7 +271,9 @@ function startResize(e: PointerEvent) {
             class="flex w-full items-baseline gap-3 px-2 py-1 text-left font-mono text-[12px]"
             :class="i === activeSuggestion ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50'"
             @pointerdown.prevent @click="applyCompletion(s)">
-            <span class="shrink-0 text-foreground/90">{{ shortName(s.text) }}<span v-if="s.callable" class="opacity-60">()</span></span>
+            <span class="shrink-0 text-foreground/90"><template v-for="(part, p) in matchParts(shortName(s.text))" :key="p"><span
+              v-if="p === 1" class="font-semibold text-highlight" data-name="completionMatch">{{ part }}</span><template v-else>{{ part }}</template></template><span
+              v-if="s.callable" class="opacity-60">()</span></span>
             <span class="ml-auto truncate text-[11px] opacity-70">{{ s.text }}</span>
           </button>
         </li>

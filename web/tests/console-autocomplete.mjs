@@ -40,6 +40,8 @@ await page.keyboard.press("Control+3");
 await page.waitForTimeout(800);
 const input = page.locator("[data-name='pythonConsole'] textarea");
 check("Ctrl+3 opens the Python console", await input.count() === 1, `${await input.count()} console(s)`);
+const focused = () => page.evaluate(() => document.activeElement?.closest("[data-name='pythonConsole']") !== null && document.activeElement?.tagName === "TEXTAREA");
+check("and the input line has the focus", await focused(), "");
 const typeAndComplete = async (text) => {
   await input.fill("");
   await input.click();
@@ -63,8 +65,21 @@ check("no arguments: cursor after the parentheses", r1.value === "slicer.mrmlSce
 const r2 = await typeAndComplete("getNod");
 check("arguments: cursor inside the parentheses", r2.value === "getNode()" && r2.cursor === "getNode(".length, `${JSON.stringify(r2.value)}, cursor at ${r2.cursor}`);
 await page.keyboard.type('"vtkMRMLScene*")', { delay: 20 });
-const typedOver = await input.inputValue();
-check('")" typed over the one that was added', typedOver === 'getNode("vtkMRMLScene*")', JSON.stringify(typedOver));
+const typed = await input.inputValue();
+check('a ")" typed is added, also next to one', typed === 'getNode("vtkMRMLScene*"))', JSON.stringify(typed));
+
+// the matched part of each suggestion is highlighted: at the start, or where it is in the name
+await input.fill("");
+await input.pressSequentially("ab", { delay: 20 });
+await page.keyboard.press("Tab");
+await page.waitForTimeout(800);
+const highlighted = await page.getByRole("listbox", { name: "Completions" }).getByRole("option").evaluateAll((options) =>
+  options.map((o) => [o.querySelector("span")?.textContent ?? "", o.querySelector("[data-name=completionMatch]")?.textContent ?? ""])
+    .filter(([name]) => name.includes("Test")));
+const want = [["abcTest()", "ab"], ["AbdTest()", "Ab"], ["aBxTest()", "aB"], ["xabzTest()", "ab"]];
+const got = highlighted.map(([name, match]) => [name.replace("()", "").trim(), match]);
+check("the matched part is highlighted", JSON.stringify(got) === JSON.stringify(want.map(([n, m]) => [n.replace("()", ""), m])), JSON.stringify(got));
+await page.keyboard.press("Escape");
 
 // shortcuts, also while typing in the console
 await input.click();
@@ -85,6 +100,12 @@ check("Ctrl+4 again closes it", await manager() === 0, `${await manager()}`);
 await page.keyboard.press("Control+3");
 await page.waitForTimeout(500);
 check("Ctrl+3 again closes the Python console", await input.count() === 0, `${await input.count()} console(s)`);
+// shown from the menu: the input line has the focus as well
+await page.getByRole("button", { name: /application menu/i }).click();
+await page.waitForTimeout(300);
+await page.locator("[data-name='menu:python']").click();
+await page.waitForTimeout(800);
+check("opened from the menu, the input line has the focus", await focused(), "");
 await browser.close();
 console.log(failed ? "FAIL" : "ok");
 process.exit(failed ? 1 : 0);

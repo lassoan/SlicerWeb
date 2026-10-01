@@ -219,6 +219,12 @@ def _docstring(obj, limit=2000):
     if not doc:
         return None
     name = getattr(obj, "__name__", "")
+    # the parameters first, as a VTK method's docstring has them: a Python function's are in its signature
+    if name and not doc.startswith(name + "(") and callable(obj):
+        try:
+            doc = f"{name}{inspect.signature(obj)}\n\n{doc}"
+        except (TypeError, ValueError):
+            pass
     lines = [line.strip() for line in doc.splitlines()]
     signature = re.compile(r"^(%s\s*\(|C\+\+:|V\.|virtual |static )" % re.escape(name)) if name else re.compile(r"^C\+\+:")
     summary = next((line for line in lines if line and not signature.match(line)), lines[0])
@@ -324,6 +330,76 @@ def completePython(text, cursor=None, limit=200):
         except Exception:
             items.append(_completionItem(text, None, found=False))
     return {"start": cursor - len(word), "items": items}
+
+
+@method()
+def callTipPython(text, cursor=None):
+    """The function whose arguments are typed at the cursor, for the Python console to show its
+    docstring (the parameters it takes) while they are typed: the innermost parenthesis open before
+    the cursor (not in a string), and the dotted name before it.
+
+    Returns {"name", "summary", "doc", "argument": index of the argument at the cursor}, or None.
+    Only a dotted name is looked up (getNode, slicer.mrmlScene.GetNodeByID): the function of a call
+    result (getNode("CT").SetName) would need the call made, at each key typed.
+    """
+    import __main__
+    import builtins
+    import re
+
+    if cursor is None:
+        cursor = len(text)
+    before = text[:cursor]
+    # open parentheses (and brackets) before the cursor, outside strings: their positions, and the
+    # commas at their level
+    stack = []
+    quote = None
+    i = 0
+    while i < len(before):
+        c = before[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif before.startswith(quote, i):
+                i += len(quote) - 1
+                quote = None
+        elif c == "#":
+            newline = before.find("\n", i)
+            if newline < 0:
+                return None
+            i = newline
+        elif c in "'\"":
+            quote = before[i : i + 3] if before[i : i + 3] in ("'''", '"""') else c
+            i += len(quote) - 1
+        elif c in "([{":
+            stack.append([c, i, 0])
+        elif c in ")]}":
+            if stack:
+                stack.pop()
+        elif c == "," and stack:
+            stack[-1][2] += 1
+        i += 1
+    if not stack or stack[-1][0] != "(":
+        return None
+    _, position, argument = stack[-1]
+    match = re.search(r"(?<![\w.)\]])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$", before[:position])
+    if not match:
+        return None
+    name = match.group(1)
+    namespace = __main__.__dict__
+    first, *rest = name.split(".")
+    try:
+        obj = namespace[first] if first in namespace else getattr(builtins, first)
+        for part in rest:
+            obj = getattr(obj, part)
+    except Exception:
+        return None
+    try:
+        doc = _docstring(obj, limit=4000)
+    except Exception:
+        doc = None
+    if not doc:
+        return None
+    return {"name": name, "argument": argument, **doc}
 
 
 @method()

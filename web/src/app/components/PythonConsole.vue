@@ -39,6 +39,7 @@ async function run() {
   historyIndex = history.length;
   input.value = "";
   closeSuggestions();
+  hideCallTip();
   window.clearTimeout(completionTimer);
   append("in", ">>> " + code.replace(/\n/g, "\n... "));
   try {
@@ -145,11 +146,13 @@ function applyCompletion(item: Completion) {
     if (!el) return;
     el.focus();
     el.setSelectionRange(position, position);
+    updateCallTip();
   });
 }
 
 function onInput() {
   closeSuggestions();
+  updateCallTip();
   completionRequest++;
   window.clearTimeout(completionTimer);
   if (input.value.trim()) completionTimer = window.setTimeout(() => requestCompletions(), COMPLETION_DELAY_MS);
@@ -202,6 +205,46 @@ const suggestionsHaveDocs = computed(() => suggestions.value.some((s) => s.doc))
 
 onBeforeUnmount(() => window.clearTimeout(completionTimer));
 
+// ---- Call tip: inside the parentheses of a call, the docstring of the function (the parameters it
+// takes) above the prompt, while its arguments are typed. Escape hides it until the next key typed.
+interface CallTip { name: string; argument: number; summary: string; doc: string }
+const CALL_TIP_DELAY_MS = 150;
+const callTip = ref<CallTip | null>(null);
+let callTipTimer: number | undefined;
+let callTipRequest = 0;
+const callTipDoc = computed(() => (callTip.value ? formatDoc(callTip.value.doc) : []));
+
+function updateCallTip() {
+  window.clearTimeout(callTipTimer);
+  const request = ++callTipRequest;
+  callTipTimer = window.setTimeout(async () => {
+    const el = inputEl.value;
+    const text = input.value;
+    if (!el || !text.includes("(")) {
+      callTip.value = null;
+      return;
+    }
+    const cursor = el.selectionStart ?? text.length;
+    const tip = await bridge.call<CallTip | null>("callTipPython", [text, cursor]).catch(() => null);
+    // a later request (more typed, the cursor moved) has the say
+    if (request === callTipRequest) callTip.value = tip;
+  }, CALL_TIP_DELAY_MS);
+}
+
+function hideCallTip() {
+  window.clearTimeout(callTipTimer);
+  callTipRequest++;
+  callTip.value = null;
+}
+
+/** The cursor moved without anything typed (arrow keys, Home/End, a click). */
+function onCursorMoved(e: Event) {
+  if (e instanceof KeyboardEvent && !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+  if (!suggestions.value.length) updateCallTip();
+}
+
+onBeforeUnmount(() => window.clearTimeout(callTipTimer));
+
 function onKey(e: KeyboardEvent) {
   if (suggestions.value.length) {
     const n = suggestions.value.length;
@@ -233,6 +276,11 @@ function onKey(e: KeyboardEvent) {
       closeSuggestions();
       return;
     }
+  }
+  if (e.key === "Escape" && callTip.value) {
+    e.preventDefault();
+    hideCallTip();
+    return;
   }
   if (e.key === "Tab") {
     e.preventDefault();
@@ -342,9 +390,23 @@ function startResize(e: PointerEvent) {
       </div>
       </div>
     </div>
+    <!-- the call tip: the docstring of the function whose arguments are typed, in the place of the
+         completions (which take over while they are shown) -->
+    <div v-else-if="callTip" class="relative h-0">
+      <div data-name="callTip"
+        class="absolute right-2 bottom-1 left-2 z-30 space-y-2 overflow-y-auto rounded-md border border-input bg-popover px-3 py-2 text-[12px] leading-[1.15rem] text-muted-foreground shadow-xl"
+        :style="{ maxHeight: `${Math.min(224, Math.max(120, height - 64))}px` }">
+        <template v-for="(block, b) in callTipDoc" :key="b">
+          <pre v-if="block.code" class="font-mono text-[11px] whitespace-pre-wrap text-foreground/90">{{ block.parts[0].text }}</pre>
+          <p v-else class="whitespace-pre-wrap"><template v-for="(part, p) in block.parts" :key="p"><code
+            v-if="part.code" class="rounded bg-accent/60 px-1 font-mono text-[11px] text-foreground/90">{{ part.text }}</code><template
+            v-else>{{ part.text }}</template></template></p>
+        </template>
+      </div>
+    </div>
     <textarea ref="inputEl" v-model="input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
       placeholder=">>> (Shift+Enter for a new line, Tab to complete)"
       class="m-2 resize-none rounded border border-input bg-background px-2 py-1 font-mono text-[12px] outline-none focus:border-primary"
-      @keydown="onKey" @input="onInput" @blur="closeSuggestions" />
+      @keydown="onKey" @input="onInput" @keyup="onCursorMoved" @click="onCursorMoved" @blur="closeSuggestions(); hideCallTip()" />
   </div>
 </template>

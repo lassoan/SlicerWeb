@@ -1,5 +1,6 @@
 // Python console: slicer.util names without "slicer.util." (as on the desktop), completion order
-// (as typed from the start, then in any case from the start, then anywhere), the parentheses a
+// (as typed from the start, then in any case from the start, then anywhere), docstrings, the call
+// tip (the docstring of the function whose parentheses the cursor is in), the parentheses a
 // completed function gets and where the cursor goes, ")" typed over the one already there, and the
 // window shortcuts (Ctrl+3 Python console, Ctrl+0 application log, Ctrl+4 Extensions Manager).
 // Usage: node tests/console-autocomplete.mjs [url]
@@ -42,6 +43,22 @@ check("a VTK method's summary, not its signature", noArgs?.summary === "Get numb
   JSON.stringify(noArgs?.summary));
 // one whose docstring has no description: its signature, which says the most there is
 check("a VTK method without a description: its signature", byId?.summary?.startsWith("GetNodeByID("), JSON.stringify(byId?.summary));
+// the call tip: the function whose parentheses the cursor is in (not those in a string, nor closed ones)
+const tip = (text, cursor = text.length) => page.evaluate(([t, c]) => window.slicerWeb.bridge.call("callTipPython", [t, c]), [text, cursor]);
+const tips = {
+  'getNode(': (await tip("getNode("))?.name,
+  'slicer.mrmlScene.GetNodeByID("a", ': [(await tip('slicer.mrmlScene.GetNodeByID("a", '))?.name, (await tip('slicer.mrmlScene.GetNodeByID("a", '))?.argument],
+  'getNode("x(", ': (await tip('getNode("x(", '))?.name,
+  'print(getNode(1), ': (await tip("print(getNode(1), "))?.name,
+  'getNode("a")': await tip('getNode("a")'),
+  'print("(': (await tip('print("('))?.name,
+  'getNode("a").SetName(': await tip('getNode("a").SetName('),
+};
+const wantTips = { 'getNode(': "getNode", 'slicer.mrmlScene.GetNodeByID("a", ': ["slicer.mrmlScene.GetNodeByID", 1], 'getNode("x(", ': "getNode",
+  'print(getNode(1), ': "print", 'getNode("a")': null, 'print("(': "print", 'getNode("a").SetName(': null };
+const getNodeTip = await tip("getNode(");
+check("a Python function's parameters first", getNodeTip?.doc?.startsWith("getNode(pattern") && getNodeTip.summary.startsWith("Return the indexth node"), JSON.stringify(getNodeTip?.doc?.slice(0, 60)));
+check("the call tip's function", JSON.stringify(tips) === JSON.stringify(wantTips), JSON.stringify(tips));
 const value = (await complete("abcTes")).items.find((i) => i.text === "abcTest");
 check("no docstring for a value", value && value.summary === undefined, JSON.stringify(value));
 
@@ -74,7 +91,32 @@ check("no arguments: cursor after the parentheses", r1.value === "slicer.mrmlSce
   `${JSON.stringify(r1.value)}, cursor at ${r1.cursor}`);
 const r2 = await typeAndComplete("getNod");
 check("arguments: cursor inside the parentheses", r2.value === "getNode()" && r2.cursor === "getNode(".length, `${JSON.stringify(r2.value)}, cursor at ${r2.cursor}`);
-await page.keyboard.type('"vtkMRMLScene*")', { delay: 20 });
+// inside the parentheses the completion put the cursor in: the docstring of the function, until they are closed
+await page.waitForTimeout(500);
+const callTipBox = page.locator("[data-name=callTip]");
+const tipText = await callTipBox.innerText().catch(() => "");
+const tipPlaced = await page.evaluate(() => {
+  const d = document.querySelector("[data-name=callTip]")?.getBoundingClientRect();
+  const c = document.querySelector("[data-name=pythonConsole]")?.getBoundingClientRect();
+  const t = document.querySelector("[data-name=pythonConsole] textarea")?.getBoundingClientRect();
+  return !!d && !!c && !!t && d.bottom <= t.top + 1 && d.top >= c.top - 1;
+});
+const shotPath2 = process.argv[3]?.replace(/\.png$/, "-calltip.png");
+if (shotPath2) await page.locator("[data-name=pythonConsole]").screenshot({ path: shotPath2 });
+check("in the parentheses: the function's docstring, above the prompt", tipText.includes("Return the indexth node") && tipPlaced, JSON.stringify(tipText.slice(0, 60)));
+await page.keyboard.press("Escape");
+await page.waitForTimeout(300);
+check("Escape hides it", await callTipBox.count() === 0, `${await callTipBox.count()}`);
+await page.keyboard.type('"vtkMRMLScene*"', { delay: 20 });
+await page.waitForTimeout(500);
+check("typing an argument shows it again", await callTipBox.count() === 1, `${await callTipBox.count()}`);
+await page.keyboard.type(')', { delay: 20 });
+await page.waitForTimeout(500);
+check("closing the parentheses hides it", await callTipBox.count() === 0, `${await callTipBox.count()}`);
+await page.keyboard.press("ArrowLeft");
+await page.waitForTimeout(500);
+check("the cursor moved back into them shows it", await callTipBox.count() === 1, `${await callTipBox.count()}`);
+await page.keyboard.press("End");
 const typed = await input.inputValue();
 check('a ")" typed is added, also next to one', typed === 'getNode("vtkMRMLScene*"))', JSON.stringify(typed));
 

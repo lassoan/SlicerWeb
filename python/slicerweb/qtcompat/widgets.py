@@ -664,17 +664,30 @@ class QAbstractButton(_ElementWidget):
         if text:
             self.text = text
 
+    #: Whether the click being reported has toggled the button already (the element reports a click
+    #: of a checkable button as toggled, then clicked)
+    _toggledByClick = False
+
     def _onClicked(self, checked=False):
-        if self.checkable:
+        if self.checkable and not self._toggledByClick:
             QAbstractButton.checked.set_silently(self, bool(checked))
             dom.set_prop(self._el, "checked", self.checked)
+        # After toggled, the button is as its slots left it: a module that checks it again from what
+        # it keeps (Clip Vessel's manual plane buttons) is not overruled by what the click was.
+        self._toggledByClick = False
         self.pressed.emit()
         self.released.emit()
         self.clicked.emit(bool(self.checked))
 
     def _onToggled(self, checked):
-        if self.checkable:
-            self.toggled.emit(bool(checked))
+        if not self.checkable:
+            return
+        # As in Qt, the button is checked (or not) before toggled is emitted: its slots read the new
+        # state of the button, not the one before the click.
+        QAbstractButton.checked.set_silently(self, bool(checked))
+        dom.set_prop(self._el, "checked", self.checked)
+        self._toggledByClick = True
+        self.toggled.emit(bool(checked))
 
     def setText(self, text):
         self.text = text

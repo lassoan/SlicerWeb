@@ -42,8 +42,11 @@ const emit = defineEmits<{ clicked: [boolean]; toggled: [boolean]; checkBoxToggl
 
 function click() {
   if (props.checkable) {
-    emit("toggled", !props.checked);
-    emit("clicked", !props.checked);
+    // the state the click makes, said the same in both: what toggled's slots do may change
+    // props.checked before clicked is emitted
+    const checked = !props.checked;
+    emit("toggled", checked);
+    emit("clicked", checked);
   } else {
     emit("clicked", false);
   }

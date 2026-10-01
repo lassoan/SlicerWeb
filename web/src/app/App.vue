@@ -327,6 +327,22 @@ function onWindowShortcut(event: KeyboardEvent) {
   toggle();
 }
 onMounted(() => window.addEventListener("keydown", onWindowShortcut, { capture: true }));
+
+// Files dropped where nothing takes them (the views, a panel while 3D Slicer is loading) would have
+// the browser open them in place of the application: nothing happens, and the cursor says so
+function onStrayDrag(event: DragEvent) {
+  if (event.defaultPrevented) return;
+  event.preventDefault();
+  if (event.type === "dragover" && event.dataTransfer) event.dataTransfer.dropEffect = "none";
+}
+onMounted(() => {
+  window.addEventListener("dragover", onStrayDrag);
+  window.addEventListener("drop", onStrayDrag);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("dragover", onStrayDrag);
+  window.removeEventListener("drop", onStrayDrag);
+});
 onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { capture: true }));
 </script>
 
@@ -334,7 +350,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
   <div class="flex h-full flex-col bg-background text-foreground select-none">
     <ViewerHeader />
     <div ref="shell" class="relative flex min-h-0 flex-1 flex-row overflow-hidden" style="height: calc(100vh - 52px)">
-      <SidePanel side="left" :open="store.leftPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.leftPanelOpen = !store.leftPanelOpen"
+      <SidePanel side="left" :open="store.leftPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.leftPanelOpen = !store.leftPanelOpen" :disabled="store.status !== 'ready'"
         :tabs="[{ id: 'data', label: 'Data' }]">
         <DataPanel />
       </SidePanel>
@@ -344,7 +360,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
         <LogWindow v-if="store.logWindowOpen" />
         <PythonConsole v-if="store.pythonConsoleOpen" />
       </main>
-      <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.rightPanelOpen = !store.rightPanelOpen"
+      <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.rightPanelOpen = !store.rightPanelOpen" :disabled="store.status !== 'ready'"
         :tabs="[{ id: 'modules', label: 'Modules' }]">
         <template #header><ModuleTitleBar /></template>
         <ModulePanel />

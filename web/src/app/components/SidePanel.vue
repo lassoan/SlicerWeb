@@ -11,7 +11,10 @@ import { store } from "../store";
 // matters because what is loaded is fitted to the width of a view at the moment it arrives.
 const props = defineProps<{ side: "left" | "right"; open: boolean; overlay?: boolean; tabs: { id: string; label: string }[];
   /** No strip to open the panel from: the toolbar has a button for it instead (a phone held upright). */
-  noStrip?: boolean }>();
+  noStrip?: boolean;
+  /** Its contents (header and body) shown, but not to be used: while 3D Slicer is loading, as the
+   *  toolbar. The button that collapses the panel still works. */
+  disabled?: boolean }>();
 defineEmits<{ toggle: [] }>();
 
 const width = computed({
@@ -68,12 +71,14 @@ function startResize(e: PointerEvent) {
         <ChevronLeft v-if="side === 'left'" :size="16" />
         <ChevronRight v-else :size="16" />
       </button>
-      <div v-for="tab in tabs" :key="tab.id"
-        class="flex h-full min-w-0 flex-1 items-center justify-center bg-primary/10 text-[13px] text-foreground">
+      <div v-for="tab in tabs" :key="tab.id" :inert="disabled"
+        class="flex h-full min-w-0 flex-1 items-center justify-center bg-primary/10 text-[13px] text-foreground"
+        :class="{ 'pointer-events-none opacity-40': disabled }">
         <slot name="header" :tab="tab">{{ tab.label }}</slot>
       </div>
     </div>
-    <div class="sw-panel-scroll mt-[2px] min-h-0 flex-1 bg-bkg-low">
+    <div class="sw-panel-scroll mt-[2px] min-h-0 flex-1 bg-bkg-low" :inert="disabled" :data-disabled="disabled || undefined"
+      :class="{ 'pointer-events-none opacity-40': disabled }">
       <slot />
     </div>
     <div v-if="!overlay" class="absolute top-0 bottom-0 z-10 w-[4px] cursor-col-resize hover:bg-primary/40"

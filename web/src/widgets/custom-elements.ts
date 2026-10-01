@@ -40,7 +40,11 @@ export function registerSlicerWidgets() {
   for (const [name, component] of Object.entries(widgets)) {
     const tag = tagNames[name];
     if (tag && !customElements.get(tag)) {
-      customElements.define(tag, defineCustomElement(component as any, { shadowRoot: false }));
+      // The element is the widget: what is set on it - shown or hidden (style), enabled, its place in
+      // a layout, its tooltip - stays on it, and is not copied onto the root of what it renders. A copy
+      // is only updated while the element is in the page, so a widget hidden, taken out (the panel of
+      // another module shown) and shown again came back with its content still hidden.
+      customElements.define(tag, defineCustomElement(component as any, { shadowRoot: false, inheritAttrs: false }));
     }
   }
 }

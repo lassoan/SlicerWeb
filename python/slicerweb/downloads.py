@@ -12,6 +12,7 @@ of one, see download-proxy/worker.js).
 
 import logging
 import os
+import urllib.parse
 import urllib.request
 
 logger = logging.getLogger("slicerweb.downloads")
@@ -95,6 +96,24 @@ def _mirrored(url):
     return _site_base() + "sample-data/" + name if name else ""
 
 
+def direct_download_url(url):
+    """The address the file itself is downloaded from, for an address that leads to a page about it.
+
+    A Dropbox share link (www.dropbox.com/scl/fi/... or /s/..., ?dl=0) answers with a page that
+    shows the file, and even with ?dl=1 it sends the file through a redirect that other sites may not
+    read. The same link on dl.dropboxusercontent.com answers with the file, readable by any site
+    (as directDownloadURL in web/src/core/runtime.ts). Other addresses are returned as they are.
+    """
+    parsed = urllib.parse.urlsplit(str(url))
+    if parsed.hostname in ("www.dropbox.com", "dropbox.com") and (
+            parsed.path.startswith("/scl/fi/") or parsed.path.startswith("/s/")):
+        query = [(k, v) for k, v in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True) if k not in ("dl", "raw")]
+        query.append(("dl", "1"))
+        return urllib.parse.urlunsplit((parsed.scheme, "dl.dropboxusercontent.com", parsed.path,
+                                        urllib.parse.urlencode(query), parsed.fragment))
+    return str(url)
+
+
 def download(url, mirrored=True):
     """Contents of a URL as bytes (synchronous)."""
     global _download
@@ -103,6 +122,7 @@ def download(url, mirrored=True):
     if _download is None:
         _download = js.eval(_JS_DOWNLOAD)
     copy = _mirrored(url) if mirrored else ""
+    url = direct_download_url(url)
     if copy:
         try:
             return bytes(memoryview(_download(copy, "").to_py()))

@@ -102,6 +102,31 @@ const DOWNLOAD_PROXY: string = (() => {
 })();
 
 /**
+ * The address the file itself is downloaded from, for an address that leads to a page about it.
+ *
+ * A Dropbox share link (www.dropbox.com/scl/fi/... or /s/..., ?dl=0) answers with a page that
+ * shows the file, and even with ?dl=1 it sends the file through a redirect that other sites may not
+ * read. The same link on dl.dropboxusercontent.com answers with the file, readable by any site.
+ * Other addresses are returned as they are.
+ */
+export function directDownloadURL(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return url;
+  }
+  if ((parsed.hostname === "www.dropbox.com" || parsed.hostname === "dropbox.com")
+      && /^\/(scl\/fi|s)\//.test(parsed.pathname)) {
+    parsed.hostname = "dl.dropboxusercontent.com";
+    parsed.searchParams.delete("raw");
+    parsed.searchParams.set("dl", "1");
+    return parsed.href;
+  }
+  return url;
+}
+
+/**
  * Files this site holds copies of, by the address they are published under elsewhere.
  *
  * Sample data lives on servers that do not allow cross-origin requests, so a site that has no
@@ -919,6 +944,7 @@ bridge.call
                        warnAboveBytes?: number;
                      } = {}): Promise<string> {
     const copy = (await mirroredFiles())[url];
+    url = directDownloadURL(url);
     const from = copy ? new URL("sample-data/" + copy, document.baseURI).href : url;
     let response: Response | null = null;
     try {

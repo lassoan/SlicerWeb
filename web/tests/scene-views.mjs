@@ -53,6 +53,16 @@ const restored = await window_();
 console.log(`window ${stored} -> ${changed} -> ${restored} after clicking the scene view`);
 console.log("the scene view put it back:", restored === stored);
 
+// the edit button changes the name and the description of the scene view
+await page.locator("[data-name^='sceneView:'] [data-name='edit']").first().click();
+await page.locator("[data-name='editName']").fill("Renamed view");
+await page.locator("[data-name='editDescription']").fill("Edited description");
+await page.locator("[data-name='saveEdit']").click();
+await page.waitForTimeout(1500);
+const edited = [await value(`${logic}.GetNthSceneViewName(0)`), await value(`${logic}.GetNthSceneViewDescription(0)`)];
+console.log("edited:", JSON.stringify(edited), "ok:", edited[0] === "'Renamed view'" && edited[1] === "'Edited description'",
+  "listed:", await page.locator("[data-name='sceneView:Renamed view']").count() === 1);
+
 // the delete button takes the scene view away
 await page.locator("[data-name^='sceneView:'] [data-name='delete']").first().click();
 await page.waitForTimeout(1500);

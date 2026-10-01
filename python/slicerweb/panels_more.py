@@ -217,6 +217,21 @@ def restoreSceneView(index):
 
 
 @method()
+def setSceneViewProperties(index, name=None, description=None):
+    """Change the name or the description of a scene view (*index* as sceneViews gives it).
+    What is not given is left as it is."""
+    logic = _sceneViewsLogic()
+    index = int(index)
+    if not 0 <= index < logic.GetNumberOfSceneViews():
+        raise ValueError(f"There is no scene view {index}")
+    if name is not None:
+        logic.SetNthSceneViewName(index, str(name) or "Scene view")
+    if description is not None:
+        logic.SetNthSceneViewDescription(index, str(description))
+    return True
+
+
+@method()
 def removeSceneView(index):
     """Delete a scene view (*index* as sceneViews gives it)."""
     return bool(_sceneViewsLogic().RemoveSceneView(int(index)))

@@ -136,6 +136,8 @@ class SlicerWebApplication:
         import qt
 
         __main__.__dict__.update(slicer=slicer, vtk=vtk, qt=qt, ctk=ctk, numpy=numpy, np=numpy)
+        # getNode, arrayFromVolume, ... without "slicer.util.", as slicerqt.py does for the desktop console
+        exec("from slicer.util import *", __main__.__dict__)
 
         bridge.install_scene_observers()
 

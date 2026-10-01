@@ -56,7 +56,7 @@ async function run() {
 
 // ---- Auto-completion: suggestions appear after a pause in typing (phones have no Tab key), or
 // immediately with Tab. Tap/click a suggestion, or use arrow keys and Enter/Tab to insert it.
-interface Completion { text: string; callable: boolean }
+interface Completion { text: string; callable: boolean; takesArguments?: boolean }
 const COMPLETION_DELAY_MS = 1000;
 const suggestions = ref<Completion[]>([]);
 const activeSuggestion = ref(0);
@@ -104,13 +104,27 @@ async function requestCompletions(applySingle = false) {
   activeSuggestion.value = 0;
 }
 
+/** Put the completion in place of the word being typed. A function gets both parentheses, and the
+ *  cursor goes between them if it takes arguments, after them if it does not (as a call is typed
+ *  next); parentheses already there are not doubled. */
 function applyCompletion(item: Completion) {
   const before = input.value.slice(0, completionStart);
   const after = input.value.slice(completionCursor);
-  const inserted = item.text + (item.callable ? "(" : "");
-  input.value = before + inserted + after;
+  const hasParenthesis = after.startsWith("(");
+  const parentheses = item.callable && !hasParenthesis ? "()" : "";
+  input.value = before + item.text + parentheses + after;
   closeSuggestions();
-  const position = before.length + inserted.length;
+  let position = before.length + item.text.length;
+  if (item.callable) {
+    // inside: right after "("; else after the ")" (of the ones added, or of those already there)
+    const takesArguments = item.takesArguments ?? true;
+    if (takesArguments) position += 1;
+    else if (parentheses) position += 2;
+    else {
+      const close = input.value.indexOf(")", position);
+      position = close >= 0 ? close + 1 : position + 1;
+    }
+  }
   nextTick(() => {
     const el = inputEl.value;
     if (!el) return;
@@ -161,6 +175,16 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault();
     requestCompletions(true);
     return;
+  }
+  // ")" where one is already next (the one a completion added): typed over, not doubled
+  if (e.key === ")" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const el = inputEl.value;
+    const at = el?.selectionStart ?? -1;
+    if (el && at >= 0 && at === el.selectionEnd && input.value[at] === ")") {
+      e.preventDefault();
+      el.setSelectionRange(at + 1, at + 1);
+      return;
+    }
   }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();

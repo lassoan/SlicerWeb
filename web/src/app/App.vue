@@ -302,6 +302,27 @@ onMounted(async () => {
     store.error = String(e?.message ?? e);
   }
 });
+
+// Keyboard shortcuts of desktop Slicer's windows: Ctrl+3 the Python console, Ctrl+0 the
+// application log (the error log there), Ctrl+4 the Extensions Manager - each shows or hides it
+// (Cmd on a Mac). Taken before a text field gets the key, so that they work while typing in the
+// console too.
+const windowShortcuts: Record<string, () => void> = {
+  "3": () => { store.pythonConsoleOpen = !store.pythonConsoleOpen; },
+  "0": () => { store.logWindowOpen = !store.logWindowOpen; },
+  "4": () => { store.extensionsManagerOpen = !store.extensionsManagerOpen; },
+};
+function onWindowShortcut(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+  const digit = /^(Digit|Numpad)(\d)$/.exec(event.code)?.[2];
+  const toggle = digit !== undefined ? windowShortcuts[digit] : undefined;
+  if (!toggle) return;
+  event.preventDefault();
+  event.stopPropagation();
+  toggle();
+}
+onMounted(() => window.addEventListener("keydown", onWindowShortcut, { capture: true }));
+onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { capture: true }));
 </script>
 
 <template>

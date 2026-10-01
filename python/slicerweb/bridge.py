@@ -158,15 +158,71 @@ def evalPython(code, mode="exec"):
     return None
 
 
+def _takesArguments(obj):
+    """Whether a callable takes arguments: the console puts the cursor inside the parentheses it adds,
+    else after them. Python functions tell their signature; VTK methods and classes tell it in their
+    docstring, one line per overload ("GetNodeByID(self, id:str) -> ..."). Not known: True."""
+    import inspect
+    import re
+
+    try:
+        signature = inspect.signature(obj)
+    except (TypeError, ValueError):
+        signature = None
+    if signature is not None:
+        return any(p.name not in ("self", "cls") for p in signature.parameters.values())
+    doc = getattr(obj, "__doc__", None) or ""
+    name = getattr(obj, "__name__", "")
+    overloads = re.findall(r"^\s*%s\(([^)]*)\)" % re.escape(name), doc, re.M) if name else []
+    if not overloads:
+        return True
+    return any([a for a in (part.strip() for part in args.split(",")) if a and a != "self"] for args in overloads)
+
+
+def _rankCompletions(names, prefix):
+    """The names that match what was typed, best first: those starting with it as typed, then those
+    starting with it in any case, then those containing it anywhere (in any case); in each group in
+    alphabetical order. Names starting with an underscore only when one was typed."""
+    lower = prefix.lower()
+    ranked = []
+    for name in set(names):
+        if name.startswith("_") and not prefix.startswith("_"):
+            continue
+        if name.startswith(prefix):
+            rank = 0
+        elif name.lower().startswith(lower):
+            rank = 1
+        elif lower and lower in name.lower():
+            rank = 2
+        else:
+            continue
+        ranked.append((rank, name.lower(), name))
+    ranked.sort()
+    return [name for _, _, name in ranked]
+
+
+def _completionItem(text, obj, found=True):
+    isCallable = found and callable(obj)
+    item = {"text": text, "callable": isCallable}
+    if isCallable:
+        try:
+            item["takesArguments"] = _takesArguments(obj)
+        except Exception:
+            item["takesArguments"] = True
+    return item
+
+
 @method()
 def completePython(text, cursor=None, limit=200):
     """Completions for the Python console at the cursor position (like the desktop Python console).
 
-    Returns {"start": index where the completed word starts, "items": [{"text", "callable"}]}.
+    Returns {"start": index where the completed word starts, "items": [{"text", "callable",
+    "takesArguments"}]}, ranked by _rankCompletions.
     """
     import __main__
+    import builtins
+    import keyword
     import re
-    import rlcompleter
 
     if cursor is None:
         cursor = len(text)
@@ -197,44 +253,45 @@ def completePython(text, cursor=None, limit=200):
         except Exception:
             return {"start": cursor, "items": []}
         items = []
-        for name in sorted(dir(obj), key=str.lower):
-            if not name.startswith(prefix) or (name.startswith("_") and not prefix.startswith("_")):
-                continue
+        for name in _rankCompletions(dir(obj), prefix)[:limit]:
             try:
-                isCallable = callable(getattr(obj, name))
+                items.append(_completionItem(name, getattr(obj, name)))
             except Exception:
-                isCallable = False
-            items.append({"text": name, "callable": isCallable})
-            if len(items) >= limit:
-                break
+                items.append(_completionItem(name, None, found=False))
         return {"start": cursor - len(prefix), "items": items}
 
     match = re.search(r"[A-Za-z_][\w.]*$|(?<=\.)$", before)
     word = match.group(0) if match else ""
     if not word:
         return {"start": cursor, "items": []}
-    completer = rlcompleter.Completer(namespace)
-    items, seen = [], set()
-    state = 0
-    while len(items) < limit:
+    base, dot, prefix = word.rpartition(".")
+    if dot:
+        # an attribute of a dotted name (slicer.util.getN): the name is looked up, as rlcompleter does
         try:
-            candidate = completer.complete(word, state)
+            obj = eval(base, namespace)
         except Exception:
-            break
-        state += 1
-        if candidate is None:
-            break
-        isCallable = candidate.endswith("(") or candidate.endswith("()")
-        name = candidate[:-2] if candidate.endswith("()") else candidate.rstrip("(")
-        # hide private members unless the user started typing an underscore
-        last = name.rsplit(".", 1)[-1]
-        if last.startswith("_") and not word.rsplit(".", 1)[-1].startswith("_"):
+            return {"start": cursor, "items": []}
+        names = dir(obj)
+
+        def lookup(name):
+            return getattr(obj, name)
+    else:
+        names = list(namespace) + dir(builtins) + keyword.kwlist
+
+        def lookup(name):
+            if name in namespace:
+                return namespace[name]
+            return getattr(builtins, name)
+    items = []
+    for name in _rankCompletions(names, prefix)[:limit]:
+        text = f"{base}.{name}" if dot else name
+        if name in keyword.kwlist and not dot:
+            items.append({"text": name, "callable": False})
             continue
-        if name in seen:
-            continue
-        seen.add(name)
-        items.append({"text": name, "callable": isCallable})
-    items.sort(key=lambda i: i["text"].lower())
+        try:
+            items.append(_completionItem(text, lookup(name)))
+        except Exception:
+            items.append(_completionItem(text, None, found=False))
     return {"start": cursor - len(word), "items": items}
 
 

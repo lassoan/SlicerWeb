@@ -35,6 +35,16 @@ check("a Python function with arguments", getNode?.callable && getNode.takesArgu
 const byId = (await complete("slicer.mrmlScene.GetNodeByI")).items.find((i) => i.text === "slicer.mrmlScene.GetNodeByID");
 check("a VTK method with arguments", byId?.callable && byId.takesArguments === true, JSON.stringify(byId));
 
+// docstrings: the summary is the line that says what it does (past a VTK method's signature lines)
+check("a Python function's summary", typeof getNode?.summary === "string" && getNode.summary.length > 10 && getNode.doc?.includes(getNode.summary),
+  JSON.stringify(getNode?.summary));
+check("a VTK method's summary, not its signature", noArgs?.summary === "Get number of nodes in the scene" && /^GetNumberOfNodes\(/m.test(noArgs.doc ?? ""),
+  JSON.stringify(noArgs?.summary));
+// one whose docstring has no description: its signature, which says the most there is
+check("a VTK method without a description: its signature", byId?.summary?.startsWith("GetNodeByID("), JSON.stringify(byId?.summary));
+const value = (await complete("abcTes")).items.find((i) => i.text === "abcTest");
+check("no docstring for a value", value && value.summary === undefined, JSON.stringify(value));
+
 // in the console: the shortcut opens it, Tab completes, the parentheses and the cursor
 await page.keyboard.press("Control+3");
 await page.waitForTimeout(800);
@@ -87,6 +97,29 @@ await input.pressSequentially("slicer.mrmlScene.G", { delay: 20 });
 await page.keyboard.press("Tab");
 await page.waitForTimeout(800);
 const list = page.getByRole("listbox", { name: "Completions" });
+
+// the docstring of the suggestion the list is on, and the summaries in the rows
+const docPanel = page.locator("[data-name=completionDoc]");
+const firstDoc = await docPanel.innerText().catch(() => "");
+const summaries = await list.locator("[data-name=completionSummary]").allInnerTexts();
+await page.keyboard.press("ArrowDown");
+await page.waitForTimeout(200);
+const secondDoc = await docPanel.innerText().catch(() => "");
+// under the list, above the prompt, and within the console (not over the views above it)
+const panelPlaced = await page.evaluate(() => {
+  const d = document.querySelector("[data-name=completionDoc]")?.getBoundingClientRect();
+  const l = document.querySelector("[role=listbox]")?.getBoundingClientRect();
+  const c = document.querySelector("[data-name=pythonConsole]")?.getBoundingClientRect();
+  const t = document.querySelector("[data-name=pythonConsole] textarea")?.getBoundingClientRect();
+  return !!d && !!l && !!c && !!t && d.top >= l.bottom - 1 && d.bottom <= t.top + 1 && l.top >= c.top - 1;
+});
+check("the docstring of the highlighted suggestion shows, under the list, in the console", firstDoc.length > 20 && secondDoc.length > 20 && firstDoc !== secondDoc && panelPlaced,
+  `${JSON.stringify(firstDoc.split("\n").slice(0, 2).join(" | "))} then ${JSON.stringify(secondDoc.split("\n").slice(0, 2).join(" | "))}`);
+check("the rows show summaries", summaries.filter((s) => s && !s.startsWith("slicer.")).length > summaries.length / 2,
+  `${summaries.filter((s) => s && !s.startsWith("slicer.")).length} of ${summaries.length}: ${JSON.stringify(summaries.slice(0, 3))}`);
+const shotPath = process.argv[3];
+if (shotPath) await page.locator("[data-name=pythonConsole]").screenshot({ path: shotPath });
+await page.keyboard.press("ArrowUp");
 const active = () => list.evaluate((l) => [...l.querySelectorAll("[role=option]")].findIndex((o) => o.getAttribute("aria-selected") === "true"));
 const shown = await list.evaluate((l) => Math.floor(l.clientHeight / l.querySelector("li").offsetHeight));
 const total = await list.getByRole("option").count();

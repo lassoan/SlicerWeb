@@ -201,6 +201,30 @@ def _rankCompletions(names, prefix):
     return [name for _, _, name in ranked]
 
 
+def _docstring(obj, limit=2000):
+    """The docstring of a function, class or module, for the console's completion list: the whole of
+    it (up to *limit* characters) and its summary - the first line that says what the thing does,
+    past the signature lines a VTK method's docstring starts with ("GetNodeByID(self, id:str) ->
+    ...", "C++: ..."). None for other values: their docstring would be their type's."""
+    import inspect
+    import re
+
+    if not (callable(obj) or inspect.ismodule(obj)):
+        return None
+    try:
+        doc = inspect.getdoc(obj) or ""
+    except Exception:
+        doc = getattr(obj, "__doc__", None) or ""
+    doc = doc.strip()
+    if not doc:
+        return None
+    name = getattr(obj, "__name__", "")
+    lines = [line.strip() for line in doc.splitlines()]
+    signature = re.compile(r"^(%s\s*\(|C\+\+:|V\.|virtual |static )" % re.escape(name)) if name else re.compile(r"^C\+\+:")
+    summary = next((line for line in lines if line and not signature.match(line)), lines[0])
+    return {"summary": summary[:200], "doc": doc[:limit] + ("..." if len(doc) > limit else "")}
+
+
 def _completionItem(text, obj, found=True):
     isCallable = found and callable(obj)
     item = {"text": text, "callable": isCallable}
@@ -209,6 +233,13 @@ def _completionItem(text, obj, found=True):
             item["takesArguments"] = _takesArguments(obj)
         except Exception:
             item["takesArguments"] = True
+    if found:
+        try:
+            doc = _docstring(obj)
+        except Exception:
+            doc = None
+        if doc:
+            item.update(doc)
     return item
 
 

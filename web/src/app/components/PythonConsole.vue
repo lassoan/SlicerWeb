@@ -60,7 +60,8 @@ async function run() {
 
 // ---- Auto-completion: suggestions appear after a pause in typing (phones have no Tab key), or
 // immediately with Tab. Tap/click a suggestion, or use arrow keys and Enter/Tab to insert it.
-interface Completion { text: string; callable: boolean; takesArguments?: boolean }
+// summary: the first descriptive line of the docstring; doc: the docstring (both absent for values)
+interface Completion { text: string; callable: boolean; takesArguments?: boolean; summary?: string; doc?: string }
 const COMPLETION_DELAY_MS = 1000;
 const suggestions = ref<Completion[]>([]);
 const activeSuggestion = ref(0);
@@ -279,8 +280,10 @@ function startResize(e: PointerEvent) {
     <!-- Completions: a list above the prompt, as a console on the web usually has, so that long
          names can be read (a row of them along the prompt leaves no room for any of it). -->
     <div v-if="suggestions.length" class="relative h-0">
-      <ul ref="suggestionList"
-        class="absolute right-2 bottom-1 left-2 z-30 max-h-56 overflow-y-auto rounded-md border border-input bg-popover py-1 shadow-xl"
+      <!-- one box above the prompt: the suggestions, and under them the docstring of the one the list is on -->
+      <div class="absolute right-2 bottom-1 left-2 z-30 flex flex-col overflow-hidden rounded-md border border-input bg-popover shadow-xl"
+        :style="{ maxHeight: `${Math.max(120, height - 64)}px` }">
+      <ul ref="suggestionList" class="shrink-0 overflow-y-auto py-1" style="max-height: 11rem"
         role="listbox" aria-label="Completions">
         <li v-for="(s, i) in suggestions" :key="s.text">
           <button type="button" role="option" :aria-selected="i === activeSuggestion" :data-active="i === activeSuggestion"
@@ -290,10 +293,15 @@ function startResize(e: PointerEvent) {
             <span class="shrink-0 text-foreground/90"><template v-for="(part, p) in matchParts(shortName(s.text))" :key="p"><span
               v-if="p === 1" class="font-semibold text-highlight" data-name="completionMatch">{{ part }}</span><template v-else>{{ part }}</template></template><span
               v-if="s.callable" class="opacity-60">()</span></span>
-            <span class="ml-auto truncate text-[11px] opacity-70">{{ s.text }}</span>
+            <!-- what it does: the first line of its docstring (the full name when it has none) -->
+            <span class="ml-auto min-w-0 truncate font-sans text-[11px] opacity-70" :title="s.doc ?? s.text"
+              data-name="completionSummary">{{ s.summary ?? s.text }}</span>
           </button>
         </li>
       </ul>
+      <div v-if="suggestions[activeSuggestion]?.doc" data-name="completionDoc"
+        class="max-h-24 min-h-0 shrink overflow-y-auto border-t border-input px-2 py-1.5 font-mono text-[11px] leading-4 whitespace-pre-wrap text-muted-foreground">{{ suggestions[activeSuggestion].doc }}</div>
+      </div>
     </div>
     <textarea ref="inputEl" v-model="input" rows="1" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off"
       placeholder=">>> (Shift+Enter for a new line, Tab to complete)"

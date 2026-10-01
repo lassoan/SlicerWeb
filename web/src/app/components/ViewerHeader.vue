@@ -4,7 +4,6 @@ import {
   Crosshair,
   Box,
   Camera,
-  CircleDot,
   Contrast,
   Hand,
   LayoutPanelLeft,
@@ -13,8 +12,6 @@ import {
   MousePointerClick,
   Puzzle,
   ScanSearch,
-  Ruler,
-  Spline,
   ScrollText,
   Menu,
   Maximize2,
@@ -24,10 +21,8 @@ import {
   LayoutGrid,
   SlidersHorizontal,
   Terminal,
-  Triangle,
   Brush,
   Eraser,
-  Square,
 } from "@lucide/vue";
 import type { SlicerBridge } from "@/core/bridge";
 import type { BuildInfo, GitVersion, SlicerRuntime } from "@/core/runtime";
@@ -35,8 +30,7 @@ import { openModule as openModuleInPanel, store } from "../store";
 import { moduleList } from "../modules/list";
 import ToolButton from "./ToolButton.vue";
 import ToolMenu from "./ToolMenu.vue";
-import ClosedCurveIcon from "./icons/ClosedCurveIcon.vue";
-import RoiBoxIcon from "./icons/RoiBoxIcon.vue";
+import { markupsIcons } from "@/widgets/markupsIcons";
 import ScrollSlicesIcon from "./icons/ScrollSlicesIcon.vue";
 import LayoutSelector from "./LayoutSelector.vue";
 
@@ -117,15 +111,16 @@ function openModule(name: string) {
 }
 
 // A line first, and offered first: measuring a distance is what a markup is wanted for most often.
+// (the icons are those of markups place widgets too: widgets/markupsIcons.ts)
 const markupTools = [
-  { cls: "vtkMRMLMarkupsLineNode", label: "Line", icon: Ruler },
-  { cls: "vtkMRMLMarkupsFiducialNode", label: "Point list", icon: CircleDot },
-  { cls: "vtkMRMLMarkupsAngleNode", label: "Angle", icon: Triangle },
-  { cls: "vtkMRMLMarkupsCurveNode", label: "Open curve", icon: Spline },
-  { cls: "vtkMRMLMarkupsClosedCurveNode", label: "Closed curve", icon: ClosedCurveIcon },
-  { cls: "vtkMRMLMarkupsPlaneNode", label: "Plane", icon: Square },
-  { cls: "vtkMRMLMarkupsROINode", label: "ROI", icon: RoiBoxIcon },
-];
+  { cls: "vtkMRMLMarkupsLineNode", label: "Line" },
+  { cls: "vtkMRMLMarkupsFiducialNode", label: "Point list" },
+  { cls: "vtkMRMLMarkupsAngleNode", label: "Angle" },
+  { cls: "vtkMRMLMarkupsCurveNode", label: "Open curve" },
+  { cls: "vtkMRMLMarkupsClosedCurveNode", label: "Closed curve" },
+  { cls: "vtkMRMLMarkupsPlaneNode", label: "Plane" },
+  { cls: "vtkMRMLMarkupsROINode", label: "ROI" },
+].map((tool) => ({ ...tool, icon: markupsIcons[tool.cls] }));
 
 /**
  * Whether the toolbar is too narrow for all of its buttons.

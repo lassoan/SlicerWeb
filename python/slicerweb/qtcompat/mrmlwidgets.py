@@ -797,6 +797,8 @@ class qSlicerMarkupsPlaceWidget(QWidget):
                     self._observations.append((node, node.AddObserver(vtk.vtkCommand.ModifiedEvent, self._onPlaceStateModified)))
         except Exception:
             logger.debug("The place widget cannot follow the place mode", exc_info=True)
+        self._displayObservation = None
+        self._updateFromNode()
 
     def _onPlaceStateModified(self, caller=None, event=None):
         self._updatePlaceButton()
@@ -819,6 +821,9 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         for node, tag in self._observations:
             node.RemoveObserver(tag)
         self._observations = []
+        if self._node is not None and getattr(self, "_displayObservation", None) is not None:
+            self._node.RemoveObserver(self._displayObservation)
+            self._displayObservation = None
         super()._destroy()
 
     def colorButton(self):
@@ -863,8 +868,39 @@ class qSlicerMarkupsPlaceWidget(QWidget):
         pass
 
     def setCurrentNode(self, node):
+        import vtk
+
+        old = self._node
+        if old is not None and getattr(self, "_displayObservation", None) is not None:
+            old.RemoveObserver(self._displayObservation)
+            self._displayObservation = None
         self._node = node
+        # the color button follows the node's display, whatever changes it (the Markups module, code)
+        if node is not None and hasattr(node, "AddObserver"):
+            self._displayObservation = node.AddObserver(
+                getattr(node, "DisplayModifiedEvent", vtk.vtkCommand.ModifiedEvent), lambda *args: self._updateFromNode())
+        self._updateFromNode()
         self._updatePlaceButton()
+
+    def _updateFromNode(self):
+        """The color button shows the selected color of the node's display (the default color, disabled,
+        when there is no node), and the Place button the icon of its kind of markup, as on the desktop."""
+        from .types import QColor
+
+        node = self._node
+        display = node.GetDisplayNode() if node is not None and hasattr(node, "GetDisplayNode") else None
+        if display is not None:
+            r, g, b = display.GetSelectedColor()
+            color = QColor(int(round(r * 255)), int(round(g * 255)), int(round(b * 255)))
+        else:
+            color = QColor(0, 255, 0)   # qSlicerMarkupsPlaceWidget's color when there is no node
+        wasBlocked = self._colorButton.blockSignals(True)
+        try:
+            self._colorButton.setColor(color)
+        finally:
+            self._colorButton.blockSignals(wasBlocked)
+        self._colorButton.setEnabled(node is not None)
+        dom.set_prop(self._button._el, "markupsClass", node.GetClassName() if node is not None else "")
 
     def currentNode(self):
         return self._node

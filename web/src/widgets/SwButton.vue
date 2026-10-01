@@ -2,6 +2,8 @@
 // QPushButton / QToolButton, and ctkCheckablePushButton when checkBoxVisible is set: the check box
 // is a separate control inside the button (e.g. "Apply" with auto-update), so clicking the check box
 // switches the option and clicking the rest of the button runs the action.
+import { markupsIcons } from "./markupsIcons";
+
 const props = withDefaults(
   defineProps<{
     text?: string;
@@ -17,6 +19,8 @@ const props = withDefaults(
     checkBoxToolTip?: string;
     /** the edge of the button the check box is at (ctkCheckablePushButton indicatorAlignment) */
     checkBoxAlignment?: "left" | "right";
+    /** a markups node class: the button shows the icon of that kind of markup (a place button) */
+    markupsClass?: string;
   }>(),
   {
     text: "",
@@ -31,6 +35,7 @@ const props = withDefaults(
     checkBoxChecked: false,
     checkBoxToolTip: "",
     checkBoxAlignment: "left",
+    markupsClass: "",
   },
 );
 const emit = defineEmits<{ clicked: [boolean]; toggled: [boolean]; checkBoxToggled: [boolean] }>();
@@ -73,6 +78,7 @@ function toggleCheckBox() {
       </svg>
     </span>
     <img v-if="icon" :src="icon" alt="" class="shrink-0 object-contain" :style="{ width: iconSize + 'px', height: iconSize + 'px' }" />
+    <component v-else-if="markupsIcons[markupsClass]" :is="markupsIcons[markupsClass]" :size="iconSize" class="shrink-0" />
     <slot />{{ text }}
   </button>
 </template>

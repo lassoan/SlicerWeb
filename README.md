@@ -108,7 +108,16 @@ changes on `main`, and on request.
 A build of the site is a few hundred megabytes: the WebAssembly runtime, and the sample data, which
 it carries itself because a site of static files cannot fetch files from servers that refuse
 cross-origin requests (the development server fetches them for the page; the published site has no
-such proxy, and is built with `VITE_DOWNLOAD_PROXY=0` so that it says so plainly instead of trying).
+such proxy of its own).
+
+Other files of such servers - any URL a user loads - are fetched through a download proxy: a
+Cloudflare Worker, [download-proxy/worker.js](download-proxy/worker.js), that only pages of the
+allowed sites may use and that passes files on without keeping them. It is published with
+`python scripts/publish_download_proxy.py --deployment <folder with the Cloudflare settings>`, and
+the site is built with its address from the repository variable `SLICERWEB_DOWNLOAD_PROXY`
+(`VITE_DOWNLOAD_PROXY`; without one, `0`: no proxy, which the site says plainly instead of trying).
+Servers that allow cross-origin requests are read directly, never through the proxy.
+
 Keeping those builds in a branch here would mean carrying every one of them in this repository's
 history for ever, so the site is pushed to a repository of its own,
 [lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), as a single commit with no

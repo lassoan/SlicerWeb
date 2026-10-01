@@ -5,8 +5,9 @@ synchronous XMLHttpRequest, so that they can be used from synchronous Python cod
 self tests). Hosts that do not allow cross-origin requests (e.g. GitHub release assets) cannot be
 read by the page at all, so a file from one is looked for in two other places first: the copies the
 site carries of the sample data (sample-data/mirror.json, written when the site is built), and the
-application's download proxy where there is one (see web/vite.assets.ts; a site of static files,
-such as the published one, has none).
+application's download proxy where there is one (web/vite.assets.ts on the development server; a
+site of static files, such as the published one, has one only where it was built with the address
+of one, see download-proxy/worker.js).
 """
 
 import logging
@@ -58,14 +59,21 @@ def _site_base():
     return base[: base.rfind("/") + 1]
 
 
-def _has_proxy():
-    """Whether this site fetches files of other sites for the page."""
+def _proxy_base():
+    """The start of the address through which files of other sites are fetched for the page (the
+    address of the file is appended to it), or "" where nothing fetches them."""
     try:
         import slicerweb_downloads
 
-        return bool(getattr(slicerweb_downloads, "proxy", True))
+        proxy = getattr(slicerweb_downloads, "proxy", None)
+        if proxy is not None:
+            return str(proxy)
     except ImportError:
-        return True
+        pass
+    try:
+        return _site_base() + "download?url="   # the development server's
+    except Exception:
+        return ""
 
 
 def _mirrored(url):
@@ -101,13 +109,7 @@ def download(url, mirrored=True):
         except Exception:
             # The copy is named in the map but is not there: ask where the file itself is.
             logger.debug("The copy of %s this site holds could not be read", url, exc_info=True)
-    proxyBase = ""
-    if _has_proxy():
-        try:
-            proxyBase = _site_base() + "download?url="
-        except Exception:
-            pass
-    data = _download(str(url), proxyBase)
+    data = _download(str(url), _proxy_base())
     return bytes(memoryview(data.to_py()))
 
 

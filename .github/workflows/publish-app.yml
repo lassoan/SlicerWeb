@@ -59,6 +59,10 @@ on:
         description: Branch, tag or commit of it
         type: string
         default: main
+      downloadProxy:
+        description: Download proxy for files of servers that refuse cross-origin requests (see download-proxy/worker.js; the repository variable SLICERWEB_DOWNLOAD_PROXY if empty)
+        type: string
+        default: ""
     secrets:
       SLICERWEB_APP_KEY:
         required: false
@@ -94,9 +98,12 @@ env:
   SLICERWEB_WHEELS: ${{ github.workspace }}/runtime/wheels
   SLICERWEB_EXTENSIONS: ${{ github.workspace }}/runtime/extensions
   SLICERWEB_SAMPLE_DATA: ${{ github.workspace }}/runtime/sample-data
-  # The published site is static files only: it has no download proxy, and asking for one would
-  # turn a clear failure into a confusing one. The development server keeps its proxy.
-  VITE_DOWNLOAD_PROXY: "0"
+  # The published site is static files only, so it has no download proxy of its own: files of
+  # servers that refuse cross-origin requests are fetched through the one given here - a Cloudflare
+  # Worker, download-proxy/worker.js, published with scripts/publish_download_proxy.py - and where
+  # none is given, through none ("0"), as asking for one that is not there would turn a clear
+  # failure into a confusing one. The development server keeps its own proxy.
+  VITE_DOWNLOAD_PROXY: ${{ inputs.downloadProxy || vars.SLICERWEB_DOWNLOAD_PROXY || '0' }}
 
 jobs:
   publish:

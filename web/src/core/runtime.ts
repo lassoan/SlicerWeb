@@ -86,14 +86,20 @@ async function downloadFailureReason(proxied: string, response: Response | null)
 }
 
 /**
- * Whether a file that another site holds may be fetched through this site.
+ * Where a file that another site holds is fetched for the page, as the start of an address that
+ * the address of the file is appended to; "" where nothing fetches it.
  *
- * The development server fetches such a file for the page (most servers do not let another site
- * read their files), but a site that is only static files - the one published on GitHub Pages -
- * has nothing that could. There the files it offers are its own (see mirroredFiles), and asking
- * for a proxy that is not there would only turn a clear failure into a confusing one.
+ * Most servers do not let another site read their files. The development server fetches such a
+ * file for the page (download?url=, the default). A site that is only static files - the one
+ * published on GitHub Pages - has nothing that could, so it is built with VITE_DOWNLOAD_PROXY set
+ * either to a download proxy elsewhere (download-proxy/worker.js) or to "0": then the files it
+ * offers are its own (see mirroredFiles), and asking for a proxy that is not there would only turn
+ * a clear failure into a confusing one.
  */
-const DOWNLOAD_PROXY = import.meta.env?.VITE_DOWNLOAD_PROXY !== "0";
+const DOWNLOAD_PROXY: string = (() => {
+  const setting = (import.meta.env?.VITE_DOWNLOAD_PROXY as string | undefined) ?? "download?url=";
+  return setting === "0" || setting === "" ? "" : new URL(setting, document.baseURI).href;
+})();
 
 /**
  * Files this site holds copies of, by the address they are published under elsewhere.
@@ -173,8 +179,8 @@ export class SlicerRuntime {
     // Downloads that module code asks for. Python cannot wait for one - it holds the thread the
     // page draws with - so it asks here and is called back (see slicerweb/downloads.py).
     pyodide.registerJsModule("slicerweb_downloads", {
-      // Whether this site fetches files of other sites for the page: Python downloads synchronously
-      // (slicerweb/downloads.py) and has to know, because a site without a proxy has other ways.
+      // Where files of other sites are fetched for the page ("" for nowhere): Python downloads
+      // synchronously (slicerweb/downloads.py) and has to know, because a site without a proxy has other ways.
       proxy: DOWNLOAD_PROXY,
       download: (url: string, path: string,
                  onProgress: (received: number, total: number) => void,
@@ -925,7 +931,7 @@ bridge.call
         throw new Error(`Download failed: ${url}
 This site holds no copy of this file and cannot fetch it from another site.`);
       }
-      const proxied = new URL("download?url=" + encodeURIComponent(new URL(url, document.baseURI).href), document.baseURI).href;
+      const proxied = DOWNLOAD_PROXY + encodeURIComponent(new URL(url, document.baseURI).href);
       const previous = response;
       response = await fetch(proxied).catch(() => null);
       if (!response || !response.ok) {

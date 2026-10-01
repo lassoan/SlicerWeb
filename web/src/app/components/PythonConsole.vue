@@ -75,6 +75,14 @@ watch(activeSuggestion, async () => {
   suggestionList.value?.querySelector<HTMLElement>("[data-active='true']")?.scrollIntoView({ block: "nearest" });
 });
 
+/** How many suggestions the list shows at a time (at least one). */
+function suggestionsPerPage() {
+  const list = suggestionList.value;
+  const item = list?.querySelector<HTMLElement>("li");
+  if (!list || !item || !item.offsetHeight) return 1;
+  return Math.max(1, Math.floor(list.clientHeight / item.offsetHeight) - 1);
+}
+
 function closeSuggestions() {
   suggestions.value = [];
   activeSuggestion.value = 0;
@@ -175,6 +183,14 @@ function onKey(e: KeyboardEvent) {
     if (e.key === "ArrowUp") {
       e.preventDefault();
       activeSuggestion.value = (activeSuggestion.value - 1 + n) % n;
+      return;
+    }
+    if (e.key === "PageDown" || e.key === "PageUp") {
+      // a page of the list: as many suggestions as it shows at a time, stopping at its ends
+      e.preventDefault();
+      const page = suggestionsPerPage();
+      const step = e.key === "PageDown" ? page : -page;
+      activeSuggestion.value = Math.max(0, Math.min(n - 1, activeSuggestion.value + step));
       return;
     }
     if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {

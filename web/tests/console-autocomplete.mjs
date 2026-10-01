@@ -81,6 +81,30 @@ const got = highlighted.map(([name, match]) => [name.replace("()", "").trim(), m
 check("the matched part is highlighted", JSON.stringify(got) === JSON.stringify(want.map(([n, m]) => [n.replace("()", ""), m])), JSON.stringify(got));
 await page.keyboard.press("Escape");
 
+// Page Down / Page Up page the list of suggestions (a page: what the list shows at a time), stopping at its ends
+await input.fill("");
+await input.pressSequentially("slicer.mrmlScene.G", { delay: 20 });
+await page.keyboard.press("Tab");
+await page.waitForTimeout(800);
+const list = page.getByRole("listbox", { name: "Completions" });
+const active = () => list.evaluate((l) => [...l.querySelectorAll("[role=option]")].findIndex((o) => o.getAttribute("aria-selected") === "true"));
+const shown = await list.evaluate((l) => Math.floor(l.clientHeight / l.querySelector("li").offsetHeight));
+const total = await list.getByRole("option").count();
+await page.keyboard.press("PageDown");
+const afterDown = await active();
+await page.keyboard.press("PageDown");
+const afterTwo = await active();
+await page.keyboard.press("PageUp");
+const afterUp = await active();
+for (let i = 0; i < Math.ceil(total / Math.max(1, shown - 1)) + 2; i++) await page.keyboard.press("PageDown");
+const atEnd = await active();
+const visible = await list.evaluate((l) => { const o = l.querySelector("[aria-selected=true]"); const a = o.getBoundingClientRect(), b = l.getBoundingClientRect(); return a.top >= b.top - 1 && a.bottom <= b.bottom + 1; });
+for (let i = 0; i < Math.ceil(total / Math.max(1, shown - 1)) + 2; i++) await page.keyboard.press("PageUp");
+const atStart = await active();
+check("Page Down / Page Up page the suggestions", total > shown && afterDown >= 1 && afterTwo === 2 * afterDown && afterUp === afterDown && atEnd === total - 1 && atStart === 0 && visible,
+  `${total} suggestions, ${shown} shown: down ${afterDown}, down ${afterTwo}, up ${afterUp}, to the end ${atEnd} (in view: ${visible}), to the start ${atStart}`);
+await page.keyboard.press("Escape");
+
 // shortcuts, also while typing in the console
 await input.click();
 await page.keyboard.press("Control+0");

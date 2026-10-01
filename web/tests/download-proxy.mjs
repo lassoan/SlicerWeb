@@ -10,8 +10,12 @@ const SIZE = 6607313;
 const browser = await chromium.launch({ channel: "chrome", headless: true, args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
 const page = await (await browser.newContext()).newPage();
 page.on("pageerror", (e) => console.log("[pageerror] " + e));
+// through the download proxy, or from the copy of the file the site carries (the published site
+// holds copies of the sample data, web/scripts/mirror-sample-data.mjs)
 const proxied = [];
-page.on("request", (r) => { if (r.url().includes("?url=") || r.url().includes("download?url")) proxied.push(r.url().split("?")[0]); });
+page.on("request", (r) => {
+  if (r.url().includes("?url=") || r.url().includes("/sample-data/") && !r.url().endsWith("mirror.json")) proxied.push(r.url().split("?")[0]);
+});
 await page.goto(base + "?sample=");
 await page.waitForFunction(() => window.slicerWeb?.bridge && document.querySelector("canvas"), null, { timeout: 300000 });
 
@@ -36,6 +40,6 @@ _size = __import__("os").path.getsize(_u(${JSON.stringify(url)}, "/tmp/MRHead-py
 const pySize = await page.evaluate(() => window.slicerWeb.bridge.evalPython("_size", "eval")).catch((e) => "error: " + e.message);
 check("Python download (synchronous)", Number(pySize) === SIZE, `${pySize} bytes`);
 
-check("both went through the proxy", proxied.length >= 2, proxied.join(", "));
+check("both went through the proxy or the site's copy", proxied.length >= 2, proxied.join(", "));
 await browser.close();
 process.exit(failed ? 1 : 0);

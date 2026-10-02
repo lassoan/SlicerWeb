@@ -696,6 +696,10 @@ def setApplicationSettings(values):
     slicer.app.userSettings().update(values)
     if any(key.startswith("Developer/ShowRenderingFPS") for key in values or {}):
         slicer.app.layoutManager().applyViewSettings()
+    if any(key.startswith("Segmentations/DefaultRepresentation3D") for key in values or {}):
+        from .panels_segmentations import applyDefaultSegmentationSettings
+
+        applyDefaultSegmentationSettings()
     return True
 
 

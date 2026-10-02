@@ -1,0 +1,3568 @@
+From 0e3337dd597af0842da7b2932e52699e92d5aac3 Mon Sep 17 00:00:00 2001
+From: Andras Lasso <lasso@queensu.ca>
+Date: Fri, 2 Oct 2026 01:52:58 -0400
+Subject: [PATCH] ENH: Show binary labelmap segmentations as smooth surfaces in
+ 3D views
+
+Experimental display mode: when the representation in 3D views of a
+segmentation is "Binary labelmap", the segmentations displayable manager
+shows the labelmap as smooth surfaces computed on the GPU, without
+converting it to closed surface. Based on pieper/SlicerLive.
+
+vtkSegmentationLabelmapSurfaceMapper computes a signed distance field of
+the shown segments in fragment shader passes (jump flooding), smooths it
+(Gaussian with twicing, which keeps thin structures; narrow gaps between
+segments are filled), and ray casts its zero level set. Works with
+OpenGL and WebGL2 (requires EXT_color_buffer_float).
+
+- Opaque segments share one surface with soft color seams, each
+  translucent segment has its own (depth peeling and order independent
+  translucency are supported).
+- Clipping with caps, per-segment 3D opacity and visibility, lighting,
+  shadows (screen-space ambient occlusion).
+- Picking: vtkMRMLAccuratePicker asks the mapper to intersect the ray
+  (new IntersectRayEvent), so Shift+mouse move, Pick3D and painting in
+  3D views work on these surfaces.
+- Editing updates the distance field only around the changed labels.
+- Non-linear transforms: the labelmap is resampled on the CPU.
+- Large labelmaps are downsampled to MaximumNumberOfVoxels.
+- The surface smoothing factor conversion parameter sets the smoothing.
+
+Show 3D button: new "Representation" submenu (binary labelmap or closed
+surface), the same choice as the Segmentations module's representation
+in 3D views. Show 3D only creates the chosen representation and does
+not switch to closed surface. The default representation in 3D views
+for new segmentations can be set in application settings
+(Segmentations/DefaultRepresentation3D; default remains closed surface).
+---
+ .../Core/vtkMRMLSegmentationDisplayNode.cxx   |   14 +-
+ .../Core/vtkMRMLSegmentationDisplayNode.h     |    8 +-
+ .../vtkMRMLAccuratePicker.cxx                 |   32 +
+ .../vtkMRMLAccuratePicker.h                   |   27 +
+ .../qSlicerSegmentEditorPaintEffect.cxx       |    6 +-
+ .../Logic/vtkSlicerSegmentEditorLogic.cxx     |    7 +
+ .../vtkSlicerSegmentationsModuleLogic.cxx     |   40 +
+ .../Logic/vtkSlicerSegmentationsModuleLogic.h |    9 +
+ .../Segmentations/MRMLDM/CMakeLists.txt       |    2 +
+ ...kMRMLSegmentationsDisplayableManager3D.cxx |  315 ++-
+ .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2323 +++++++++++++++++
+ .../vtkSegmentationLabelmapSurfaceMapper.h    |  124 +
+ .../UI/qSlicerSegmentationsSettingsPanel.ui   |   19 +-
+ .../Widgets/qMRMLSegmentEditorWidget.cxx      |    5 +-
+ .../qMRMLSegmentationDisplayNodeWidget.cxx    |    2 +
+ .../Widgets/qMRMLSegmentationShow3DButton.cxx |  122 +-
+ .../Widgets/qMRMLSegmentationShow3DButton.h   |    1 +
+ .../qSlicerSegmentationsSettingsPanel.cxx     |   28 +
+ .../qSlicerSegmentationsSettingsPanel.h       |    1 +
+ 19 files changed, 3057 insertions(+), 28 deletions(-)
+ create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
+ create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
+
+diff --git a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx
+index 0b1c8b4bf3..00f0a0fcc2 100644
+--- a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx
++++ b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx
+@@ -1039,11 +1039,14 @@ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D()
+   // Assume the first segment contains the same name of representations as all segments (this should be the case by design)
+   vtkSegment* firstSegment = segmentation->GetNthSegment(0);
+ 
+-  // If preferred representation is defined and exists then use that (double check it is poly data)
++  // If preferred representation is defined and exists then use that (double check it is poly data,
++  // or binary labelmap, which is rendered as smooth surfaces computed on the GPU)
+   if (this->PreferredDisplayRepresentationName3D)
+   {
+     vtkDataObject* preferredRepresentation = firstSegment->GetRepresentation(this->PreferredDisplayRepresentationName3D);
+-    if (vtkPolyData::SafeDownCast(preferredRepresentation))
++    const char* binaryLabelmapName = vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
++    bool preferredBinaryLabelmap = (binaryLabelmapName == std::string(this->PreferredDisplayRepresentationName3D));
++    if (vtkPolyData::SafeDownCast(preferredRepresentation) || (preferredRepresentation && preferredBinaryLabelmap))
+     {
+       return std::string(this->PreferredDisplayRepresentationName3D);
+     }
+@@ -1072,6 +1075,13 @@ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D()
+   return "";
+ }
+ 
++//---------------------------------------------------------------------------
++bool vtkMRMLSegmentationDisplayNode::IsBinaryLabelmapPreferredDisplayRepresentation3D()
++{
++  return this->PreferredDisplayRepresentationName3D
++         && std::string(this->PreferredDisplayRepresentationName3D) == vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
++}
++
+ //---------------------------------------------------------------------------
+ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName2D()
+ {
+diff --git a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
+index d1efb07bed..5c4882e3ac 100644
+--- a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
++++ b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
+@@ -190,13 +190,19 @@ public:
+   /// Collect representation names that are stored as poly data
+   void GetPolyDataRepresentationNames(std::set<std::string>& representationNames);
+ 
+-  /// Decide which poly data representation to use for 3D display.
++  /// Decide which representation to use for 3D display.
+   /// If preferred representation exists \sa PreferredDisplayRepresentationName3D, then return that.
++  /// The preferred representation may be a poly data representation or binary labelmap
++  /// (binary labelmap is displayed as smooth surfaces computed on the GPU; experimental).
+   /// Otherwise if source representation is a poly data then return source representation type.
+   /// Otherwise return first poly data representation if any.
+   /// Otherwise return empty string meaning there is no poly data representation to display.
+   std::string GetDisplayRepresentationName3D();
+ 
++  /// Return true if binary labelmap is chosen as representation in 3D views
++  /// (shown as smooth surfaces computed on the GPU, without closed surface representation; experimental).
++  bool IsBinaryLabelmapPreferredDisplayRepresentation3D();
++
+   /// Decide which representation to use for 2D display.
+   /// If preferred representation exists \sa PreferredDisplayRepresentationName2D, then return that.
+   /// Otherwise return source representation.
+diff --git a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx
+index 294b75399b..97b8c6a931 100644
+--- a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx
++++ b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx
+@@ -129,6 +129,38 @@ int vtkMRMLAccuratePicker::Pick(double selectionX, double selectionY, double sel
+   return this->Superclass::Pick(selectionX, selectionY, selectionZ, renderer);
+ }
+ 
++//----------------------------------------------------------------------------
++double vtkMRMLAccuratePicker::IntersectActorWithLine(const double p1[3], const double p2[3], double t1, double t2, double tol, vtkProp3D* prop, vtkMapper* m)
++{
++  vtkMapper* mapper = m;
++  if (!mapper || !mapper->HasObserver(IntersectRayEvent))
++  {
++    return this->Superclass::IntersectActorWithLine(p1, p2, t1, t2, tol, prop, mapper);
++  }
++  RayIntersection intersection;
++  std::copy_n(p1, 3, intersection.P1);
++  std::copy_n(p2, 3, intersection.P2);
++  intersection.T1 = t1;
++  intersection.T2 = t2;
++  mapper->InvokeEvent(IntersectRayEvent, &intersection);
++  if (!intersection.Intersected || intersection.T < t1 || intersection.T > t2)
++  {
++    return VTK_DOUBLE_MAX;
++  }
++  if (intersection.T < this->GlobalTMin)
++  {
++    // Same outputs as for cells, except there is no cell
++    this->Mapper = mapper;
++    this->DataSet = nullptr;
++    this->CellId = -1;
++    this->SubId = -1;
++    this->PointId = -1;
++    std::copy_n(intersection.Position, 3, this->MapperPosition);
++    std::copy_n(intersection.Normal, 3, this->MapperNormal);
++  }
++  return intersection.T;
++}
++
+ //----------------------------------------------------------------------------
+ namespace
+ {
+diff --git a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h
+index 96e564d7c9..5f89534c7a 100644
+--- a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h
++++ b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h
+@@ -25,6 +25,9 @@
+ #include <vtkCellPicker.h>
+ #include <vtkSmartPointer.h>
+ 
++// VTK includes
++#include <vtkCommand.h>
++
+ // STD includes
+ #include <map>
+ 
+@@ -71,6 +74,26 @@ public:
+ 
+   using vtkCellPicker::Pick;
+ 
++  /// Mappers that render without geometry that the picker can intersect with the pick ray (for example surfaces that
++  /// are ray cast on the GPU) can be picked by observing this event. Call data is a RayIntersection, with the ray in the
++  /// model coordinates of the prop (from P1 to P2, between parametric coordinates T1 and T2); the observer sets
++  /// Intersected and, if it is true, the parametric coordinate (T), position and normal of the first intersection.
++  enum
++  {
++    IntersectRayEvent = vtkCommand::UserEvent + 7810
++  };
++  struct RayIntersection
++  {
++    double P1[3];
++    double P2[3];
++    double T1;
++    double T2;
++    bool Intersected{ false };
++    double T{ 0.0 };
++    double Position[3]{ 0.0, 0.0, 0.0 };
++    double Normal[3]{ 0.0, 0.0, 1.0 };
++  };
++
+   /// Refresh the cell locators for the renderer's large surfaces, then pick as
+   /// vtkCellPicker does.
+   int Pick(double selectionX, double selectionY, double selectionZ, vtkRenderer* renderer) override;
+@@ -84,6 +107,10 @@ protected:
+   /// when the surface changes) and drop locators for surfaces no longer shown.
+   void UpdateLocators(vtkRenderer* renderer);
+ 
++  /// Intersect the pick ray with an actor. If the mapper observes IntersectRayEvent then the mapper computes
++  /// the intersection, otherwise its cells are intersected as in vtkCellPicker.
++  double IntersectActorWithLine(const double p1[3], const double p2[3], double t1, double t2, double tol, vtkProp3D* prop, vtkMapper* mapper) override;
++
+   /// Pick the cell that the ray hits.
+   ///
+   /// vtkCellPicker picks cells within the pick tolerance of the ray, at the
+diff --git a/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx b/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx
+index 300ab9cd65..785d0ad0fb 100644
+--- a/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx
++++ b/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx
+@@ -43,7 +43,6 @@
+ #include <vtkBoundingBox.h>
+ #include <vtkCamera.h>
+ #include <vtkCellArray.h>
+-#include <vtkCellPicker.h>
+ #include <vtkCollection.h>
+ #include <vtkCommand.h>
+ #include <vtkGlyph2D.h>
+@@ -79,6 +78,7 @@
+ 
+ // MRML includes
+ #include <vtkEventBroker.h>
++#include <vtkMRMLAccuratePicker.h>
+ #include <vtkMRMLScalarVolumeNode.h>
+ #include <vtkMRMLScene.h>
+ #include <vtkMRMLSliceNode.h>
+@@ -1004,7 +1004,9 @@ bool qSlicerSegmentEditorPaintEffectPrivate::brushPositionInWorld(qMRMLWidget* v
+     static bool useCellPicker = true;
+     if (useCellPicker)
+     {
+-      vtkNew<vtkCellPicker> picker;
++      // vtkMRMLAccuratePicker also picks surfaces that have no polygonal geometry
++      // (segmentations shown as binary labelmap in 3D views)
++      vtkNew<vtkMRMLAccuratePicker> picker;
+       picker->SetTolerance(.005);
+       if (!picker->Pick(brushPositionInView[0], brushPositionInView[1], 0, renderer))
+       {
+diff --git a/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentEditorLogic.cxx b/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentEditorLogic.cxx
+index 51e8858755..320e91a675 100644
+--- a/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentEditorLogic.cxx
++++ b/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentEditorLogic.cxx
+@@ -938,6 +938,13 @@ void vtkSlicerSegmentEditorLogic::ToggleSegmentationSurfaceRepresentation(bool i
+     return;
+   }
+ 
++  // Binary labelmap is shown in 3D: show or hide it, the representation is only changed by the user
++  if (displayNode->IsBinaryLabelmapPreferredDisplayRepresentation3D())
++  {
++    displayNode->SetVisibility3D(isSurfaceRepresentationOn);
++    return;
++  }
++
+   MRMLNodeModifyBlocker segmentationNodeBlocker(segmentationNode);
+   MRMLNodeModifyBlocker displayNodeBlocker(displayNode);
+ 
+diff --git a/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.cxx b/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.cxx
+index 603cc188e3..0b2f958524 100644
+--- a/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.cxx
++++ b/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.cxx
+@@ -2716,6 +2716,46 @@ void vtkSlicerSegmentationsModuleLogic::SetDefaultSurfaceSmoothingEnabled(bool e
+   defaultSegmentationNode->GetSegmentation()->SetConversionParameter(vtkBinaryLabelmapToClosedSurfaceConversionRule::GetSmoothingFactorParameterName(), smoothingFactorStr);
+ }
+ 
++//-----------------------------------------------------------------------------
++vtkMRMLSegmentationDisplayNode* vtkSlicerSegmentationsModuleLogic::GetDefaultSegmentationDisplayNode()
++{
++  vtkMRMLScene* scene = this->GetMRMLScene();
++  if (!scene)
++  {
++    return nullptr;
++  }
++  vtkSmartPointer<vtkMRMLNode> defaultNode = scene->GetDefaultNodeByClass("vtkMRMLSegmentationDisplayNode");
++  if (!defaultNode)
++  {
++    defaultNode.TakeReference(scene->CreateNodeByClass("vtkMRMLSegmentationDisplayNode"));
++    scene->AddDefaultNode(defaultNode);
++  }
++  return vtkMRMLSegmentationDisplayNode::SafeDownCast(defaultNode.GetPointer());
++}
++
++//-----------------------------------------------------------------------------
++std::string vtkSlicerSegmentationsModuleLogic::GetDefaultRepresentation3D()
++{
++  vtkMRMLSegmentationDisplayNode* defaultDisplayNode = this->GetDefaultSegmentationDisplayNode();
++  if (!defaultDisplayNode || !defaultDisplayNode->GetPreferredDisplayRepresentationName3D())
++  {
++    return "";
++  }
++  return defaultDisplayNode->GetPreferredDisplayRepresentationName3D();
++}
++
++//-----------------------------------------------------------------------------
++void vtkSlicerSegmentationsModuleLogic::SetDefaultRepresentation3D(const std::string& representationName)
++{
++  vtkMRMLSegmentationDisplayNode* defaultDisplayNode = this->GetDefaultSegmentationDisplayNode();
++  if (!defaultDisplayNode)
++  {
++    vtkErrorMacro("SetDefaultRepresentation3D failed: invalid default segmentation display node");
++    return;
++  }
++  defaultDisplayNode->SetPreferredDisplayRepresentationName3D(representationName.empty() ? nullptr : representationName.c_str());
++}
++
+ //-----------------------------------------------------------------------------
+ vtkMRMLSegmentEditorNode* vtkSlicerSegmentationsModuleLogic::GetDefaultSegmentEditorNode()
+ {
+diff --git a/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.h b/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.h
+index 32a5d8a779..2e7d71c4ff 100644
+--- a/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.h
++++ b/Modules/Loadable/Segmentations/Logic/vtkSlicerSegmentationsModuleLogic.h
+@@ -39,6 +39,7 @@ class vtkPolyData;
+ class vtkDataObject;
+ class vtkGeneralTransform;
+ 
++class vtkMRMLSegmentationDisplayNode;
+ class vtkMRMLSegmentationStorageNode;
+ class vtkMRMLSegmentEditorNode;
+ class vtkMRMLScalarVolumeNode;
+@@ -448,6 +449,14 @@ public:
+   bool GetDefaultSurfaceSmoothingEnabled();
+   void SetDefaultSurfaceSmoothingEnabled(bool enabled);
+ 
++  /// Get default segmentation display node. All new segmentation display nodes are initialized to the content of this node.
++  vtkMRMLSegmentationDisplayNode* GetDefaultSegmentationDisplayNode();
++
++  /// Get/Set the representation that new segmentations show in 3D views ("Closed surface" or "Binary labelmap").
++  /// Empty string means the default (closed surface).
++  std::string GetDefaultRepresentation3D();
++  void SetDefaultRepresentation3D(const std::string& representationName);
++
+   /// Get node that is used for initializing each new Segment Editor node.
+   vtkMRMLSegmentEditorNode* GetDefaultSegmentEditorNode();
+ 
+diff --git a/Modules/Loadable/Segmentations/MRMLDM/CMakeLists.txt b/Modules/Loadable/Segmentations/MRMLDM/CMakeLists.txt
+index 78a84a5ab0..d271e96d20 100644
+--- a/Modules/Loadable/Segmentations/MRMLDM/CMakeLists.txt
++++ b/Modules/Loadable/Segmentations/MRMLDM/CMakeLists.txt
+@@ -24,6 +24,8 @@ SlicerConfigureDisplayableManagerObjectFactory(
+ set(${KIT}_SRCS
+   ${displayable_manager_instantiator_SRCS}
+   ${displayable_manager_SRCS}
++  vtkSegmentationLabelmapSurfaceMapper.cxx
++  vtkSegmentationLabelmapSurfaceMapper.h
+   )
+ 
+ set(${KIT}_TARGET_LIBRARIES
+diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
+index 34aacdc73e..74217ca3a0 100644
+--- a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
++++ b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
+@@ -20,6 +20,7 @@
+ 
+ // MRMLDisplayableManager includes
+ #include "vtkMRMLSegmentationsDisplayableManager3D.h"
++#include "vtkSegmentationLabelmapSurfaceMapper.h"
+ 
+ // Segmentations includes
+ #include "vtkMRMLSegmentationNode.h"
+@@ -36,6 +37,12 @@
+ // vtkAddon includes
+ #include <vtkCapPolyData.h>
+ 
++// SegmentationCore includes
++#include <vtkBinaryLabelmapToClosedSurfaceConversionRule.h>
++#include <vtkOrientedImageData.h>
++#include <vtkOrientedImageDataResample.h>
++#include <vtkSegmentationConverter.h>
++
+ // VTK includes
+ #include <vtkAddonMathUtilities.h>
+ #include <vtkCallbackCommand.h>
+@@ -51,6 +58,7 @@
+ #include <vtkNew.h>
+ #include <vtkObjectFactory.h>
+ #include <vtkPlane.h>
++#include <vtkPlaneCollection.h>
+ #include <vtkPlanes.h>
+ #include <vtkPolyData.h>
+ #include <vtkPolyDataMapper.h>
+@@ -61,6 +69,10 @@
+ #include <vtkSmartPointer.h>
+ #include <vtkTransform.h>
+ #include <vtkTransformPolyDataFilter.h>
++#include <vtkVariant.h>
++
++// STD includes
++#include <algorithm>
+ 
+ //---------------------------------------------------------------------------
+ vtkStandardNewMacro(vtkMRMLSegmentationsDisplayableManager3D);
+@@ -130,6 +142,40 @@ public:
+   typedef std::map<vtkMRMLSegmentationNode*, std::set<vtkMRMLSegmentationDisplayNode*>> SegmentationToDisplayCacheType;
+   SegmentationToDisplayCacheType SegmentationToDisplayNodes;
+ 
++  /// Display pipeline of segments of a binary labelmap layer, used when the 3D representation is binary labelmap.
++  /// The labelmap is rendered as smooth surfaces, computed on the GPU. Opaque segments of a layer are shown by one
++  /// pipeline; each translucent segment has its own, so that its surface is shown where it touches other segments.
++  struct LabelmapPipeline
++  {
++    LabelmapPipeline()
++    {
++      this->Mapper = vtkSmartPointer<vtkSegmentationLabelmapSurfaceMapper>::New();
++      this->Actor = vtkSmartPointer<vtkActor>::New();
++      this->Actor->SetMapper(this->Mapper);
++      this->ImageToWorldMatrix = vtkSmartPointer<vtkMatrix4x4>::New();
++      this->Actor->SetUserMatrix(this->ImageToWorldMatrix);
++    }
++    vtkSmartPointer<vtkActor> Actor;
++    vtkSmartPointer<vtkSegmentationLabelmapSurfaceMapper> Mapper;
++    vtkSmartPointer<vtkMatrix4x4> ImageToWorldMatrix;
++    /// Pickable segments shown by the pipeline
++    std::map<int, std::string> PickableSegmentIDsByLabel;
++  };
++  /// first: shared labelmap of the layer, second: translucent segment shown by the pipeline (empty for the opaque segments)
++  typedef std::pair<vtkOrientedImageData*, std::string> LabelmapPipelineKey;
++  typedef std::map<LabelmapPipelineKey, LabelmapPipeline> LabelmapPipelineMapType;
++  std::map<vtkMRMLSegmentationDisplayNode*, LabelmapPipelineMapType> LabelmapPipelines;
++
++  /// Labelmap resampled into world coordinates, for segmentations under non-linear transforms
++  struct TransformedLabelmap
++  {
++    vtkSmartPointer<vtkOrientedImageData> Labelmap;
++    vtkMTimeType SourceLabelmapTime{ 0 };
++    vtkSmartPointer<vtkGeneralTransform> NodeToWorldTransform;
++  };
++  std::map<vtkMRMLSegmentationDisplayNode*, std::map<vtkOrientedImageData*, TransformedLabelmap>> TransformedLabelmaps;
++  vtkOrientedImageData* GetTransformedLabelmap(vtkMRMLSegmentationDisplayNode* displayNode, vtkOrientedImageData* labelmap, vtkGeneralTransform* nodeToWorld);
++
+   // Segmentations
+   void AddSegmentationNode(vtkMRMLSegmentationNode* displayableNode);
+   void RemoveSegmentationNode(vtkMRMLSegmentationNode* displayableNode);
+@@ -145,6 +191,12 @@ public:
+   void UpdateAllDisplayNodesForSegment(vtkMRMLSegmentationNode* segmentationNode);
+   void UpdateSegmentPipelines(vtkMRMLSegmentationDisplayNode* displayNode, PipelineMapType& segmentPipelines);
+   void UpdateDisplayNodePipeline(vtkMRMLSegmentationDisplayNode* displayNode, PipelineMapType& segmentPipelines);
++  void UpdateLabelmapPipelines(vtkMRMLSegmentationDisplayNode* displayNode,
++                               bool visible,
++                               double hierarchyOpacity,
++                               vtkMRMLDisplayNode* genericDisplayNode,
++                               vtkMRMLDisplayNode* overrideHierarchyDisplayNode);
++  void RemoveLabelmapPipelines(vtkMRMLSegmentationDisplayNode* displayNode);
+   void RemoveDisplayNode(vtkMRMLSegmentationDisplayNode* displayNode);
+ 
+   // Observations
+@@ -162,6 +214,8 @@ public:
+   void FindPickedDisplayNodeFromMesh(vtkPointSet* mesh);
+   /// Find first picked node from prop3Ds in cell picker and set PickedNodeID in Internal
+   void FindFirstPickedDisplayNodeFromPickerProp3Ds();
++  /// Find segment shown as binary labelmap at a position and set PickedNodeID in Internal
++  bool FindPickedDisplayNodeFromLabelmaps(const double ras[3]);
+ 
+ public:
+   /// Picker of segment prop in renderer
+@@ -310,6 +364,7 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayableTra
+ //---------------------------------------------------------------------------
+ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::RemoveDisplayNode(vtkMRMLSegmentationDisplayNode* displayNode)
+ {
++  this->RemoveLabelmapPipelines(displayNode);
+   PipelinesCacheType::iterator pipelinesIter = this->DisplayPipelines.find(displayNode);
+   if (pipelinesIter == this->DisplayPipelines.end())
+   {
+@@ -504,14 +559,24 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
+ 
+   // Determine which representation to show
+   std::string shownRepresentationName = displayNode->GetDisplayRepresentationName3D();
+-  if (shownRepresentationName.empty())
++  bool showLabelmap = (shownRepresentationName == vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
++  if (shownRepresentationName.empty() || showLabelmap)
+   {
+-    // Hide segmentation if there is no poly data representation to show
++    // Hide poly data if there is no poly data representation to show
+     for (PipelineMapType::iterator pipelineIt = segmentPipelines.begin(); pipelineIt != segmentPipelines.end(); ++pipelineIt)
+     {
+       pipelineIt->second->Actor->SetVisibility(false);
+       pipelineIt->second->CapActor->SetVisibility(false);
+     }
++  }
++  if (showLabelmap)
++  {
++    this->UpdateLabelmapPipelines(displayNode, hierarchyVisibility && displayNodeVisible, hierarchyOpacity, genericDisplayNode, overrideHierarchyDisplayNode);
++    return;
++  }
++  this->RemoveLabelmapPipelines(displayNode);
++  if (shownRepresentationName.empty())
++  {
+     return;
+   }
+ 
+@@ -780,6 +845,247 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
+   }
+ }
+ 
++//---------------------------------------------------------------------------
++vtkOrientedImageData* vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::GetTransformedLabelmap(vtkMRMLSegmentationDisplayNode* displayNode,
++                                                                                                    vtkOrientedImageData* labelmap,
++                                                                                                    vtkGeneralTransform* nodeToWorld)
++{
++  TransformedLabelmap& transformed = this->TransformedLabelmaps[displayNode][labelmap];
++  bool upToDate = transformed.Labelmap && transformed.SourceLabelmapTime == labelmap->GetMTime();
++  if (upToDate && vtkMRMLTransformNode::AreTransformsEqual(nodeToWorld, transformed.NodeToWorldTransform))
++  {
++    return transformed.Labelmap;
++  }
++  // Resample the labelmap (on the CPU) into world coordinates
++  transformed.Labelmap = vtkSmartPointer<vtkOrientedImageData>::New();
++  transformed.Labelmap->DeepCopy(labelmap);
++  vtkOrientedImageDataResample::TransformOrientedImage(transformed.Labelmap, nodeToWorld, false, true);
++  transformed.SourceLabelmapTime = labelmap->GetMTime();
++  transformed.NodeToWorldTransform = vtkSmartPointer<vtkGeneralTransform>::New();
++  transformed.NodeToWorldTransform->DeepCopy(nodeToWorld);
++  return transformed.Labelmap;
++}
++
++//---------------------------------------------------------------------------
++void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateLabelmapPipelines(vtkMRMLSegmentationDisplayNode* displayNode,
++                                                                                    bool visible,
++                                                                                    double hierarchyOpacity,
++                                                                                    vtkMRMLDisplayNode* genericDisplayNode,
++                                                                                    vtkMRMLDisplayNode* overrideHierarchyDisplayNode)
++{
++  vtkMRMLSegmentationNode* segmentationNode = vtkMRMLSegmentationNode::SafeDownCast(displayNode->GetDisplayableNode());
++  vtkSegmentation* segmentation = segmentationNode ? segmentationNode->GetSegmentation() : nullptr;
++  if (!segmentation)
++  {
++    this->RemoveLabelmapPipelines(displayNode);
++    return;
++  }
++
++  // Transform from the segmentation node to world. Labelmaps under non-linear transforms are resampled into world coordinates.
++  vtkNew<vtkMatrix4x4> nodeToWorldMatrix;
++  vtkMRMLTransformNode* transformNode = segmentationNode->GetParentTransformNode();
++  vtkSmartPointer<vtkGeneralTransform> nonLinearNodeToWorld;
++  if (transformNode)
++  {
++    if (transformNode->IsTransformToWorldLinear())
++    {
++      transformNode->GetMatrixTransformToWorld(nodeToWorldMatrix);
++    }
++    else
++    {
++      nonLinearNodeToWorld = vtkSmartPointer<vtkGeneralTransform>::New();
++      this->GetNodeTransformToWorld(segmentationNode, nonLinearNodeToWorld);
++    }
++  }
++
++  // Shown segments of each labelmap layer: opaque segments together, each translucent segment separately
++  const char* binaryLabelmapName = vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
++  std::map<LabelmapPipelineKey, std::vector<std::string>> shownSegmentIDsInPipelines;
++  std::map<LabelmapPipelineKey, double> pipelineOpacities;
++  double displayOpacity = hierarchyOpacity * displayNode->GetOpacity3D() * genericDisplayNode->GetOpacity();
++  if (visible && displayOpacity > 0.0)
++  {
++    std::vector<std::string> segmentIDs;
++    segmentation->GetSegmentIDs(segmentIDs);
++    for (const std::string& segmentID : segmentIDs)
++    {
++      vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties properties;
++      displayNode->GetSegmentDisplayProperties(segmentID, properties);
++      double opacity = displayOpacity * properties.Opacity3D;
++      if (!properties.Visible || !properties.Visible3D || opacity <= 0.0)
++      {
++        continue;
++      }
++      vtkOrientedImageData* labelmap = vtkOrientedImageData::SafeDownCast(segmentation->GetSegmentRepresentation(segmentID, binaryLabelmapName));
++      if (!labelmap)
++      {
++        continue;
++      }
++      bool opaque = (opacity >= 1.0);
++      LabelmapPipelineKey key(labelmap, opaque ? std::string() : segmentID);
++      shownSegmentIDsInPipelines[key].push_back(segmentID);
++      pipelineOpacities[key] = opaque ? 1.0 : opacity;
++    }
++  }
++
++  LabelmapPipelineMapType& pipelines = this->LabelmapPipelines[displayNode];
++
++  // Remove pipelines that have no shown segments
++  for (LabelmapPipelineMapType::iterator pipelineIt = pipelines.begin(); pipelineIt != pipelines.end();)
++  {
++    if (shownSegmentIDsInPipelines.find(pipelineIt->first) == shownSegmentIDsInPipelines.end())
++    {
++      this->External->GetRenderer()->RemoveActor(pipelineIt->second.Actor);
++      pipelineIt = pipelines.erase(pipelineIt);
++    }
++    else
++    {
++      ++pipelineIt;
++    }
++  }
++
++  // Resampled labelmaps that are not used anymore
++  std::map<vtkOrientedImageData*, TransformedLabelmap>& transformedLabelmaps = this->TransformedLabelmaps[displayNode];
++  for (auto transformedIt = transformedLabelmaps.begin(); transformedIt != transformedLabelmaps.end();)
++  {
++    bool used = false;
++    for (const auto& shownSegmentIDsInPipeline : shownSegmentIDsInPipelines)
++    {
++      used |= (nonLinearNodeToWorld && shownSegmentIDsInPipeline.first.first == transformedIt->first);
++    }
++    transformedIt = used ? std::next(transformedIt) : transformedLabelmaps.erase(transformedIt);
++  }
++
++  // Same smoothing as closed surface representation (negative value means smoothing is disabled)
++  std::string smoothingFactorString = segmentation->GetConversionParameter(vtkBinaryLabelmapToClosedSurfaceConversionRule::GetSmoothingFactorParameterName());
++  double smoothingFactor = smoothingFactorString.empty() ? 0.5 : std::clamp(vtkVariant(smoothingFactorString).ToDouble(), 0.0, 1.0);
++
++  // Clipping
++  vtkSmartPointer<vtkPlaneCollection> clippingPlanes;
++  vtkMRMLClipNode* clipNode = displayNode->GetClipNode();
++  if (displayNode->GetClipping() && clipNode)
++  {
++    clippingPlanes = vtkSmartPointer<vtkPlaneCollection>::New();
++    clipNode->GetClippingPlanes(clippingPlanes);
++    if (clippingPlanes->GetNumberOfItems() == 0)
++    {
++      clippingPlanes = nullptr;
++    }
++  }
++
++  for (const auto& shownSegmentIDsInPipeline : shownSegmentIDsInPipelines)
++  {
++    const LabelmapPipelineKey& key = shownSegmentIDsInPipeline.first;
++    LabelmapPipelineMapType::iterator pipelineIt = pipelines.find(key);
++    if (pipelineIt == pipelines.end())
++    {
++      pipelineIt = pipelines.insert(std::make_pair(key, LabelmapPipeline())).first;
++      this->External->GetRenderer()->AddActor(pipelineIt->second.Actor);
++    }
++    LabelmapPipeline& pipeline = pipelineIt->second;
++    vtkOrientedImageData* labelmap = key.first;
++    if (nonLinearNodeToWorld)
++    {
++      labelmap = this->GetTransformedLabelmap(displayNode, labelmap, nonLinearNodeToWorld);
++    }
++    pipeline.Mapper->SetLabelmap(labelmap);
++    pipeline.Mapper->RemoveAllLabelColors();
++    pipeline.PickableSegmentIDsByLabel.clear();
++    for (const std::string& segmentID : shownSegmentIDsInPipeline.second)
++    {
++      double color[3] = { vtkSegment::SEGMENT_COLOR_INVALID[0], vtkSegment::SEGMENT_COLOR_INVALID[1], vtkSegment::SEGMENT_COLOR_INVALID[2] };
++      if (overrideHierarchyDisplayNode)
++      {
++        overrideHierarchyDisplayNode->GetColor(color);
++      }
++      else
++      {
++        displayNode->GetSegmentColor(segmentID, color);
++      }
++      int labelValue = segmentation->GetSegment(segmentID)->GetLabelValue();
++      pipeline.Mapper->SetLabelColor(labelValue, color[0], color[1], color[2]);
++      vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties properties;
++      displayNode->GetSegmentDisplayProperties(segmentID, properties);
++      if (segmentationNode->GetSelectable() && properties.Pickable)
++      {
++        pipeline.PickableSegmentIDsByLabel[labelValue] = segmentID;
++      }
++    }
++
++    // Model coordinates of the mapper are IJK coordinates of the labelmap
++    vtkNew<vtkMatrix4x4> imageToNodeMatrix;
++    labelmap->GetImageToWorldMatrix(imageToNodeMatrix);
++    vtkNew<vtkMatrix4x4> imageToWorldMatrix;
++    vtkMatrix4x4::Multiply4x4(nodeToWorldMatrix, imageToNodeMatrix, imageToWorldMatrix);
++    if (!vtkAddonMathUtilities::MatrixAreEqual(imageToWorldMatrix, pipeline.ImageToWorldMatrix))
++    {
++      pipeline.ImageToWorldMatrix->DeepCopy(imageToWorldMatrix);
++    }
++
++    pipeline.Mapper->SetSmoothingFactor(smoothingFactor);
++    pipeline.Mapper->SetClippingPlanes(clippingPlanes);
++    pipeline.Mapper->SetCapClippedSurface(displayNode->GetClippingCapSurface());
++    pipeline.Mapper->SetCapOpacity(displayNode->GetClippingCapOpacity());
++
++    vtkProperty* actorProperty = pipeline.Actor->GetProperty();
++    actorProperty->SetOpacity(pipelineOpacities[key]);
++    actorProperty->SetAmbient(genericDisplayNode->GetSelected() ? genericDisplayNode->GetSelectedAmbient() : genericDisplayNode->GetAmbient());
++    actorProperty->SetSpecular(genericDisplayNode->GetSelected() ? genericDisplayNode->GetSelectedSpecular() : genericDisplayNode->GetSpecular());
++    actorProperty->SetDiffuse(genericDisplayNode->GetDiffuse());
++    actorProperty->SetSpecularPower(genericDisplayNode->GetPower());
++    pipeline.Actor->SetVisibility(true);
++    // The mapper intersects pick rays with the labelmap (see vtkMRMLAccuratePicker::IntersectRayEvent),
++    // the segment at the picked position is found by FindPickedDisplayNodeFromLabelmaps
++    pipeline.Actor->SetPickable(!pipeline.PickableSegmentIDsByLabel.empty());
++  }
++}
++
++//---------------------------------------------------------------------------
++void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::RemoveLabelmapPipelines(vtkMRMLSegmentationDisplayNode* displayNode)
++{
++  this->TransformedLabelmaps.erase(displayNode);
++  auto pipelinesIt = this->LabelmapPipelines.find(displayNode);
++  if (pipelinesIt == this->LabelmapPipelines.end())
++  {
++    return;
++  }
++  for (auto& pipeline : pipelinesIt->second)
++  {
++    this->External->GetRenderer()->RemoveActor(pipeline.second.Actor);
++  }
++  this->LabelmapPipelines.erase(pipelinesIt);
++}
++
++//---------------------------------------------------------------------------
++bool vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::FindPickedDisplayNodeFromLabelmaps(const double ras[3])
++{
++  for (auto& displayNodePipelines : this->LabelmapPipelines)
++  {
++    for (auto& keyPipeline : displayNodePipelines.second)
++    {
++      LabelmapPipeline& pipeline = keyPipeline.second;
++      if (!pipeline.Actor->GetVisibility() || pipeline.PickableSegmentIDsByLabel.empty())
++      {
++        continue;
++      }
++      vtkNew<vtkMatrix4x4> worldToImage;
++      vtkMatrix4x4::Invert(pipeline.ImageToWorldMatrix, worldToImage);
++      double rasPoint[4] = { ras[0], ras[1], ras[2], 1.0 };
++      double ijk[4] = { 0.0, 0.0, 0.0, 1.0 };
++      worldToImage->MultiplyPoint(rasPoint, ijk);
++      int label = pipeline.Mapper->GetShownLabelAtPosition(ijk);
++      auto segmentIt = pipeline.PickableSegmentIDsByLabel.find(label);
++      if (segmentIt != pipeline.PickableSegmentIDsByLabel.end())
++      {
++        this->PickedDisplayNodeID = displayNodePipelines.first->GetID();
++        this->PickedSegmentID = segmentIt->second;
++        return true;
++      }
++    }
++  }
++  return false;
++}
++
+ //---------------------------------------------------------------------------
+ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::AddObservations(vtkMRMLSegmentationNode* node)
+ {
+@@ -1136,6 +1442,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
+     //   one that is picked and it may be of different type (volume, model, etc.)
+     this->Internal->FindFirstPickedDisplayNodeFromPickerProp3Ds();
+   }
++  if (this->Internal->PickedDisplayNodeID.empty())
++  {
++    // Segments shown as binary labelmap
++    this->Internal->FindPickedDisplayNodeFromLabelmaps(ras);
++  }
+ 
+   return 1;
+ }
+diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
+new file mode 100644
+index 0000000000..74097616ac
+--- /dev/null
++++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
+@@ -0,0 +1,2323 @@
++/*==============================================================================
++
++  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
++  Queen's University, Kingston, ON, Canada. All Rights Reserved.
++
++  See COPYRIGHT.txt
++  or http://www.slicer.org/copyright/copyright.txt for details.
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License.
++
++  The signed distance field computation (jump flooding) and the ray casting
++  are based on SlicerLive by Steve Pieper (https://github.com/pieper/SlicerLive,
++  Apache License 2.0).
++
++==============================================================================*/
++
++#include "vtkSegmentationLabelmapSurfaceMapper.h"
++
++// MRMLDisplayableManager includes
++#include <vtkMRMLAccuratePicker.h>
++
++// SegmentationCore includes
++#include <vtkOrientedImageData.h>
++
++// VTK includes
++#include <vtkActor.h>
++#include <vtkCallbackCommand.h>
++#include <vtkCamera.h>
++#include <vtkMath.h>
++#include <vtkMatrix3x3.h>
++#include <vtkMatrix4x4.h>
++#include <vtkObjectFactory.h>
++#include <vtkOpenGLError.h>
++#include <vtkOpenGLFramebufferObject.h>
++#include <vtkOpenGLQuadHelper.h>
++#include <vtkOpenGLRenderWindow.h>
++#include <vtkOpenGLRenderer.h>
++#include <vtkOpenGLShaderCache.h>
++#include <vtkOpenGLState.h>
++#include <vtkOpenGLVertexArrayObject.h>
++#include <vtkInformation.h>
++#include <vtkOpenGLRenderPass.h>
++#include <vtkPlane.h>
++#include <vtkPlaneCollection.h>
++#include <vtkPointData.h>
++#include <vtkProperty.h>
++#include <vtkWeakPointer.h>
++#include <vtkShaderProgram.h>
++#include <vtkSmartPointer.h>
++#include <vtkTextureObject.h>
++#include <vtk_glad.h>
++
++// STD includes
++#include <algorithm>
++#include <array>
++#include <cmath>
++#include <map>
++#include <set>
++#include <sstream>
++#include <vector>
++
++namespace
++{
++
++// Distances are computed exactly up to this distance (in voxels) from the surface. Farther voxels are only known to be
++// farther than this, which is enough for ray casting.
++const int BandVoxels = 32;
++
++// Standard deviation of the Gaussian smoothing for SmoothingFactor = 1, relative to the largest voxel size.
++// The default SmoothingFactor (0.5) keeps the surface smooth without rounding off small details.
++const double SmoothingSigmaPerFactor = 1.4;
++
++//----------------------------------------------------------------------------
++// Shader sources start with //VTK::System::Dec, which is replaced by #version: in OpenGL ES it must be on the first line.
++// Shaders of the signed distance field computation. Each pass draws one slice (z = sliceZ) of a
++// 3D texture of the padded grid (a quad covering the slice); a fragment computes one voxel of the slice.
++
++const char* SliceCommonFS = R"(//VTK::System::Dec
++//VTK::Output::Dec
++in vec2 texCoord;
++uniform vec3 gridDimensions;
++uniform int sliceZ;
++ivec3 gridSize() { return ivec3(gridDimensions + vec3(0.5)); }
++ivec3 currentVoxel() { return ivec3(ivec2(texCoord * gridDimensions.xy), sliceZ); }
++)";
++
++// Whether a grid voxel is in a shown segment, from the labelmap. Used to compute the mask.
++const char* LabelFS = R"(
++uniform sampler3D labelTexture;
++uniform sampler2D paletteTexture;
++uniform vec3 labelDimensions;
++uniform vec3 downsampling;
++uniform int padding;
++uniform int paletteSize;
++uniform float labelScale;
++bool isShownLabel(int label)
++{
++  if (label <= 0 || label >= paletteSize)
++  {
++    return false;
++  }
++  return texelFetch(paletteTexture, ivec2(label % 256, label / 256), 0).a > 0.0;
++}
++// A downsampled voxel is shown if any of the labelmap voxels in it is shown (so that small or thin painted regions,
++// for example in a single slice, do not disappear)
++bool isShownVoxel(ivec3 voxel)
++{
++  ivec3 labelSize = ivec3(labelDimensions + vec3(0.5));
++  ivec3 factor = ivec3(downsampling + vec3(0.5));
++  ivec3 labelVoxel = (voxel - ivec3(padding)) * factor;
++  if (any(lessThan(voxel, ivec3(padding))) || any(greaterThanEqual(labelVoxel, labelSize)))
++  {
++    return false;
++  }
++  for (int k = 0; k < 4; k++)
++  {
++    for (int j = 0; j < 4; j++)
++    {
++      for (int i = 0; i < 4; i++)
++      {
++        ivec3 offset = ivec3(i, j, k);
++        if (any(greaterThanEqual(offset, factor)))
++        {
++          continue;
++        }
++        ivec3 labelSample = min(labelVoxel + offset, labelSize - ivec3(1));
++        if (isShownLabel(int(texelFetch(labelTexture, labelSample, 0).r * labelScale + 0.5)))
++        {
++          return true;
++        }
++      }
++    }
++  }
++  return false;
++}
++)";
++
++// Mask of the voxels that are inside the surface: voxels of shown segments, and voxels of gaps between them that are
++// narrower than the smoothing (they would be crevices in the surface; smoothing would fill them, but not entirely).
++const char* MaskFS = R"(
++uniform vec3 gapVoxels;
++void main()
++{
++  ivec3 voxel = currentVoxel();
++  bool inside = isShownVoxel(voxel);
++  for (int axis = 0; axis < 3 && !inside; axis++)
++  {
++    ivec3 step = ivec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
++    int maximumGap = int(gapVoxels[axis] + 0.5);
++    int plusSteps = 0;
++    int minusSteps = 0;
++    for (int i = 1; i <= 4; i++)
++    {
++      if (i > maximumGap)
++      {
++        break;
++      }
++      if (plusSteps == 0 && isShownVoxel(voxel + i * step))
++      {
++        plusSteps = i;
++      }
++      if (minusSteps == 0 && isShownVoxel(voxel - i * step))
++      {
++        minusSteps = i;
++      }
++    }
++    inside = plusSteps > 0 && minusSteps > 0 && plusSteps + minusSteps - 1 <= maximumGap;
++  }
++  gl_FragData[0] = vec4(inside ? 1.0 : 0.0, 0.0, 0.0, 1.0);
++}
++)";
++
++// Whether a grid voxel is inside the surface (from the mask)
++const char* InsideFS = R"(
++uniform sampler3D maskTexture;
++bool isInside(ivec3 voxel)
++{
++  if (any(lessThan(voxel, ivec3(0))) || any(greaterThanEqual(voxel, gridSize())))
++  {
++    return false;
++  }
++  return texelFetch(maskTexture, voxel, 0).r > 0.5;
++}
++)";
++
++// Seeds are stored as offsets from the voxel to its nearest boundary point, in half voxels, in an RGBA8 texture
++// (renderable in OpenGL ES 3.0 without extensions, and a quarter of the memory of floating-point positions).
++// Offsets are limited to +-63.5 voxels, which is more than the band where distances are computed (BandVoxels).
++const char* SeedCodingFS = R"(
++vec4 encodeSeed(vec3 offset)
++{
++  return vec4((round(2.0 * offset) + vec3(128.0)) / 255.0, 1.0);
++}
++vec3 decodeSeed(vec4 seed)
++{
++  return (round(seed.xyz * 255.0) - vec3(128.0)) * 0.5;
++}
++bool isValidSeed(vec4 seed)
++{
++  return seed.w > 0.5;
++}
++)";
++
++// Seeds are points of the boundary of shown segments: voxels on both sides of the boundary place a seed
++// on the nearest face that separates them from a voxel on the other side (one voxel thick structures
++// have such faces on opposite sides, they must not cancel each other).
++const char* SeedFS = R"(
++uniform mat3 gridToPhysical;
++void main()
++{
++  ivec3 voxel = currentVoxel();
++  bool inside = isInside(voxel);
++  vec3 offset = vec3(0.0);
++  float nearestDistance = 1.0e30;
++  for (int axis = 0; axis < 3; axis++)
++  {
++    ivec3 step = ivec3(axis == 0 ? 1 : 0, axis == 1 ? 1 : 0, axis == 2 ? 1 : 0);
++    float faceDistance = 0.5 * length(gridToPhysical * vec3(step));
++    if (faceDistance < nearestDistance && (isInside(voxel + step) != inside || isInside(voxel - step) != inside))
++    {
++      nearestDistance = faceDistance;
++      offset = (isInside(voxel + step) != inside ? 0.5 : -0.5) * vec3(step);
++    }
++  }
++  gl_FragData[0] = nearestDistance < 1.0e30 ? encodeSeed(offset) : vec4(0.0);
++}
++)";
++
++// One jump flooding step: each voxel takes the nearest seed (in physical distance) of its 26 neighbors at stepSize.
++const char* JumpFloodFS = R"(
++uniform sampler3D seedTexture;
++uniform int stepSize;
++uniform mat3 gridToPhysical;
++uniform vec3 regionMinimum;
++uniform vec3 regionMaximum;
++void main()
++{
++  ivec3 voxel = currentVoxel();
++  ivec3 maxVoxel = gridSize() - ivec3(1);
++  vec4 own = texelFetch(seedTexture, voxel, 0);
++  vec3 bestOffset = decodeSeed(own);
++  bool found = isValidSeed(own);
++  float bestDistance = found ? length(gridToPhysical * bestOffset) : 1.0e30;
++  for (int dz = -1; dz <= 1; dz++)
++  {
++    for (int dy = -1; dy <= 1; dy++)
++    {
++      for (int dx = -1; dx <= 1; dx++)
++      {
++        if (dx == 0 && dy == 0 && dz == 0)
++        {
++          continue;
++        }
++        ivec3 neighbor = clamp(voxel + ivec3(dx, dy, dz) * stepSize, ivec3(0), maxVoxel);
++        if (any(lessThan(vec3(neighbor), regionMinimum)) || any(greaterThan(vec3(neighbor), regionMaximum)))
++        {
++          // seeds are only computed in the region
++          continue;
++        }
++        vec4 seed = texelFetch(seedTexture, neighbor, 0);
++        if (!isValidSeed(seed))
++        {
++          continue;
++        }
++        vec3 offset = vec3(neighbor - voxel) + decodeSeed(seed);
++        if (any(greaterThan(abs(offset), vec3(63.5))))
++        {
++          continue;
++        }
++        float distanceToSeed = length(gridToPhysical * offset);
++        if (distanceToSeed < bestDistance)
++        {
++          bestDistance = distanceToSeed;
++          bestOffset = offset;
++          found = true;
++        }
++      }
++    }
++  }
++  gl_FragData[0] = found ? encodeSeed(bestOffset) : vec4(0.0);
++}
++)";
++
++// Signed distance to the nearest boundary point (in mm, negative inside). Farther than the band where seeds
++// are propagated, the distance is only known to be at least bandDistance.
++const char* FinalizeFS = R"(
++uniform sampler3D seedTexture;
++uniform mat3 gridToPhysical;
++uniform float bandDistance;
++void main()
++{
++  ivec3 voxel = currentVoxel();
++  vec4 seed = texelFetch(seedTexture, voxel, 0);
++  float distanceToBoundary = isValidSeed(seed) ? min(length(gridToPhysical * decodeSeed(seed)), bandDistance) : bandDistance;
++  gl_FragData[0] = vec4(isInside(voxel) ? -distanceToBoundary : distanceToBoundary, 0.0, 0.0, 1.0);
++}
++)";
++
++// Separable Gaussian smoothing along one axis.
++const char* SmoothFS = R"(
++uniform sampler3D inputTexture;
++uniform vec3 axis;
++uniform int radius;
++uniform float weights[16];
++void main()
++{
++  ivec3 voxel = currentVoxel();
++  ivec3 maxVoxel = gridSize() - ivec3(1);
++  ivec3 axisStep = ivec3(axis + vec3(0.5));
++  float sum = weights[0] * texelFetch(inputTexture, voxel, 0).r;
++  for (int i = 1; i <= radius; i++)
++  {
++    sum += weights[i] * (texelFetch(inputTexture, clamp(voxel + axisStep * i, ivec3(0), maxVoxel), 0).r
++      + texelFetch(inputTexture, clamp(voxel - axisStep * i, ivec3(0), maxVoxel), 0).r);
++  }
++  gl_FragData[0] = vec4(sum, 0.0, 0.0, 1.0);
++}
++)";
++
++// Smoothing without shrinking: Gaussian smoothing (G) of a distance field moves curved surfaces inwards (by sigma^2/2 times
++// the mean curvature) and removes thin structures, which "twicing" (2 G f - G G f) cancels to first order, while it still
++// removes staircases (high frequencies). Small thin structures (for example painted in a single thick slice) may still
++// disappear: the deepest voxels of each structure (where the original distance is a local minimum) are kept inside.
++const char* CombineFS = R"(
++uniform sampler3D originalTexture;
++uniform sampler3D smoothedTexture;
++uniform sampler3D smoothedTwiceTexture;
++void main()
++{
++  ivec3 voxel = currentVoxel();
++  ivec3 maxVoxel = gridSize() - ivec3(1);
++  float smoothedDistance = 2.0 * texelFetch(smoothedTexture, voxel, 0).r - texelFetch(smoothedTwiceTexture, voxel, 0).r;
++  float originalDistance = texelFetch(originalTexture, voxel, 0).r;
++  if (originalDistance < 0.0 && smoothedDistance > 0.5 * originalDistance)
++  {
++    bool deepest = true;
++    for (int dz = -1; dz <= 1 && deepest; dz++)
++    {
++      for (int dy = -1; dy <= 1 && deepest; dy++)
++      {
++        for (int dx = -1; dx <= 1 && deepest; dx++)
++        {
++          ivec3 neighbor = clamp(voxel + ivec3(dx, dy, dz), ivec3(0), maxVoxel);
++          deepest = texelFetch(originalTexture, neighbor, 0).r >= originalDistance - 1.0e-3;
++        }
++      }
++    }
++    if (deepest)
++    {
++      smoothedDistance = 0.5 * originalDistance;
++    }
++  }
++  gl_FragData[0] = vec4(smoothedDistance, 0.0, 0.0, 1.0);
++}
++)";
++
++//----------------------------------------------------------------------------
++// Ray casting shaders. The box of the grid is drawn (without vertex buffers, from gl_VertexID);
++// fragments of its back faces cast the ray from the eye (or the near side of the box) to the back face.
++
++const char* SurfaceVS = R"(//VTK::System::Dec
++uniform mat4 MCDCMatrix;
++uniform vec3 boxMin;
++uniform vec3 boxMax;
++out vec3 boxPositionMC;
++const int cornerIndices[36] = int[36](0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3, 0, 4, 5, 0, 5, 1,
++  2, 3, 7, 2, 7, 6, 0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5);
++void main()
++{
++  int corner = cornerIndices[gl_VertexID];
++  vec3 cornerPosition = vec3(float(corner & 1), float((corner >> 1) & 1), float((corner >> 2) & 1));
++  boxPositionMC = mix(boxMin, boxMax, cornerPosition);
++  gl_Position = MCDCMatrix * vec4(boxPositionMC, 1.0);
++}
++)";
++
++const char* SurfaceFS = R"(//VTK::System::Dec
++//VTK::Output::Dec
++in vec3 boxPositionMC;
++uniform sampler3D distanceTexture;
++uniform sampler3D labelTexture;
++uniform sampler2D paletteTexture;
++uniform sampler2D opaqueDepthTexture;
++uniform mat4 MCDCMatrix;
++uniform mat4 DCMCMatrix;
++uniform mat4 MCVCMatrix;
++uniform mat3 normalMatrix;
++uniform mat3 gridToPhysical;
++uniform vec3 eyePositionMC;
++uniform vec3 viewDirectionMC;
++uniform int parallelProjection;
++uniform vec3 boxMin;
++uniform vec3 boxMax;
++uniform vec3 mcToGridScale;
++uniform vec3 mcToGridOffset;
++uniform vec3 gridDimensions;
++uniform vec3 labelDimensions;
++uniform vec3 downsampling;
++uniform int padding;
++uniform int paletteSize;
++uniform float labelScale;
++uniform float mcPerMm;
++uniform float minimumStep;
++uniform float ambientIntensity;
++uniform float diffuseIntensity;
++uniform float specularIntensity;
++uniform float specularPower;
++uniform vec3 specularColor;
++uniform float opacity;
++uniform int numberOfClippingPlanes;
++uniform vec4 clippingPlanesMC[16];
++uniform int capClippedSurface;
++uniform float capOpacity;
++uniform int stopAtOpaqueDepth;
++uniform vec2 viewportOrigin;
++uniform vec2 viewportSize;
++//VTK::Light::Dec
++//VTK::DepthPeeling::Dec
++
++float distanceAtGrid(vec3 gridPosition)
++{
++  return texture(distanceTexture, (gridPosition + vec3(0.5)) / gridDimensions).r;
++}
++
++float distanceAt(vec3 positionMC)
++{
++  return distanceAtGrid(positionMC * mcToGridScale + mcToGridOffset);
++}
++
++// Color and opacity of the shown label at a grid position, or alpha = 0 if there is no shown label there.
++vec4 labelColorAtGrid(vec3 gridPosition)
++{
++  ivec3 labelSize = ivec3(labelDimensions + vec3(0.5));
++  ivec3 factor = ivec3(downsampling + vec3(0.5));
++  ivec3 voxel = ivec3(floor(gridPosition + vec3(0.5)));
++  ivec3 labelVoxel = (voxel - ivec3(padding)) * factor;
++  if (any(lessThan(voxel, ivec3(padding))) || any(greaterThanEqual(labelVoxel, labelSize)))
++  {
++    return vec4(0.0);
++  }
++  labelVoxel = min(labelVoxel + factor / 2, labelSize - ivec3(1));
++  int label = int(texelFetch(labelTexture, labelVoxel, 0).r * labelScale + 0.5);
++  if (label <= 0 || label >= paletteSize)
++  {
++    return vec4(0.0);
++  }
++  return texelFetch(paletteTexture, ivec2(label % 256, label / 256), 0);
++}
++
++// Color of a shown label in the labelmap voxels of a downsampled grid voxel (alpha = 0 if there is none)
++vec4 labelColorInBlock(ivec3 voxel)
++{
++  ivec3 labelSize = ivec3(labelDimensions + vec3(0.5));
++  ivec3 factor = ivec3(downsampling + vec3(0.5));
++  ivec3 labelVoxel = (voxel - ivec3(padding)) * factor;
++  if (any(lessThan(voxel, ivec3(padding))) || any(greaterThanEqual(labelVoxel, labelSize)))
++  {
++    return vec4(0.0);
++  }
++  for (int k = 0; k < 4; k++)
++  {
++    for (int j = 0; j < 4; j++)
++    {
++      for (int i = 0; i < 4; i++)
++      {
++        ivec3 offset = ivec3(i, j, k);
++        if (any(greaterThanEqual(offset, factor)))
++        {
++          continue;
++        }
++        int label = int(texelFetch(labelTexture, min(labelVoxel + offset, labelSize - ivec3(1)), 0).r * labelScale + 0.5);
++        if (label > 0 && label < paletteSize)
++        {
++          vec4 color = texelFetch(paletteTexture, ivec2(label % 256, label / 256), 0);
++          if (color.a > 0.0)
++          {
++            return color;
++          }
++        }
++      }
++    }
++  }
++  return vec4(0.0);
++}
++
++// Color of the segments at a surface point: colors of nearby voxels that are inside shown segments, weighted by their
++// distance (in voxels), so that seams between segments are soft. Voxels behind thin segments get negligible weight.
++vec4 segmentColor(vec3 gridPosition)
++{
++  ivec3 center = ivec3(floor(gridPosition + vec3(0.5)));
++  vec4 sum = vec4(0.0);
++  float sumWeights = 0.0;
++  for (int dz = -1; dz <= 1; dz++)
++  {
++    for (int dy = -1; dy <= 1; dy++)
++    {
++      for (int dx = -1; dx <= 1; dx++)
++      {
++        ivec3 voxel = center + ivec3(dx, dy, dz);
++        vec4 color = labelColorAtGrid(vec3(voxel));
++        if (color.a > 0.0)
++        {
++          vec3 offset = vec3(voxel) - gridPosition;
++          float weight = exp(-2.0 * dot(offset, offset));
++          sum += weight * color;
++          sumWeights += weight;
++        }
++      }
++    }
++  }
++  if (sumWeights > 0.0)
++  {
++    return sum / sumWeights;
++  }
++  // Downsampled grid: the shown label may not be at the sampled labelmap voxel
++  vec4 blockColor = labelColorInBlock(center);
++  if (blockColor.a > 0.0)
++  {
++    return blockColor;
++  }
++  // Surface over a filled gap: the nearest shown voxels may be farther
++  for (int dz = -2; dz <= 2; dz++)
++  {
++    for (int dy = -2; dy <= 2; dy++)
++    {
++      for (int dx = -2; dx <= 2; dx++)
++      {
++        ivec3 voxel = center + ivec3(dx, dy, dz);
++        vec4 color = labelColorAtGrid(vec3(voxel));
++        if (color.a > 0.0)
++        {
++          vec3 offset = vec3(voxel) - gridPosition;
++          float weight = exp(-0.5 * dot(offset, offset));
++          sum += weight * color;
++          sumWeights += weight;
++        }
++      }
++    }
++  }
++  return sumWeights > 0.0 ? sum / sumWeights : vec4(0.5, 0.5, 0.5, 1.0);
++}
++
++// Lighting (same model as VTK's polygonal mappers)
++vec3 computeLighting(vec3 baseColor, vec3 normalVC, vec3 viewDirectionVC)
++{
++  vec3 diffuse = vec3(0.0);
++  vec3 specular = vec3(0.0);
++  //VTK::Light::Impl
++  return ambientIntensity * baseColor + diffuseIntensity * diffuse * baseColor + specularIntensity * specular * specularColor;
++}
++
++vec4 accumulatedColor = vec4(0.0); // premultiplied
++float firstDepth = -1.0;
++// Position and normal of the frontmost surface point in view coordinates (for screen-space ambient occlusion)
++vec3 firstPositionVC = vec3(0.0);
++vec3 firstNormalVC = vec3(0.0);
++
++// Composite a surface point front to back. gradientMC is the gradient of a function that increases outwards.
++void compositeSurface(vec3 positionMC, vec3 gradientMC, vec4 baseColor)
++{
++  float alpha = baseColor.a;
++  if (alpha <= 0.0)
++  {
++    return;
++  }
++  vec4 positionVC = MCVCMatrix * vec4(positionMC, 1.0);
++  vec3 viewDirectionVC = parallelProjection == 1 ? vec3(0.0, 0.0, 1.0) : normalize(-positionVC.xyz);
++  vec3 normalVC = normalize(normalMatrix * gradientMC);
++  if (dot(normalVC, viewDirectionVC) < 0.0)
++  {
++    normalVC = -normalVC;
++  }
++  vec3 color = clamp(computeLighting(baseColor.rgb, normalVC, viewDirectionVC), 0.0, 1.0);
++  accumulatedColor += (1.0 - accumulatedColor.a) * vec4(color * alpha, alpha);
++  if (firstDepth < 0.0)
++  {
++    vec4 positionDC = MCDCMatrix * vec4(positionMC, 1.0);
++    firstDepth = clamp(0.5 * positionDC.z / positionDC.w + 0.5, 0.0, 1.0);
++    firstPositionVC = positionVC.xyz / positionVC.w;
++    firstNormalVC = normalVC;
++  }
++}
++
++// Composite the surface of the segments (zero level set of the distance field) at a point
++void compositeSegmentSurface(vec3 positionMC, vec3 rayDirection)
++{
++  vec3 gridPosition = positionMC * mcToGridScale + mcToGridOffset;
++  // Half-voxel differences: structures may be only one voxel thick
++  vec3 gradientGrid = vec3(
++    distanceAtGrid(gridPosition + vec3(0.5, 0.0, 0.0)) - distanceAtGrid(gridPosition - vec3(0.5, 0.0, 0.0)),
++    distanceAtGrid(gridPosition + vec3(0.0, 0.5, 0.0)) - distanceAtGrid(gridPosition - vec3(0.0, 0.5, 0.0)),
++    distanceAtGrid(gridPosition + vec3(0.0, 0.0, 0.5)) - distanceAtGrid(gridPosition - vec3(0.0, 0.0, 0.5)));
++  if (length(gradientGrid) < 1.0e-4)
++  {
++    gradientGrid = -rayDirection * mcToGridScale;
++  }
++  vec4 color = segmentColor(gridPosition);
++  compositeSurface(positionMC, gradientGrid * mcToGridScale, vec4(color.rgb, color.a * opacity));
++}
++
++// Composite the cap of the segments where a clipping plane cuts them
++void compositeCap(vec3 positionMC, vec4 plane)
++{
++  vec3 gridPosition = positionMC * mcToGridScale + mcToGridOffset;
++  vec4 color = segmentColor(gridPosition);
++  compositeSurface(positionMC, plane.xyz, vec4(color.rgb, color.a * opacity * capOpacity));
++}
++
++void main()
++{
++  vec3 rayDirection = parallelProjection == 1 ? viewDirectionMC : normalize(boxPositionMC - eyePositionMC);
++  rayDirection = mix(rayDirection, vec3(1.0e-6), lessThan(abs(rayDirection), vec3(1.0e-6)));
++  vec3 inverseDirection = 1.0 / rayDirection;
++  vec3 t0 = (boxMin - boxPositionMC) * inverseDirection;
++  vec3 t1 = (boxMax - boxPositionMC) * inverseDirection;
++  vec3 tNearAxis = min(t0, t1);
++  vec3 tFarAxis = max(t0, t1);
++  float tNear = max(max(tNearAxis.x, tNearAxis.y), tNearAxis.z);
++  float tFar = min(min(tFarAxis.x, tFarAxis.y), tFarAxis.z);
++  // Only back faces cast rays (the ray leaves the box at this fragment)
++  float tolerance = 1.0e-3 * length(boxMax - boxMin);
++  if (tFar > tolerance)
++  {
++    discard;
++  }
++  float tStart = tNear;
++  if (parallelProjection == 0)
++  {
++    tStart = max(tStart, -length(boxPositionMC - eyePositionMC));
++  }
++  float tEnd = 0.0;
++
++  // Clipping: the kept region is where all plane functions are positive, an interval along the ray
++  int startPlane = -1;
++  int endPlane = -1;
++  for (int i = 0; i < numberOfClippingPlanes; i++)
++  {
++    vec4 plane = clippingPlanesMC[i];
++    float rate = dot(plane.xyz, rayDirection);
++    float value = dot(plane.xyz, boxPositionMC) + plane.w;
++    if (abs(rate) < 1.0e-12)
++    {
++      if (value < 0.0)
++      {
++        discard;
++      }
++      continue;
++    }
++    float tPlane = -value / rate;
++    if (rate > 0.0 && tPlane > tStart)
++    {
++      tStart = tPlane;
++      startPlane = i;
++    }
++    else if (rate < 0.0 && tPlane < tEnd)
++    {
++      tEnd = tPlane;
++      endPlane = i;
++    }
++  }
++
++  // Translucent surfaces are not hidden by the depth test, the ray stops at opaque geometry
++  if (stopAtOpaqueDepth == 1)
++  {
++    vec2 pixel = gl_FragCoord.xy - viewportOrigin;
++    float opaqueDepth = texelFetch(opaqueDepthTexture, ivec2(pixel), 0).r;
++    if (opaqueDepth < 1.0)
++    {
++      vec4 opaquePositionMC = DCMCMatrix * vec4(2.0 * pixel / viewportSize - 1.0, 2.0 * opaqueDepth - 1.0, 1.0);
++      float tOpaque = dot(opaquePositionMC.xyz / opaquePositionMC.w - boxPositionMC, rayDirection);
++      if (tOpaque < tEnd)
++      {
++        tEnd = tOpaque;
++        endPlane = -1;
++      }
++    }
++  }
++  if (tStart >= tEnd)
++  {
++    discard;
++  }
++
++  // March along the ray (sphere tracing) and composite each crossing of the surface
++  float t = tStart;
++  float previousDistance = distanceAt(boxPositionMC + t * rayDirection);
++  if (previousDistance <= 0.0 && startPlane >= 0 && capClippedSurface == 1)
++  {
++    compositeCap(boxPositionMC + t * rayDirection, clippingPlanesMC[startPlane]);
++  }
++  for (int i = 0; i < 4096; i++)
++  {
++    if (t >= tEnd || accumulatedColor.a > 0.99)
++    {
++      break;
++    }
++    float previousT = t;
++    t = min(t + max(abs(previousDistance) * mcPerMm * 0.9, minimumStep), tEnd);
++    float currentDistance = distanceAt(boxPositionMC + t * rayDirection);
++    if ((previousDistance > 0.0) != (currentDistance > 0.0))
++    {
++      // Refine the crossing by bisection
++      float tA = previousT;
++      float tB = t;
++      bool outsideA = previousDistance > 0.0;
++      for (int j = 0; j < 8; j++)
++      {
++        float tMiddle = 0.5 * (tA + tB);
++        if ((distanceAt(boxPositionMC + tMiddle * rayDirection) > 0.0) == outsideA)
++        {
++          tA = tMiddle;
++        }
++        else
++        {
++          tB = tMiddle;
++        }
++      }
++      compositeSegmentSurface(boxPositionMC + 0.5 * (tA + tB) * rayDirection, rayDirection);
++    }
++    previousDistance = currentDistance;
++  }
++  if (previousDistance <= 0.0 && endPlane >= 0 && capClippedSurface == 1 && accumulatedColor.a <= 0.99)
++  {
++    compositeCap(boxPositionMC + tEnd * rayDirection, clippingPlanesMC[endPlane]);
++  }
++  if (accumulatedColor.a <= 0.0)
++  {
++    discard;
++  }
++  gl_FragDepth = firstDepth;
++  //VTK::DepthPeeling::PreColor
++  gl_FragData[0] = vec4(accumulatedColor.rgb / accumulatedColor.a, accumulatedColor.a);
++  //VTK::SSAO::Impl
++  //VTK::DepthPeeling::Impl
++}
++)";
++
++//----------------------------------------------------------------------------
++// Upload a matrix so that "matrix * vector" in GLSL is the same as in VTK
++void SetUniformMatrix4x4(vtkShaderProgram* program, const char* name, vtkMatrix4x4* matrix)
++{
++  float values[16];
++  for (int column = 0; column < 4; ++column)
++  {
++    for (int row = 0; row < 4; ++row)
++    {
++      values[column * 4 + row] = static_cast<float>(matrix->GetElement(row, column));
++    }
++  }
++  program->SetUniformMatrix4x4(name, values);
++}
++
++//----------------------------------------------------------------------------
++void SetUniformMatrix3x3(vtkShaderProgram* program, const char* name, const double matrix[3][3])
++{
++  float values[9];
++  for (int column = 0; column < 3; ++column)
++  {
++    for (int row = 0; row < 3; ++row)
++    {
++      values[column * 3 + row] = static_cast<float>(matrix[row][column]);
++    }
++  }
++  program->SetUniformMatrix3x3(name, values);
++}
++
++//----------------------------------------------------------------------------
++// Integer vectors are passed to shaders as float vectors
++void SetUniformVector3(vtkShaderProgram* program, const char* name, const int vector[3])
++{
++  float values[3] = { static_cast<float>(vector[0]), static_cast<float>(vector[1]), static_cast<float>(vector[2]) };
++  program->SetUniform3f(name, values);
++}
++
++//----------------------------------------------------------------------------
++// Extent of each label in a labelmap
++struct LabelExtents
++{
++  vtkWeakPointer<vtkImageData> Image;
++  vtkMTimeType Time{ 0 };
++  std::map<int, std::array<int, 6>> Extents;
++  double MaximumLabel{ 0 };
++};
++
++//----------------------------------------------------------------------------
++template <class T>
++void FindLabelExtents(vtkImageData* image, LabelExtents& labelExtents)
++{
++  int extent[6];
++  image->GetExtent(extent);
++  labelExtents.Extents.clear();
++  labelExtents.MaximumLabel = 0;
++  T* voxel = static_cast<T*>(image->GetScalarPointer());
++  T lastLabel = 0;
++  std::array<int, 6>* lastExtent = nullptr;
++  for (int k = extent[4]; k <= extent[5]; ++k)
++  {
++    for (int j = extent[2]; j <= extent[3]; ++j)
++    {
++      for (int i = extent[0]; i <= extent[1]; ++i, ++voxel)
++      {
++        if (*voxel <= 0)
++        {
++          continue;
++        }
++        if (!lastExtent || *voxel != lastLabel)
++        {
++          lastLabel = *voxel;
++          auto inserted = labelExtents.Extents.insert(std::make_pair(static_cast<int>(lastLabel), std::array<int, 6>{ i, i, j, j, k, k }));
++          lastExtent = &inserted.first->second;
++          labelExtents.MaximumLabel = std::max(labelExtents.MaximumLabel, static_cast<double>(lastLabel));
++        }
++        std::array<int, 6>& labelExtent = *lastExtent;
++        labelExtent[0] = std::min(labelExtent[0], i);
++        labelExtent[1] = std::max(labelExtent[1], i);
++        labelExtent[2] = std::min(labelExtent[2], j);
++        labelExtent[3] = std::max(labelExtent[3], j);
++        labelExtent[5] = k;
++      }
++    }
++  }
++}
++
++//----------------------------------------------------------------------------
++// Labelmaps are often shown by several mappers (opaque segments in one, each translucent segment in its own),
++// they share the extents of the labels, computed once after each modification of the labelmap.
++const LabelExtents* GetLabelExtents(vtkImageData* image)
++{
++  static std::vector<LabelExtents> cache;
++  cache.erase(std::remove_if(cache.begin(), cache.end(), [](const LabelExtents& entry) { return entry.Image == nullptr; }), cache.end());
++  auto entry = std::find_if(cache.begin(), cache.end(), [image](const LabelExtents& entry) { return entry.Image == image; });
++  if (entry == cache.end())
++  {
++    cache.emplace_back();
++    entry = cache.end() - 1;
++    entry->Image = image;
++  }
++  if (entry->Time != image->GetMTime())
++  {
++    switch (image->GetScalarType())
++    {
++      vtkTemplateMacro(FindLabelExtents<VTK_TT>(image, *entry));
++      default: return nullptr;
++    }
++    entry->Time = image->GetMTime();
++  }
++  return &(*entry);
++}
++
++//----------------------------------------------------------------------------
++template <class T, class OutputType>
++void CopyLabels(vtkImageData* image, const int effectiveExtent[6], std::vector<OutputType>& labels)
++{
++  size_t numberOfVoxels = 1;
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    numberOfVoxels *= static_cast<size_t>(effectiveExtent[axis * 2 + 1] - effectiveExtent[axis * 2] + 1);
++  }
++  labels.resize(numberOfVoxels);
++  OutputType* output = labels.data();
++  for (int k = effectiveExtent[4]; k <= effectiveExtent[5]; ++k)
++  {
++    for (int j = effectiveExtent[2]; j <= effectiveExtent[3]; ++j)
++    {
++      T* voxel = static_cast<T*>(image->GetScalarPointer(effectiveExtent[0], j, k));
++      for (int i = effectiveExtent[0]; i <= effectiveExtent[1]; ++i, ++voxel, ++output)
++      {
++        *output = *voxel > 0 ? static_cast<OutputType>(*voxel) : 0;
++      }
++    }
++  }
++}
++
++//----------------------------------------------------------------------------
++template <class T>
++void CopyLabelsAs(vtkImageData* image, const int extent[6], bool asFloat, std::vector<unsigned char>& charLabels, std::vector<float>& floatLabels)
++{
++  if (asFloat)
++  {
++    CopyLabels<T, float>(image, extent, floatLabels);
++  }
++  else
++  {
++    CopyLabels<T, unsigned char>(image, extent, charLabels);
++  }
++}
++
++} // namespace
++
++//----------------------------------------------------------------------------
++class vtkSegmentationLabelmapSurfaceMapper::vtkInternal
++{
++public:
++  vtkInternal(vtkSegmentationLabelmapSurfaceMapper* external)
++    : External(external)
++  {
++  }
++
++  bool PrepareLabelmap();
++  bool UploadTextures(vtkOpenGLRenderWindow* renWin);
++  /// Compute the distance field, in the changed region (in grid coordinates) or everywhere (if changedRegion is nullptr).
++  bool ComputeDistanceField(vtkOpenGLRenderWindow* renWin, const int* changedRegion);
++  void RenderSurface(vtkOpenGLRenderer* ren, vtkActor* actor);
++  void ReleaseGraphicsResources(vtkWindow* window);
++
++  bool ReadyQuad(vtkOpenGLRenderWindow* renWin, vtkOpenGLQuadHelper*& quad, const std::string& fragmentShader);
++  void SetGridUniforms(vtkShaderProgram* program);
++  void SetInsideUniforms(vtkShaderProgram* program);
++  bool DrawSlices(vtkOpenGLQuadHelper* quad, vtkTextureObject* target, const int region[6]);
++  vtkSmartPointer<vtkTextureObject> CreateTexture(vtkOpenGLRenderWindow* renWin, unsigned int internalFormat, int components, int vtkType, bool linear);
++
++  vtkSegmentationLabelmapSurfaceMapper* External;
++
++  bool CaptureOpaqueDepth(vtkOpenGLRenderer* ren);
++  std::set<int> GetShownLabels() const;
++
++  vtkSmartPointer<vtkOrientedImageData> Labelmap;
++  std::map<int, std::array<double, 4>> LabelColors;
++
++  // Labels within the effective extent of the shown labels, prepared on the CPU for upload
++  vtkTimeStamp PrepareTime;
++  vtkMTimeType PreparedLabelmapTime{ 0 };
++  vtkOrientedImageData* PreparedLabelmap{ nullptr };
++  std::set<int> PreparedLabels;
++  vtkIdType PreparedMaximumNumberOfVoxels{ 0 };
++  bool Empty{ true };
++  int EffectiveExtent[6] = { 0, -1, 0, -1, 0, -1 };
++  int LabelDimensions[3] = { 0, 0, 0 };
++  int Downsampling[3] = { 1, 1, 1 };
++  int GridDimensions[3] = { 0, 0, 0 };
++  const int Padding{ 2 };
++  double MCToGridScale[3] = { 1.0, 1.0, 1.0 };
++  double MCToGridOffset[3] = { 0.0, 0.0, 0.0 };
++  double GridToPhysical[3][3];
++  double Bounds[6] = { 0.0, -1.0, 0.0, -1.0, 0.0, -1.0 };
++  bool FloatLabels{ false };
++  std::vector<unsigned char> LabelsUnsignedChar;
++  std::vector<float> LabelsFloat;
++  /// Labels before the last change, to find the region that changed
++  std::vector<unsigned char> PreviousLabelsUnsignedChar;
++  std::vector<float> PreviousLabelsFloat;
++
++  // Graphics resources
++  vtkOpenGLRenderWindow* Context{ nullptr };
++  vtkSmartPointer<vtkTextureObject> LabelTexture;
++  vtkSmartPointer<vtkTextureObject> PaletteTexture;
++  vtkSmartPointer<vtkTextureObject> DistanceTexture;
++  int PaletteSize{ 0 };
++  vtkTimeStamp LabelTextureTime;
++  std::map<int, std::array<double, 4>> UploadedLabelColors;
++  vtkTimeStamp DistanceFieldTime;
++  bool DistanceFieldNeedsUpdate{ true };
++  /// Region of the grid where labels changed since the distance field was computed
++  /// (only used if DistanceFieldNeedsUpdate is false: then the distance field is updated in this region only)
++  bool ChangedRegionValid{ false };
++  int ChangedRegion[6] = { 0, -1, 0, -1, 0, -1 };
++  double ComputedSmoothingFactor{ -1.0 };
++
++  // Depth of opaque geometry, which stops rays of translucent surfaces
++  vtkSmartPointer<vtkTextureObject> OpaqueDepthTexture;
++  vtkSmartPointer<vtkTextureObject> OpaqueDepthCopyColorTexture;
++  vtkSmartPointer<vtkOpenGLFramebufferObject> OpaqueDepthFramebuffer;
++  bool Failed{ false };
++
++  vtkNew<vtkOpenGLFramebufferObject> Framebuffer;
++  vtkOpenGLQuadHelper* SeedQuad{ nullptr };
++  vtkOpenGLQuadHelper* JumpFloodQuad{ nullptr };
++  vtkOpenGLQuadHelper* FinalizeQuad{ nullptr };
++  vtkOpenGLQuadHelper* SmoothQuad{ nullptr };
++  vtkOpenGLQuadHelper* CombineQuad{ nullptr };
++  vtkOpenGLQuadHelper* MaskQuad{ nullptr };
++
++  vtkShaderProgram* SurfaceProgram{ nullptr };
++  std::string SurfaceProgramKey;
++  vtkNew<vtkOpenGLVertexArrayObject> SurfaceVAO;
++};
++
++//----------------------------------------------------------------------------
++std::set<int> vtkSegmentationLabelmapSurfaceMapper::vtkInternal::GetShownLabels() const
++{
++  std::set<int> labels;
++  for (const auto& labelColor : this->LabelColors)
++  {
++    if (labelColor.first > 0 && labelColor.second[3] > 0.0)
++    {
++      labels.insert(labelColor.first);
++    }
++  }
++  return labels;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::PrepareLabelmap()
++{
++  std::set<int> shownLabels = this->GetShownLabels();
++  bool sameLabelmap = this->Labelmap && this->PreparedLabelmap == this->Labelmap && this->PreparedLabelmapTime == this->Labelmap->GetMTime();
++  if (sameLabelmap && this->PreparedLabels == shownLabels && this->PreparedMaximumNumberOfVoxels == this->External->MaximumNumberOfVoxels)
++  {
++    return !this->Empty;
++  }
++  // Only the labels changed (same labelmap, shown labels, and grid): the distance field may be updated where they changed
++  int previousEffectiveExtent[6];
++  std::copy_n(this->EffectiveExtent, 6, previousEffectiveExtent);
++  bool previousFloatLabels = this->FloatLabels;
++  bool labelsMayChangeInRegion = !this->Empty && this->Labelmap && this->PreparedLabelmap == this->Labelmap && this->PreparedLabels == shownLabels
++                                 && this->PreparedMaximumNumberOfVoxels == this->External->MaximumNumberOfVoxels;
++  this->PreviousLabelsUnsignedChar.swap(this->LabelsUnsignedChar);
++  this->PreviousLabelsFloat.swap(this->LabelsFloat);
++  bool fullUpdatePending = this->DistanceFieldNeedsUpdate;
++
++  this->PreparedLabelmap = this->Labelmap;
++  this->PreparedLabelmapTime = this->Labelmap ? this->Labelmap->GetMTime() : 0;
++  this->PreparedLabels = shownLabels;
++  this->PreparedMaximumNumberOfVoxels = this->External->MaximumNumberOfVoxels;
++  this->PrepareTime.Modified();
++  this->Empty = true;
++  vtkMath::UninitializeBounds(this->Bounds);
++  this->LabelsUnsignedChar.clear();
++  this->LabelsFloat.clear();
++  this->DistanceFieldNeedsUpdate = true;
++  if (!this->Labelmap || !this->Labelmap->GetPointData() || !this->Labelmap->GetPointData()->GetScalars())
++  {
++    return false;
++  }
++  if (this->Labelmap->GetNumberOfScalarComponents() != 1)
++  {
++    vtkErrorWithObjectMacro(this->External, "PrepareLabelmap: labelmap must have a single scalar component");
++    return false;
++  }
++  const LabelExtents* labelExtents = GetLabelExtents(this->Labelmap);
++  if (!labelExtents)
++  {
++    vtkErrorWithObjectMacro(this->External, "PrepareLabelmap: unsupported scalar type");
++    return false;
++  }
++
++  // Only the region of the shown labels is used
++  this->EffectiveExtent[0] = this->EffectiveExtent[2] = this->EffectiveExtent[4] = VTK_INT_MAX;
++  this->EffectiveExtent[1] = this->EffectiveExtent[3] = this->EffectiveExtent[5] = VTK_INT_MIN;
++  for (int label : shownLabels)
++  {
++    auto labelExtent = labelExtents->Extents.find(label);
++    if (labelExtent == labelExtents->Extents.end())
++    {
++      continue;
++    }
++    for (int axis = 0; axis < 3; ++axis)
++    {
++      this->EffectiveExtent[axis * 2] = std::min(this->EffectiveExtent[axis * 2], labelExtent->second[axis * 2]);
++      this->EffectiveExtent[axis * 2 + 1] = std::max(this->EffectiveExtent[axis * 2 + 1], labelExtent->second[axis * 2 + 1]);
++    }
++  }
++  if (this->EffectiveExtent[0] > this->EffectiveExtent[1])
++  {
++    // no shown labels
++    return false;
++  }
++
++  this->FloatLabels = (labelExtents->MaximumLabel > 255);
++  switch (this->Labelmap->GetScalarType())
++  {
++    vtkTemplateMacro(CopyLabelsAs<VTK_TT>(this->Labelmap, this->EffectiveExtent, this->FloatLabels, this->LabelsUnsignedChar, this->LabelsFloat));
++  }
++
++  // Grid of the distance field: the labelmap (downsampled if needed) with padding on each side,
++  // so that segments touching the labelmap boundary are capped.
++  vtkNew<vtkMatrix4x4> imageToWorld;
++  this->Labelmap->GetImageToWorldMatrix(imageToWorld);
++  // Downsampling: increase the factor along the axis that has the smallest voxels (after downsampling)
++  // until the grid is small enough. Dimensions are limited by the maximum 3D texture size of WebGL2 implementations.
++  const int maximumDimension = 2048;
++  double voxelSizes[3];
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    this->LabelDimensions[axis] = this->EffectiveExtent[axis * 2 + 1] - this->EffectiveExtent[axis * 2] + 1;
++    this->Downsampling[axis] = 1;
++    double column[3] = { imageToWorld->GetElement(0, axis), imageToWorld->GetElement(1, axis), imageToWorld->GetElement(2, axis) };
++    voxelSizes[axis] = vtkMath::Norm(column);
++  }
++  auto gridDimension = [this](int axis) { return (this->LabelDimensions[axis] + this->Downsampling[axis] - 1) / this->Downsampling[axis] + 2 * this->Padding; };
++  while (true)
++  {
++    vtkIdType numberOfVoxels = static_cast<vtkIdType>(gridDimension(0)) * gridDimension(1) * gridDimension(2);
++    int axisToDownsample = -1;
++    for (int axis = 0; axis < 3; ++axis)
++    {
++      if (gridDimension(axis) > maximumDimension)
++      {
++        axisToDownsample = axis;
++      }
++    }
++    if (axisToDownsample < 0 && numberOfVoxels <= this->External->MaximumNumberOfVoxels)
++    {
++      break;
++    }
++    if (axisToDownsample < 0)
++    {
++      for (int axis = 0; axis < 3; ++axis)
++      {
++        if (this->Downsampling[axis] < this->LabelDimensions[axis]
++            && (axisToDownsample < 0 || voxelSizes[axis] * this->Downsampling[axis] < voxelSizes[axisToDownsample] * this->Downsampling[axisToDownsample]))
++        {
++          axisToDownsample = axis;
++        }
++      }
++    }
++    if (axisToDownsample < 0)
++    {
++      break;
++    }
++    this->Downsampling[axisToDownsample]++;
++  }
++  // Region of the grid where labels changed
++  bool sameExtent = std::equal(previousEffectiveExtent, previousEffectiveExtent + 6, this->EffectiveExtent);
++  labelsMayChangeInRegion = labelsMayChangeInRegion && previousFloatLabels == this->FloatLabels && sameExtent;
++  if (labelsMayChangeInRegion)
++  {
++    int changedLabels[6] = { VTK_INT_MAX, VTK_INT_MIN, VTK_INT_MAX, VTK_INT_MIN, VTK_INT_MAX, VTK_INT_MIN };
++    int dimensions[3] = { this->EffectiveExtent[1] - this->EffectiveExtent[0] + 1,
++                          this->EffectiveExtent[3] - this->EffectiveExtent[2] + 1,
++                          this->EffectiveExtent[5] - this->EffectiveExtent[4] + 1 };
++    size_t index = 0;
++    for (int k = 0; k < dimensions[2]; ++k)
++    {
++      for (int j = 0; j < dimensions[1]; ++j)
++      {
++        for (int i = 0; i < dimensions[0]; ++i, ++index)
++        {
++          bool changed = false;
++          if (this->FloatLabels)
++          {
++            changed = (this->LabelsFloat[index] != this->PreviousLabelsFloat[index]);
++          }
++          else
++          {
++            changed = (this->LabelsUnsignedChar[index] != this->PreviousLabelsUnsignedChar[index]);
++          }
++          if (changed)
++          {
++            int voxel[3] = { i, j, k };
++            for (int axis = 0; axis < 3; ++axis)
++            {
++              changedLabels[axis * 2] = std::min(changedLabels[axis * 2], voxel[axis]);
++              changedLabels[axis * 2 + 1] = std::max(changedLabels[axis * 2 + 1], voxel[axis]);
++            }
++          }
++        }
++      }
++    }
++    if (changedLabels[0] > changedLabels[1])
++    {
++      // nothing changed
++      if (!fullUpdatePending)
++      {
++        this->DistanceFieldNeedsUpdate = false;
++      }
++    }
++    else
++    {
++      // label voxel l is in grid voxel l / downsampling + padding
++      int changedGrid[6];
++      for (int axis = 0; axis < 3; ++axis)
++      {
++        changedGrid[axis * 2] = changedLabels[axis * 2] / this->Downsampling[axis] + this->Padding;
++        changedGrid[axis * 2 + 1] = changedLabels[axis * 2 + 1] / this->Downsampling[axis] + this->Padding;
++      }
++      if (!fullUpdatePending)
++      {
++        this->DistanceFieldNeedsUpdate = false;
++        if (this->ChangedRegionValid)
++        {
++          for (int axis = 0; axis < 3; ++axis)
++          {
++            this->ChangedRegion[axis * 2] = std::min(this->ChangedRegion[axis * 2], changedGrid[axis * 2]);
++            this->ChangedRegion[axis * 2 + 1] = std::max(this->ChangedRegion[axis * 2 + 1], changedGrid[axis * 2 + 1]);
++          }
++        }
++        else
++        {
++          std::copy_n(changedGrid, 6, this->ChangedRegion);
++          this->ChangedRegionValid = true;
++        }
++      }
++    }
++  }
++  this->PreviousLabelsUnsignedChar.clear();
++  this->PreviousLabelsFloat.clear();
++
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    this->GridDimensions[axis] = gridDimension(axis);
++    // Model coordinates are labelmap IJK coordinates: mc = grid * downsampling + offset
++    double offset = this->EffectiveExtent[axis * 2] - this->Padding * this->Downsampling[axis] + (this->Downsampling[axis] - 1) * 0.5;
++    this->MCToGridScale[axis] = 1.0 / this->Downsampling[axis];
++    this->MCToGridOffset[axis] = -offset / this->Downsampling[axis];
++    this->Bounds[axis * 2] = -0.5 * this->Downsampling[axis] + offset;
++    this->Bounds[axis * 2 + 1] = (this->GridDimensions[axis] - 0.5) * this->Downsampling[axis] + offset;
++    for (int row = 0; row < 3; ++row)
++    {
++      this->GridToPhysical[row][axis] = imageToWorld->GetElement(row, axis) * this->Downsampling[axis];
++    }
++  }
++  this->Empty = false;
++  return true;
++}
++
++//----------------------------------------------------------------------------
++vtkSmartPointer<vtkTextureObject> vtkSegmentationLabelmapSurfaceMapper::vtkInternal::CreateTexture(vtkOpenGLRenderWindow* renWin,
++                                                                                                   unsigned int internalFormat,
++                                                                                                   int components,
++                                                                                                   int vtkType,
++                                                                                                   bool linear)
++{
++  vtkSmartPointer<vtkTextureObject> texture = vtkSmartPointer<vtkTextureObject>::New();
++  texture->SetContext(renWin);
++  texture->SetInternalFormat(internalFormat);
++  texture->SetWrapS(vtkTextureObject::ClampToEdge);
++  texture->SetWrapT(vtkTextureObject::ClampToEdge);
++  texture->SetWrapR(vtkTextureObject::ClampToEdge);
++  texture->SetMinificationFilter(linear ? vtkTextureObject::Linear : vtkTextureObject::Nearest);
++  texture->SetMagnificationFilter(linear ? vtkTextureObject::Linear : vtkTextureObject::Nearest);
++  if (!texture->Allocate3D(this->GridDimensions[0], this->GridDimensions[1], this->GridDimensions[2], components, vtkType))
++  {
++    return nullptr;
++  }
++  return texture;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::UploadTextures(vtkOpenGLRenderWindow* renWin)
++{
++  if (!this->LabelTexture || this->LabelTextureTime < this->PrepareTime)
++  {
++    this->LabelTexture = vtkSmartPointer<vtkTextureObject>::New();
++    this->LabelTexture->SetContext(renWin);
++    this->LabelTexture->SetWrapS(vtkTextureObject::ClampToEdge);
++    this->LabelTexture->SetWrapT(vtkTextureObject::ClampToEdge);
++    this->LabelTexture->SetWrapR(vtkTextureObject::ClampToEdge);
++    this->LabelTexture->SetMinificationFilter(vtkTextureObject::Nearest);
++    this->LabelTexture->SetMagnificationFilter(vtkTextureObject::Nearest);
++    int scalarType = this->FloatLabels ? VTK_FLOAT : VTK_UNSIGNED_CHAR;
++    void* labels = this->FloatLabels ? static_cast<void*>(this->LabelsFloat.data()) : static_cast<void*>(this->LabelsUnsignedChar.data());
++    bool success = this->LabelTexture->Create3DFromRaw(this->LabelDimensions[0], this->LabelDimensions[1], this->LabelDimensions[2], 1, scalarType, labels);
++    if (!success)
++    {
++      vtkErrorWithObjectMacro(this->External, "UploadTextures: failed to create labelmap texture");
++      this->LabelTexture = nullptr;
++      return false;
++    }
++    this->LabelTextureTime.Modified();
++  }
++
++  if (!this->PaletteTexture || this->UploadedLabelColors != this->LabelColors)
++  {
++    // Shown labels change the distance field, colors and opacities only change the palette
++    std::set<int> uploadedShownLabels;
++    for (const auto& labelColor : this->UploadedLabelColors)
++    {
++      if (labelColor.first > 0 && labelColor.second[3] > 0.0)
++      {
++        uploadedShownLabels.insert(labelColor.first);
++      }
++    }
++    if (uploadedShownLabels != this->GetShownLabels())
++    {
++      this->DistanceFieldNeedsUpdate = true;
++    }
++    int maximumLabel = this->LabelColors.empty() ? 0 : this->LabelColors.rbegin()->first;
++    const int paletteWidth = 256;
++    int paletteHeight = maximumLabel / paletteWidth + 1;
++    std::vector<unsigned char> palette(static_cast<size_t>(paletteWidth) * paletteHeight * 4, 0);
++    for (const auto& labelColor : this->LabelColors)
++    {
++      if (labelColor.first <= 0)
++      {
++        continue;
++      }
++      unsigned char* entry = palette.data() + static_cast<size_t>(labelColor.first) * 4;
++      for (int component = 0; component < 4; ++component)
++      {
++        entry[component] = static_cast<unsigned char>(std::clamp(labelColor.second[component], 0.0, 1.0) * 255.0 + 0.5);
++      }
++      if (labelColor.second[3] > 0.0)
++      {
++        // shown labels are never fully transparent in the palette
++        entry[3] = std::max(entry[3], static_cast<unsigned char>(1));
++      }
++    }
++    this->PaletteTexture = vtkSmartPointer<vtkTextureObject>::New();
++    this->PaletteTexture->SetContext(renWin);
++    this->PaletteTexture->SetMinificationFilter(vtkTextureObject::Nearest);
++    this->PaletteTexture->SetMagnificationFilter(vtkTextureObject::Nearest);
++    if (!this->PaletteTexture->Create2DFromRaw(paletteWidth, paletteHeight, 4, VTK_UNSIGNED_CHAR, palette.data()))
++    {
++      vtkErrorWithObjectMacro(this->External, "UploadTextures: failed to create palette texture");
++      this->PaletteTexture = nullptr;
++      return false;
++    }
++    this->PaletteSize = paletteWidth * paletteHeight;
++    this->UploadedLabelColors = this->LabelColors;
++  }
++  return true;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReadyQuad(vtkOpenGLRenderWindow* renWin, vtkOpenGLQuadHelper*& quad, const std::string& fragmentShader)
++{
++  if (!quad)
++  {
++    quad = new vtkOpenGLQuadHelper(renWin, nullptr, fragmentShader.c_str(), "");
++  }
++  else
++  {
++    renWin->GetShaderCache()->ReadyShaderProgram(quad->Program);
++  }
++  if (!quad->Program || !quad->Program->GetCompiled())
++  {
++    vtkErrorWithObjectMacro(this->External, "Failed to compile distance field shader");
++    return false;
++  }
++  return true;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::SetGridUniforms(vtkShaderProgram* program)
++{
++  SetUniformVector3(program, "gridDimensions", this->GridDimensions);
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::SetInsideUniforms(vtkShaderProgram* program)
++{
++  program->SetUniformi("labelTexture", this->LabelTexture->GetTextureUnit());
++  program->SetUniformi("paletteTexture", this->PaletteTexture->GetTextureUnit());
++  SetUniformVector3(program, "labelDimensions", this->LabelDimensions);
++  SetUniformVector3(program, "downsampling", this->Downsampling);
++  program->SetUniformi("padding", this->Padding);
++  program->SetUniformi("paletteSize", this->PaletteSize);
++  // 8-bit labels are stored in a normalized texture
++  program->SetUniformf("labelScale", this->FloatLabels ? 1.0f : 255.0f);
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::DrawSlices(vtkOpenGLQuadHelper* quad, vtkTextureObject* target, const int region[6])
++{
++  // Only the region is drawn (z: slices, x and y: scissor)
++  vtkOpenGLState* ostate = this->Context->GetState();
++  ostate->vtkglEnable(GL_SCISSOR_TEST);
++  ostate->vtkglScissor(region[0], region[2], region[1] - region[0] + 1, region[3] - region[2] + 1);
++  for (int z = region[4]; z <= region[5]; ++z)
++  {
++    // vtkOpenGLFramebufferObject cannot attach a slice of a 3D texture in OpenGL ES
++    glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, target->GetHandle(), 0, z);
++    if (z == region[4])
++    {
++      GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++      if (status != GL_FRAMEBUFFER_COMPLETE)
++      {
++        vtkErrorWithObjectMacro(this->External,
++                                "Rendering into floating-point 3D textures is not supported by the graphics driver"
++                                " (framebuffer status: "
++                                  << status << "). Segmentations cannot be displayed as binary labelmap in 3D views.");
++        return false;
++      }
++    }
++    quad->Program->SetUniformi("sliceZ", z);
++    quad->Render();
++  }
++  vtkOpenGLCheckErrorMacro("failed after rendering slices");
++  return true;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ComputeDistanceField(vtkOpenGLRenderWindow* renWin, const int* changedRegion)
++{
++  vtkOpenGLState* ostate = renWin->GetState();
++  vtkOpenGLState::ScopedglViewport savedViewport(ostate);
++  vtkOpenGLState::ScopedglScissor savedScissor(ostate);
++  vtkOpenGLState::ScopedglColorMask savedColorMask(ostate);
++  vtkOpenGLState::ScopedglEnableDisable savedDepthTest(ostate, GL_DEPTH_TEST);
++  vtkOpenGLState::ScopedglEnableDisable savedBlend(ostate, GL_BLEND);
++  vtkOpenGLState::ScopedglEnableDisable savedScissorTest(ostate, GL_SCISSOR_TEST);
++  vtkOpenGLState::ScopedglEnableDisable savedCullFace(ostate, GL_CULL_FACE);
++  ostate->vtkglDisable(GL_DEPTH_TEST);
++  ostate->vtkglDisable(GL_BLEND);
++  ostate->vtkglDisable(GL_CULL_FACE);
++  ostate->vtkglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++  ostate->vtkglViewport(0, 0, this->GridDimensions[0], this->GridDimensions[1]);
++
++  // Voxel sizes and smoothing (see CombineFS). The standard deviation of the Gaussian is the same in all directions in
++  // physical space (SmoothingSigmaPerFactor * SmoothingFactor times the largest voxel size), so that staircases of thick slices are smoothed
++  // as much as in-plane ones.
++  double voxelSizes[3] = { 0.0, 0.0, 0.0 };
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    double column[3] = { this->GridToPhysical[0][axis], this->GridToPhysical[1][axis], this->GridToPhysical[2][axis] };
++    voxelSizes[axis] = std::max(vtkMath::Norm(column), 1e-6);
++  }
++  double sigmaMm = SmoothingSigmaPerFactor * this->External->SmoothingFactor * std::max({ voxelSizes[0], voxelSizes[1], voxelSizes[2] });
++  int smoothingRadius[3] = { 0, 0, 0 };
++  for (int axis = 0; axis < 3 && sigmaMm > 0.0; ++axis)
++  {
++    smoothingRadius[axis] = std::clamp(static_cast<int>(std::ceil(3.0 * sigmaMm / voxelSizes[axis])), 1, 15);
++  }
++
++  // Regions. When only a part of the labelmap changed, only the distances near it are computed: in the working region,
++  // where the passes are drawn, and the distances are updated in the inner region, which is far enough from the border
++  // of the working region (where seeds and smoothing are incomplete) to be correct.
++  vtkTextureObject* previous = this->DistanceTexture;
++  unsigned int gridDimensions[3] = { static_cast<unsigned int>(this->GridDimensions[0]),
++                                     static_cast<unsigned int>(this->GridDimensions[1]),
++                                     static_cast<unsigned int>(this->GridDimensions[2]) };
++  bool sameGrid = (previous != nullptr);
++  for (int axis = 0; axis < 3 && sameGrid; ++axis)
++  {
++    unsigned int previousDimension = (axis == 0 ? previous->GetWidth() : (axis == 1 ? previous->GetHeight() : previous->GetDepth()));
++    sameGrid = (previousDimension == gridDimensions[axis]);
++  }
++  bool fullUpdate = (changedRegion == nullptr) || !sameGrid;
++  int innerRegion[6];
++  int workingRegion[6];
++  int maskRegion[6];
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    int margin = 2 * smoothingRadius[axis] + 4;
++    int lastVoxel = this->GridDimensions[axis] - 1;
++    if (fullUpdate)
++    {
++      innerRegion[axis * 2] = workingRegion[axis * 2] = maskRegion[axis * 2] = 0;
++      innerRegion[axis * 2 + 1] = workingRegion[axis * 2 + 1] = maskRegion[axis * 2 + 1] = lastVoxel;
++      continue;
++    }
++    innerRegion[axis * 2] = std::max(0, changedRegion[axis * 2] - margin);
++    innerRegion[axis * 2 + 1] = std::min(lastVoxel, changedRegion[axis * 2 + 1] + margin);
++    workingRegion[axis * 2] = std::max(0, changedRegion[axis * 2] - 3 * margin);
++    workingRegion[axis * 2 + 1] = std::min(lastVoxel, changedRegion[axis * 2 + 1] + 3 * margin);
++    maskRegion[axis * 2] = std::max(0, workingRegion[axis * 2] - 1);
++    maskRegion[axis * 2 + 1] = std::min(lastVoxel, workingRegion[axis * 2 + 1] + 1);
++  }
++
++  // Textures: seeds (offsets to the nearest boundary point, xyz, and valid flag, w), mask, distances
++  vtkSmartPointer<vtkTextureObject> seedTextures[2];
++  for (int i = 0; i < 2; ++i)
++  {
++    seedTextures[i] = this->CreateTexture(renWin, GL_RGBA8, 4, VTK_UNSIGNED_CHAR, false);
++  }
++  vtkSmartPointer<vtkTextureObject> maskTexture = this->CreateTexture(renWin, GL_R8, 1, VTK_UNSIGNED_CHAR, false);
++  vtkSmartPointer<vtkTextureObject> distanceTextures[4]; // original, smoothed, smoothed twice, temporary
++  for (int i = 0; i < 4; ++i)
++  {
++    distanceTextures[i] = this->CreateTexture(renWin, GL_R16F, 1, VTK_FLOAT, true);
++  }
++  vtkSmartPointer<vtkTextureObject> resultTexture = fullUpdate ? this->CreateTexture(renWin, GL_R16F, 1, VTK_FLOAT, true) : this->DistanceTexture;
++  bool success = seedTextures[0] && seedTextures[1] && maskTexture && resultTexture;
++  for (int i = 0; i < 4; ++i)
++  {
++    success = success && distanceTextures[i];
++  }
++  if (!success)
++  {
++    vtkErrorWithObjectMacro(this->External, "ComputeDistanceField: failed to allocate textures");
++    return false;
++  }
++  vtkTextureObject* original = distanceTextures[0];
++  vtkTextureObject* smoothed = distanceTextures[1];
++  vtkTextureObject* smoothedTwice = distanceTextures[2];
++  vtkTextureObject* temporary = distanceTextures[3];
++
++  this->Framebuffer->SetContext(renWin);
++  this->Framebuffer->SaveCurrentBindingsAndBuffers();
++  this->Framebuffer->Bind();
++  this->Framebuffer->ActivateDrawBuffers(1);
++
++  std::string sliceShader = SliceCommonFS;
++
++  // Mask: shown segments and narrow gaps between them
++  if (success && (success = this->ReadyQuad(renWin, this->MaskQuad, sliceShader + LabelFS + MaskFS)))
++  {
++    vtkShaderProgram* program = this->MaskQuad->Program;
++    this->LabelTexture->Activate();
++    this->PaletteTexture->Activate();
++    this->SetGridUniforms(program);
++    this->SetInsideUniforms(program);
++    float gapVoxels[3];
++    for (int axis = 0; axis < 3; ++axis)
++    {
++      gapVoxels[axis] = static_cast<float>(std::min(4.0, std::floor(sigmaMm / voxelSizes[axis])));
++    }
++    program->SetUniform3f("gapVoxels", gapVoxels);
++    success = this->DrawSlices(this->MaskQuad, maskTexture, maskRegion);
++    this->LabelTexture->Deactivate();
++    this->PaletteTexture->Deactivate();
++  }
++  if (success)
++  {
++    maskTexture->Activate();
++  }
++
++  // Seeds
++  if (success && (success = this->ReadyQuad(renWin, this->SeedQuad, sliceShader + InsideFS + SeedCodingFS + SeedFS)))
++  {
++    vtkShaderProgram* program = this->SeedQuad->Program;
++    this->SetGridUniforms(program);
++    program->SetUniformi("maskTexture", maskTexture->GetTextureUnit());
++    SetUniformMatrix3x3(program, "gridToPhysical", this->GridToPhysical);
++    success = this->DrawSlices(this->SeedQuad, seedTextures[0], workingRegion);
++  }
++
++  // Jump flooding: steps from the largest power of two smaller than the region size (or the band) down to 1,
++  // followed by steps 2 and 1 again ("JFA+2") to correct most of the errors of the approximation.
++  int sourceIndex = 0;
++  if (success && (success = this->ReadyQuad(renWin, this->JumpFloodQuad, sliceShader + SeedCodingFS + JumpFloodFS)))
++  {
++    int maximumDimension = 1;
++    for (int axis = 0; axis < 3; ++axis)
++    {
++      maximumDimension = std::max(maximumDimension, workingRegion[axis * 2 + 1] - workingRegion[axis * 2] + 1);
++    }
++    std::vector<int> steps;
++    for (int step = std::min(vtkMath::NearestPowerOfTwo(maximumDimension) / 2, BandVoxels); step >= 1; step /= 2)
++    {
++      steps.push_back(step);
++    }
++    steps.push_back(2);
++    steps.push_back(1);
++    vtkShaderProgram* program = this->JumpFloodQuad->Program;
++    this->SetGridUniforms(program);
++    SetUniformMatrix3x3(program, "gridToPhysical", this->GridToPhysical);
++    float regionMinimum[3] = { static_cast<float>(workingRegion[0]), static_cast<float>(workingRegion[2]), static_cast<float>(workingRegion[4]) };
++    float regionMaximum[3] = { static_cast<float>(workingRegion[1]), static_cast<float>(workingRegion[3]), static_cast<float>(workingRegion[5]) };
++    program->SetUniform3f("regionMinimum", regionMinimum);
++    program->SetUniform3f("regionMaximum", regionMaximum);
++    for (int step : steps)
++    {
++      if (!success)
++      {
++        break;
++      }
++      seedTextures[sourceIndex]->Activate();
++      program->SetUniformi("seedTexture", seedTextures[sourceIndex]->GetTextureUnit());
++      program->SetUniformi("stepSize", step);
++      success = this->DrawSlices(this->JumpFloodQuad, seedTextures[1 - sourceIndex], workingRegion);
++      seedTextures[sourceIndex]->Deactivate();
++      sourceIndex = 1 - sourceIndex;
++    }
++  }
++
++  // Signed distance
++  if (success && (success = this->ReadyQuad(renWin, this->FinalizeQuad, sliceShader + InsideFS + SeedCodingFS + FinalizeFS)))
++  {
++    vtkShaderProgram* program = this->FinalizeQuad->Program;
++    seedTextures[sourceIndex]->Activate();
++    this->SetGridUniforms(program);
++    program->SetUniformi("maskTexture", maskTexture->GetTextureUnit());
++    program->SetUniformi("seedTexture", seedTextures[sourceIndex]->GetTextureUnit());
++    SetUniformMatrix3x3(program, "gridToPhysical", this->GridToPhysical);
++    program->SetUniformf("bandDistance", static_cast<float>(BandVoxels * std::min({ voxelSizes[0], voxelSizes[1], voxelSizes[2] })));
++    success = this->DrawSlices(this->FinalizeQuad, original, workingRegion);
++    seedTextures[sourceIndex]->Deactivate();
++  }
++
++  // Separable Gaussian of source (x: source -> target, y: target -> temporary, z: temporary -> target),
++  // the source is not modified
++  auto gaussian = [&](vtkTextureObject* source, vtkTextureObject* target)
++  {
++    vtkShaderProgram* program = this->SmoothQuad->Program;
++    this->SetGridUniforms(program);
++    vtkTextureObject* passes[3][2] = { { source, target }, { target, temporary }, { temporary, target } };
++    for (int axis = 0; axis < 3 && success; ++axis)
++    {
++      double sigma = sigmaMm / voxelSizes[axis];
++      int radius = smoothingRadius[axis];
++      float weights[16] = { 0.0f };
++      double total = 0.0;
++      for (int i = 0; i <= radius; ++i)
++      {
++        weights[i] = static_cast<float>(std::exp(-(i * i) / (2.0 * sigma * sigma)));
++        total += (i == 0 ? 1.0 : 2.0) * weights[i];
++      }
++      for (int i = 0; i <= radius; ++i)
++      {
++        weights[i] = static_cast<float>(weights[i] / total);
++      }
++      program->SetUniformi("radius", radius);
++      program->SetUniform1fv("weights", 16, weights);
++      float axisVector[3] = { axis == 0 ? 1.0f : 0.0f, axis == 1 ? 1.0f : 0.0f, axis == 2 ? 1.0f : 0.0f };
++      program->SetUniform3f("axis", axisVector);
++      passes[axis][0]->Activate();
++      program->SetUniformi("inputTexture", passes[axis][0]->GetTextureUnit());
++      success = this->DrawSlices(this->SmoothQuad, passes[axis][1], workingRegion);
++      passes[axis][0]->Deactivate();
++    }
++  };
++  if (sigmaMm > 0.0)
++  {
++    if (success && (success = this->ReadyQuad(renWin, this->SmoothQuad, sliceShader + SmoothFS)))
++    {
++      gaussian(original, smoothed);
++    }
++    if (success)
++    {
++      gaussian(smoothed, smoothedTwice);
++    }
++  }
++  else
++  {
++    // without smoothing the result is the original
++    smoothed = original;
++    smoothedTwice = original;
++  }
++
++  // Result, in the inner region
++  if (success && (success = this->ReadyQuad(renWin, this->CombineQuad, sliceShader + CombineFS)))
++  {
++    vtkShaderProgram* program = this->CombineQuad->Program;
++    original->Activate();
++    smoothed->Activate();
++    smoothedTwice->Activate();
++    this->SetGridUniforms(program);
++    program->SetUniformi("originalTexture", original->GetTextureUnit());
++    program->SetUniformi("smoothedTexture", smoothed->GetTextureUnit());
++    program->SetUniformi("smoothedTwiceTexture", smoothedTwice->GetTextureUnit());
++    success = this->DrawSlices(this->CombineQuad, resultTexture, innerRegion);
++    original->Deactivate();
++    smoothed->Deactivate();
++    smoothedTwice->Deactivate();
++  }
++
++  glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
++  this->Framebuffer->RestorePreviousBindingsAndBuffers();
++  maskTexture->Deactivate();
++
++  // Only the result is kept
++  for (vtkTextureObject* texture : { seedTextures[0].GetPointer(), seedTextures[1].GetPointer(), maskTexture.GetPointer() })
++  {
++    texture->ReleaseGraphicsResources(renWin);
++  }
++  for (int i = 0; i < 4; ++i)
++  {
++    distanceTextures[i]->ReleaseGraphicsResources(renWin);
++  }
++  if (fullUpdate && this->DistanceTexture && this->DistanceTexture != resultTexture)
++  {
++    this->DistanceTexture->ReleaseGraphicsResources(renWin);
++  }
++  this->DistanceTexture = resultTexture;
++
++  if (success)
++  {
++    this->ComputedSmoothingFactor = this->External->SmoothingFactor;
++    this->DistanceFieldTime.Modified();
++    this->External->NumberOfDistanceFieldComputations++;
++  }
++  return success;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::CaptureOpaqueDepth(vtkOpenGLRenderer* ren)
++{
++  // Copy the depth buffer of the render framebuffer, which contains the opaque geometry while translucent geometry
++  // is rendered (in the framebuffers of depth peeling or order independent translucency passes, if they are used).
++  // Same as in vtkOpenGLGPUVolumeRayCastMapper.
++  vtkOpenGLRenderWindow* renWin = static_cast<vtkOpenGLRenderWindow*>(ren->GetRenderWindow());
++  vtkOpenGLFramebufferObject* renderFramebuffer = renWin->GetRenderFramebuffer();
++  if (!renderFramebuffer)
++  {
++    return false;
++  }
++  int width = 0;
++  int height = 0;
++  int lowerLeft[2] = { 0, 0 };
++  ren->GetTiledSizeAndOrigin(&width, &height, lowerLeft, lowerLeft + 1);
++  if (width <= 0 || height <= 0)
++  {
++    return false;
++  }
++  if (!this->OpaqueDepthTexture)
++  {
++    this->OpaqueDepthTexture = vtkSmartPointer<vtkTextureObject>::New();
++    this->OpaqueDepthTexture->SetContext(renWin);
++    this->OpaqueDepthTexture->SetWrapS(vtkTextureObject::ClampToEdge);
++    this->OpaqueDepthTexture->SetWrapT(vtkTextureObject::ClampToEdge);
++    this->OpaqueDepthTexture->SetMagnificationFilter(vtkTextureObject::Nearest);
++    this->OpaqueDepthTexture->SetMinificationFilter(vtkTextureObject::Nearest);
++    if (renWin->GetStencilCapable())
++    {
++      this->OpaqueDepthTexture->AllocateDepthStencil(width, height);
++    }
++    else
++    {
++#ifdef GL_ES_VERSION_3_0
++      this->OpaqueDepthTexture->AllocateDepth(width, height, vtkTextureObject::Fixed24);
++#else
++      this->OpaqueDepthTexture->AllocateDepth(width, height, vtkTextureObject::Fixed32);
++#endif
++    }
++    this->OpaqueDepthCopyColorTexture = vtkSmartPointer<vtkTextureObject>::New();
++    this->OpaqueDepthCopyColorTexture->SetContext(renWin);
++    this->OpaqueDepthCopyColorTexture->Allocate2D(width, height, 4, VTK_UNSIGNED_CHAR);
++    this->OpaqueDepthFramebuffer = vtkSmartPointer<vtkOpenGLFramebufferObject>::New();
++    this->OpaqueDepthFramebuffer->SetContext(renWin);
++    renWin->GetState()->PushDrawFramebufferBinding();
++    this->OpaqueDepthFramebuffer->Bind(GL_DRAW_FRAMEBUFFER);
++    this->OpaqueDepthFramebuffer->AddDepthAttachment(this->OpaqueDepthTexture);
++    this->OpaqueDepthFramebuffer->AddColorAttachment(0, this->OpaqueDepthCopyColorTexture);
++    renWin->GetState()->PopDrawFramebufferBinding();
++  }
++  this->OpaqueDepthTexture->Resize(width, height);
++  this->OpaqueDepthCopyColorTexture->Resize(width, height);
++
++  vtkOpenGLState* ostate = renWin->GetState();
++  ostate->PushReadFramebufferBinding();
++  ostate->PushDrawFramebufferBinding();
++  renderFramebuffer->Bind(GL_READ_FRAMEBUFFER);
++  this->OpaqueDepthFramebuffer->Bind(GL_DRAW_FRAMEBUFFER);
++  ostate->vtkglBlitFramebuffer(lowerLeft[0], lowerLeft[1], lowerLeft[0] + width, lowerLeft[1] + height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
++  ostate->PopDrawFramebufferBinding();
++  ostate->PopReadFramebufferBinding();
++  return true;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLRenderer* ren, vtkActor* actor)
++{
++  vtkOpenGLRenderWindow* renWin = static_cast<vtkOpenGLRenderWindow*>(ren->GetRenderWindow());
++  vtkTextureObject* distanceTexture = this->DistanceTexture;
++  if (!distanceTexture)
++  {
++    return;
++  }
++
++  // Render passes (depth peeling, order independent translucency) modify the shader
++  std::vector<vtkOpenGLRenderPass*> renderPasses;
++  vtkInformation* info = actor->GetPropertyKeys();
++  if (info && info->Has(vtkOpenGLRenderPass::RenderPasses()))
++  {
++    int numberOfRenderPasses = info->Length(vtkOpenGLRenderPass::RenderPasses());
++    for (int i = 0; i < numberOfRenderPasses; ++i)
++    {
++      renderPasses.push_back(static_cast<vtkOpenGLRenderPass*>(info->Get(vtkOpenGLRenderPass::RenderPasses(), i)));
++    }
++  }
++
++  // Lighting code depends on the lights of the renderer
++  std::ostringstream lightingImplementation;
++  int lightingComplexity = ren->GetLightingComplexity();
++  int lightingCount = ren->GetLightingCount();
++  if (lightingComplexity == 0)
++  {
++    lightingImplementation << "  diffuse = vec3(1.0);\n";
++  }
++  else if (lightingComplexity == 1)
++  {
++    lightingImplementation << "  float df = max(0.0, normalVC.z);\n"
++                              "  diffuse = df * lightColor0;\n"
++                              "  specular = pow(df, specularPower) * lightColor0;\n";
++  }
++  else
++  {
++    for (int lightIndex = 0; lightIndex < lightingCount; ++lightIndex)
++    {
++      lightingImplementation << "  {\n"
++                                "    float df = max(0.0, dot(normalVC, -lightDirectionVC"
++                             << lightIndex << "));\n"
++                             << "    diffuse += df * lightColor" << lightIndex << ";\n"
++                             << "    if (dot(normalVC, lightDirectionVC" << lightIndex << ") < 0.0)\n"
++                             << "    {\n"
++                             << "      specular += sign(df) * pow(max(0.0, dot(reflect(lightDirectionVC" << lightIndex
++                             << ", normalVC), viewDirectionVC)), specularPower) * lightColor" << lightIndex << ";\n"
++                             << "    }\n"
++                                "  }\n";
++    }
++  }
++  std::ostringstream programKey;
++  programKey << lightingImplementation.str();
++  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  {
++    programKey << renderPass << ":" << renderPass->GetShaderStageMTime() << ";";
++  }
++  if (!this->SurfaceProgram || this->SurfaceProgramKey != programKey.str())
++  {
++    std::string vertexShader = SurfaceVS;
++    std::string geometryShader;
++    std::string fragmentShader = SurfaceFS;
++    for (vtkOpenGLRenderPass* renderPass : renderPasses)
++    {
++      renderPass->PreReplaceShaderValues(vertexShader, geometryShader, fragmentShader, this->External, actor);
++    }
++    vtkShaderProgram::Substitute(fragmentShader, "//VTK::Light::Dec", lightingComplexity > 0 ? ren->GetLightingUniforms() : "");
++    vtkShaderProgram::Substitute(fragmentShader, "//VTK::Light::Impl", lightingImplementation.str());
++    for (vtkOpenGLRenderPass* renderPass : renderPasses)
++    {
++      renderPass->PostReplaceShaderValues(vertexShader, geometryShader, fragmentShader, this->External, actor);
++    }
++    // Screen-space ambient occlusion (shadows) reads positions and normals as vtkSSAOPass makes polygonal mappers write them
++    bool ssao = std::any_of(renderPasses.begin(), renderPasses.end(), [](vtkOpenGLRenderPass* renderPass) { return renderPass->IsA("vtkSSAOPass"); });
++    std::string ssaoImplementation = "gl_FragData[1] = vec4(firstPositionVC, 1.0);\n"
++                                     "  gl_FragData[2] = vec4(firstNormalVC, 1.0);\n";
++    vtkShaderProgram::Substitute(fragmentShader, "//VTK::SSAO::Impl", ssao ? ssaoImplementation : std::string());
++    this->SurfaceProgram = renWin->GetShaderCache()->ReadyShaderProgram(vertexShader.c_str(), fragmentShader.c_str(), geometryShader.c_str());
++    this->SurfaceProgramKey = programKey.str();
++  }
++  else
++  {
++    renWin->GetShaderCache()->ReadyShaderProgram(this->SurfaceProgram);
++  }
++  vtkShaderProgram* program = this->SurfaceProgram;
++  if (!program || !program->GetCompiled())
++  {
++    vtkErrorWithObjectMacro(this->External, "RenderSurface: failed to compile shader");
++    this->Failed = true;
++    return;
++  }
++
++  // Matrices
++  vtkCamera* camera = ren->GetActiveCamera();
++  vtkNew<vtkMatrix4x4> mcwc;
++  actor->GetMatrix(mcwc);
++  vtkNew<vtkMatrix4x4> mcvc;
++  vtkMatrix4x4::Multiply4x4(camera->GetModelViewTransformMatrix(), mcwc, mcvc);
++  vtkNew<vtkMatrix4x4> mcdc;
++  vtkMatrix4x4::Multiply4x4(camera->GetProjectionTransformMatrix(ren->GetTiledAspectRatio(), -1, 1), mcvc, mcdc);
++  vtkNew<vtkMatrix4x4> dcmc;
++  vtkMatrix4x4::Invert(mcdc, dcmc);
++  SetUniformMatrix4x4(program, "MCDCMatrix", mcdc);
++  SetUniformMatrix4x4(program, "DCMCMatrix", dcmc);
++  SetUniformMatrix4x4(program, "MCVCMatrix", mcvc);
++  // Gradients are transformed by the inverse transpose
++  double normalMatrix[3][3];
++  for (int row = 0; row < 3; ++row)
++  {
++    for (int column = 0; column < 3; ++column)
++    {
++      normalMatrix[row][column] = mcvc->GetElement(row, column);
++    }
++  }
++  vtkMath::Invert3x3(normalMatrix, normalMatrix);
++  vtkMath::Transpose3x3(normalMatrix, normalMatrix);
++  SetUniformMatrix3x3(program, "normalMatrix", normalMatrix);
++
++  vtkNew<vtkMatrix4x4> wcmc;
++  vtkMatrix4x4::Invert(mcwc, wcmc);
++  double eyePosition[4] = { 0.0, 0.0, 0.0, 1.0 };
++  camera->GetPosition(eyePosition);
++  double eyePositionMC[4];
++  wcmc->MultiplyPoint(eyePosition, eyePositionMC);
++  for (int i = 0; i < 3; ++i)
++  {
++    eyePositionMC[i] /= eyePositionMC[3];
++  }
++  double viewDirection[4] = { 0.0, 0.0, 0.0, 0.0 };
++  camera->GetDirectionOfProjection(viewDirection);
++  double viewDirectionMC[4];
++  wcmc->MultiplyPoint(viewDirection, viewDirectionMC);
++  vtkMath::Normalize(viewDirectionMC);
++  program->SetUniform3f("eyePositionMC", eyePositionMC);
++  program->SetUniform3f("viewDirectionMC", viewDirectionMC);
++  program->SetUniformi("parallelProjection", camera->GetParallelProjection() ? 1 : 0);
++
++  double boxMin[3] = { this->Bounds[0], this->Bounds[2], this->Bounds[4] };
++  double boxMax[3] = { this->Bounds[1], this->Bounds[3], this->Bounds[5] };
++  program->SetUniform3f("boxMin", boxMin);
++  program->SetUniform3f("boxMax", boxMax);
++  program->SetUniform3f("mcToGridScale", this->MCToGridScale);
++  program->SetUniform3f("mcToGridOffset", this->MCToGridOffset);
++  SetUniformMatrix3x3(program, "gridToPhysical", this->GridToPhysical);
++  this->SetGridUniforms(program);
++
++  // Distances are in physical (image) space; steps are along the ray in model (IJK) space.
++  double maximumVoxelSize = 0.0;
++  double minimumDownsampling = VTK_DOUBLE_MAX;
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    double column[3] = { this->GridToPhysical[0][axis], this->GridToPhysical[1][axis], this->GridToPhysical[2][axis] };
++    maximumVoxelSize = std::max(maximumVoxelSize, vtkMath::Norm(column) / this->Downsampling[axis]);
++    minimumDownsampling = std::min(minimumDownsampling, static_cast<double>(this->Downsampling[axis]));
++  }
++  program->SetUniformf("mcPerMm", static_cast<float>(1.0 / std::max(maximumVoxelSize, 1e-6)));
++  program->SetUniformf("minimumStep", static_cast<float>(0.2 * minimumDownsampling));
++
++  vtkProperty* property = actor->GetProperty();
++  program->SetUniformf("ambientIntensity", static_cast<float>(property->GetAmbient()));
++  program->SetUniformf("diffuseIntensity", static_cast<float>(property->GetDiffuse()));
++  program->SetUniformf("specularIntensity", static_cast<float>(property->GetSpecular()));
++  program->SetUniformf("specularPower", static_cast<float>(property->GetSpecularPower()));
++  program->SetUniform3f("specularColor", property->GetSpecularColor());
++  program->SetUniformf("opacity", static_cast<float>(property->GetOpacity()));
++  if (lightingComplexity > 0)
++  {
++    ren->UpdateLightingUniforms(program);
++  }
++
++  // Clipping planes, from world to model coordinates: n.x + d >= 0 is kept
++  float clippingPlanes[16][4];
++  int numberOfClippingPlanes = 0;
++  vtkPlaneCollection* planes = this->External->GetClippingPlanes();
++  if (planes)
++  {
++    for (int i = 0; i < planes->GetNumberOfItems() && numberOfClippingPlanes < 16; ++i)
++    {
++      vtkPlane* plane = planes->GetItem(i);
++      double normal[3];
++      double origin[3];
++      plane->GetNormal(normal);
++      plane->GetOrigin(origin);
++      double planeWC[4] = { normal[0], normal[1], normal[2], -vtkMath::Dot(normal, origin) };
++      // plane in model coordinates = transpose(MCWC) * plane in world coordinates
++      double planeMC[4] = { 0.0, 0.0, 0.0, 0.0 };
++      for (int column = 0; column < 4; ++column)
++      {
++        for (int row = 0; row < 4; ++row)
++        {
++          planeMC[column] += mcwc->GetElement(row, column) * planeWC[row];
++        }
++      }
++      for (int component = 0; component < 4; ++component)
++      {
++        clippingPlanes[numberOfClippingPlanes][component] = static_cast<float>(planeMC[component]);
++      }
++      numberOfClippingPlanes++;
++    }
++  }
++  program->SetUniformi("numberOfClippingPlanes", numberOfClippingPlanes);
++  if (numberOfClippingPlanes > 0)
++  {
++    program->SetUniform4fv("clippingPlanesMC", numberOfClippingPlanes, clippingPlanes);
++  }
++  program->SetUniformi("capClippedSurface", this->External->CapClippedSurface ? 1 : 0);
++  program->SetUniformf("capOpacity", static_cast<float>(this->External->CapOpacity));
++
++  distanceTexture->Activate();
++  this->LabelTexture->Activate();
++  this->PaletteTexture->Activate();
++  program->SetUniformi("distanceTexture", distanceTexture->GetTextureUnit());
++  this->SetInsideUniforms(program);
++
++  // Translucent surfaces: the depth test does not hide surfaces behind opaque geometry, rays stop there instead
++  bool stopAtOpaqueDepth = actor->IsRenderingTranslucentPolygonalGeometry() && this->CaptureOpaqueDepth(ren);
++  vtkOpenGLState* ostate = renWin->GetState();
++  program->SetUniformi("stopAtOpaqueDepth", stopAtOpaqueDepth ? 1 : 0);
++  if (stopAtOpaqueDepth)
++  {
++    this->OpaqueDepthTexture->Activate();
++    program->SetUniformi("opaqueDepthTexture", this->OpaqueDepthTexture->GetTextureUnit());
++    int viewport[4] = { 0, 0, 1, 1 };
++    ostate->vtkglGetIntegerv(GL_VIEWPORT, viewport);
++    float viewportOrigin[2] = { static_cast<float>(viewport[0]), static_cast<float>(viewport[1]) };
++    float viewportSize[2] = { static_cast<float>(viewport[2]), static_cast<float>(viewport[3]) };
++    program->SetUniform2f("viewportOrigin", viewportOrigin);
++    program->SetUniform2f("viewportSize", viewportSize);
++  }
++  else
++  {
++    // all samplers must refer to a texture of the right type, even if they are not used
++    program->SetUniformi("opaqueDepthTexture", this->PaletteTexture->GetTextureUnit());
++  }
++
++  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  {
++    renderPass->SetShaderParameters(program, this->External, actor, this->SurfaceVAO);
++  }
++
++  vtkOpenGLState::ScopedglEnableDisable savedCullFace(ostate, GL_CULL_FACE);
++  ostate->vtkglDisable(GL_CULL_FACE);
++  this->SurfaceVAO->Bind();
++  glDrawArrays(GL_TRIANGLES, 0, 36);
++  this->SurfaceVAO->Release();
++  vtkOpenGLCheckErrorMacro("failed after rendering segmentation surface");
++
++  distanceTexture->Deactivate();
++  this->LabelTexture->Deactivate();
++  this->PaletteTexture->Deactivate();
++  if (stopAtOpaqueDepth)
++  {
++    this->OpaqueDepthTexture->Deactivate();
++  }
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources(vtkWindow* window)
++{
++  vtkOpenGLQuadHelper** quads[] = {
++    &this->SeedQuad, &this->JumpFloodQuad, &this->FinalizeQuad, &this->SmoothQuad, &this->CombineQuad, &this->MaskQuad,
++  };
++  for (vtkOpenGLQuadHelper** quad : quads)
++  {
++    delete *quad;
++    *quad = nullptr;
++  }
++  for (vtkTextureObject* texture : { this->LabelTexture.GetPointer(),
++                                     this->PaletteTexture.GetPointer(),
++                                     this->DistanceTexture.GetPointer(),
++                                     this->OpaqueDepthTexture.GetPointer(),
++                                     this->OpaqueDepthCopyColorTexture.GetPointer() })
++  {
++    if (texture)
++    {
++      texture->ReleaseGraphicsResources(window);
++    }
++  }
++  if (this->OpaqueDepthFramebuffer)
++  {
++    this->OpaqueDepthFramebuffer->ReleaseGraphicsResources(window);
++  }
++  this->OpaqueDepthTexture = nullptr;
++  this->OpaqueDepthCopyColorTexture = nullptr;
++  this->OpaqueDepthFramebuffer = nullptr;
++  this->LabelTexture = nullptr;
++  this->PaletteTexture = nullptr;
++  this->DistanceTexture = nullptr;
++  this->UploadedLabelColors.clear();
++  this->Framebuffer->ReleaseGraphicsResources(window);
++  this->SurfaceVAO->ReleaseGraphicsResources();
++  this->SurfaceProgram = nullptr;
++  this->SurfaceProgramKey.clear();
++  this->DistanceFieldNeedsUpdate = true;
++  this->Context = nullptr;
++}
++
++//----------------------------------------------------------------------------
++vtkStandardNewMacro(vtkSegmentationLabelmapSurfaceMapper);
++
++//----------------------------------------------------------------------------
++vtkSegmentationLabelmapSurfaceMapper::vtkSegmentationLabelmapSurfaceMapper()
++{
++  this->Internal = new vtkInternal(this);
++
++  // Picking
++  vtkNew<vtkCallbackCommand> intersectRayCallback;
++  intersectRayCallback->SetCallback(
++    [](vtkObject* caller, unsigned long, void*, void* callData)
++    {
++      vtkSegmentationLabelmapSurfaceMapper* self = static_cast<vtkSegmentationLabelmapSurfaceMapper*>(caller);
++      vtkMRMLAccuratePicker::RayIntersection* ray = static_cast<vtkMRMLAccuratePicker::RayIntersection*>(callData);
++      ray->Intersected = self->IntersectWithRay(ray->P1, ray->P2, ray->T1, ray->T2, ray->T, ray->Position, ray->Normal);
++    });
++  this->AddObserver(vtkMRMLAccuratePicker::IntersectRayEvent, intersectRayCallback);
++}
++
++//----------------------------------------------------------------------------
++vtkSegmentationLabelmapSurfaceMapper::~vtkSegmentationLabelmapSurfaceMapper()
++{
++  // Graphics resources are released by ReleaseGraphicsResources (called when the actor is removed from the renderer)
++  vtkInternal* d = this->Internal;
++  vtkOpenGLQuadHelper* quads[] = { d->SeedQuad, d->JumpFloodQuad, d->FinalizeQuad, d->SmoothQuad, d->CombineQuad, d->MaskQuad };
++  for (vtkOpenGLQuadHelper* quad : quads)
++  {
++    delete quad;
++  }
++  delete this->Internal;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::PrintSelf(ostream& os, vtkIndent indent)
++{
++  this->Superclass::PrintSelf(os, indent);
++  os << indent << "SmoothingFactor: " << this->SmoothingFactor << "\n";
++  os << indent << "CapClippedSurface: " << (this->CapClippedSurface ? "true" : "false") << "\n";
++  os << indent << "CapOpacity: " << this->CapOpacity << "\n";
++  os << indent << "MaximumNumberOfVoxels: " << this->MaximumNumberOfVoxels << "\n";
++  os << indent << "NumberOfDistanceFieldComputations: " << this->NumberOfDistanceFieldComputations << "\n";
++}
++
++//----------------------------------------------------------------------------
++int vtkSegmentationLabelmapSurfaceMapper::FillInputPortInformation(int vtkNotUsed(port), vtkInformation* info)
++{
++  // The labelmap is set by SetLabelmap, not through the pipeline
++  info->Set(vtkAlgorithm::INPUT_REQUIRED_DATA_TYPE(), "vtkDataSet");
++  info->Set(vtkAlgorithm::INPUT_IS_OPTIONAL(), 1);
++  return 1;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::SetLabelmap(vtkOrientedImageData* labelmap)
++{
++  if (this->Internal->Labelmap == labelmap)
++  {
++    return;
++  }
++  this->Internal->Labelmap = labelmap;
++  this->Modified();
++}
++
++//----------------------------------------------------------------------------
++vtkOrientedImageData* vtkSegmentationLabelmapSurfaceMapper::GetLabelmap()
++{
++  return this->Internal->Labelmap;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::SetLabelColor(int labelValue, double r, double g, double b, double opacity /*=1.0*/)
++{
++  this->Internal->LabelColors[labelValue] = { r, g, b, opacity };
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::IntersectWithRay(const double p1[3], const double p2[3], double t1, double t2, double& t, double xyz[3], double n[3])
++{
++  vtkOrientedImageData* labelmap = this->Internal->Labelmap;
++  if (!this->Internal->PrepareLabelmap() || !labelmap)
++  {
++    return false;
++  }
++  std::set<int> shownLabels = this->Internal->GetShownLabels();
++  const int* extent = this->Internal->EffectiveExtent;
++  // Fraction of the voxel (trilinear interpolation of 0/1 values of voxels) that is in shown segments
++  auto isShown = [&](int i, int j, int k)
++  {
++    if (i < extent[0] || i > extent[1] || j < extent[2] || j > extent[3] || k < extent[4] || k > extent[5])
++    {
++      return false;
++    }
++    return shownLabels.count(static_cast<int>(labelmap->GetScalarComponentAsDouble(i, j, k, 0))) > 0;
++  };
++  auto insideFraction = [&](const double ijk[3])
++  {
++    int base[3] = { static_cast<int>(std::floor(ijk[0])), static_cast<int>(std::floor(ijk[1])), static_cast<int>(std::floor(ijk[2])) };
++    double weight[3] = { ijk[0] - base[0], ijk[1] - base[1], ijk[2] - base[2] };
++    double fraction = 0.0;
++    for (int corner = 0; corner < 8; ++corner)
++    {
++      int offset[3] = { corner & 1, (corner >> 1) & 1, (corner >> 2) & 1 };
++      if (isShown(base[0] + offset[0], base[1] + offset[1], base[2] + offset[2]))
++      {
++        fraction += (offset[0] ? weight[0] : 1.0 - weight[0]) * (offset[1] ? weight[1] : 1.0 - weight[1]) * (offset[2] ? weight[2] : 1.0 - weight[2]);
++      }
++    }
++    return fraction;
++  };
++  auto pointAt = [&](double parameter, double point[3])
++  {
++    for (int i = 0; i < 3; ++i)
++    {
++      point[i] = p1[i] + parameter * (p2[i] - p1[i]);
++    }
++  };
++
++  // Limit the ray to the region of the shown segments
++  double tStart = t1;
++  double tEnd = t2;
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    double direction = p2[axis] - p1[axis];
++    double low = extent[axis * 2] - 1.0;
++    double high = extent[axis * 2 + 1] + 1.0;
++    if (std::abs(direction) < 1e-12)
++    {
++      if (p1[axis] < low || p1[axis] > high)
++      {
++        return false;
++      }
++      continue;
++    }
++    double tLow = (low - p1[axis]) / direction;
++    double tHigh = (high - p1[axis]) / direction;
++    tStart = std::max(tStart, std::min(tLow, tHigh));
++    tEnd = std::min(tEnd, std::max(tLow, tHigh));
++  }
++  if (tStart >= tEnd)
++  {
++    return false;
++  }
++
++  // March in quarter voxel steps, then refine the crossing of the 0.5 level of the inside fraction
++  double rayLength = std::sqrt(vtkMath::Distance2BetweenPoints(p1, p2));
++  double tStep = 0.25 / std::max(rayLength, 1e-12);
++  double point[3];
++  double previousT = tStart;
++  for (double currentT = tStart; currentT <= tEnd + tStep; currentT += tStep)
++  {
++    currentT = std::min(currentT, tEnd);
++    pointAt(currentT, point);
++    if (insideFraction(point) >= 0.5)
++    {
++      double tOutside = previousT;
++      double tInside = currentT;
++      for (int iteration = 0; iteration < 10; ++iteration)
++      {
++        double tMiddle = 0.5 * (tOutside + tInside);
++        pointAt(tMiddle, point);
++        (insideFraction(point) >= 0.5 ? tInside : tOutside) = tMiddle;
++      }
++      t = 0.5 * (tOutside + tInside);
++      pointAt(t, xyz);
++      // Normal: gradient of the inside fraction (pointing outwards)
++      for (int axis = 0; axis < 3; ++axis)
++      {
++        double plus[3] = { xyz[0], xyz[1], xyz[2] };
++        double minus[3] = { xyz[0], xyz[1], xyz[2] };
++        plus[axis] += 0.5;
++        minus[axis] -= 0.5;
++        n[axis] = insideFraction(minus) - insideFraction(plus);
++      }
++      if (vtkMath::Normalize(n) == 0.0)
++      {
++        for (int axis = 0; axis < 3; ++axis)
++        {
++          n[axis] = p1[axis] - p2[axis];
++        }
++        vtkMath::Normalize(n);
++      }
++      return true;
++    }
++    previousT = currentT;
++    if (currentT >= tEnd)
++    {
++      break;
++    }
++  }
++  return false;
++}
++
++//----------------------------------------------------------------------------
++int vtkSegmentationLabelmapSurfaceMapper::GetShownLabelAtPosition(const double ijk[3], double maximumDistance /*=1.5*/)
++{
++  vtkOrientedImageData* labelmap = this->Internal->Labelmap;
++  if (!labelmap || !labelmap->GetPointData() || !labelmap->GetPointData()->GetScalars())
++  {
++    return 0;
++  }
++  std::set<int> shownLabels = this->Internal->GetShownLabels();
++  int extent[6];
++  labelmap->GetExtent(extent);
++  int radius = static_cast<int>(std::ceil(maximumDistance));
++  int nearestLabel = 0;
++  double nearestDistance2 = maximumDistance * maximumDistance;
++  int center[3] = { static_cast<int>(std::floor(ijk[0] + 0.5)), static_cast<int>(std::floor(ijk[1] + 0.5)), static_cast<int>(std::floor(ijk[2] + 0.5)) };
++  for (int k = center[2] - radius; k <= center[2] + radius; ++k)
++  {
++    for (int j = center[1] - radius; j <= center[1] + radius; ++j)
++    {
++      for (int i = center[0] - radius; i <= center[0] + radius; ++i)
++      {
++        if (i < extent[0] || i > extent[1] || j < extent[2] || j > extent[3] || k < extent[4] || k > extent[5])
++        {
++          continue;
++        }
++        double distance2 = (i - ijk[0]) * (i - ijk[0]) + (j - ijk[1]) * (j - ijk[1]) + (k - ijk[2]) * (k - ijk[2]);
++        if (distance2 > nearestDistance2)
++        {
++          continue;
++        }
++        int label = static_cast<int>(labelmap->GetScalarComponentAsDouble(i, j, k, 0));
++        if (shownLabels.count(label))
++        {
++          nearestLabel = label;
++          nearestDistance2 = distance2;
++        }
++      }
++    }
++  }
++  return nearestLabel;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::RemoveAllLabelColors()
++{
++  this->Internal->LabelColors.clear();
++}
++
++//----------------------------------------------------------------------------
++double* vtkSegmentationLabelmapSurfaceMapper::GetBounds()
++{
++  this->Internal->PrepareLabelmap();
++  std::copy(this->Internal->Bounds, this->Internal->Bounds + 6, this->Bounds);
++  return this->Bounds;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::Render(vtkRenderer* renderer, vtkActor* actor)
++{
++  vtkOpenGLRenderer* ren = vtkOpenGLRenderer::SafeDownCast(renderer);
++  if (!ren || ren->GetSelector())
++  {
++    // hardware picking is not supported
++    return;
++  }
++  vtkOpenGLRenderWindow* renWin = vtkOpenGLRenderWindow::SafeDownCast(ren->GetRenderWindow());
++  if (!renWin)
++  {
++    return;
++  }
++  if (this->Internal->Context != renWin)
++  {
++    if (this->Internal->Context)
++    {
++      this->Internal->ReleaseGraphicsResources(this->Internal->Context);
++    }
++    this->Internal->Context = renWin;
++    this->Internal->Failed = false;
++  }
++  if (this->Internal->Failed || !this->Internal->PrepareLabelmap())
++  {
++    return;
++  }
++  if (!this->Internal->UploadTextures(renWin))
++  {
++    this->Internal->Failed = true;
++    return;
++  }
++  bool fullUpdate = this->Internal->DistanceFieldNeedsUpdate || this->Internal->ComputedSmoothingFactor != this->SmoothingFactor;
++  if (fullUpdate || this->Internal->ChangedRegionValid)
++  {
++    if (!this->Internal->ComputeDistanceField(renWin, fullUpdate ? nullptr : this->Internal->ChangedRegion))
++    {
++      this->Internal->Failed = true;
++      return;
++    }
++    this->Internal->DistanceFieldNeedsUpdate = false;
++    this->Internal->ChangedRegionValid = false;
++  }
++  this->Internal->RenderSurface(ren, actor);
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::ReleaseGraphicsResources(vtkWindow* window)
++{
++  this->Internal->ReleaseGraphicsResources(window);
++  this->Superclass::ReleaseGraphicsResources(window);
++}
+diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
+new file mode 100644
+index 0000000000..522215a2b9
+--- /dev/null
++++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
+@@ -0,0 +1,124 @@
++/*==============================================================================
++
++  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
++  Queen's University, Kingston, ON, Canada. All Rights Reserved.
++
++  See COPYRIGHT.txt
++  or http://www.slicer.org/copyright/copyright.txt for details.
++
++  Unless required by applicable law or agreed to in writing, software
++  distributed under the License is distributed on an "AS IS" BASIS,
++  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++  See the License for the specific language governing permissions and
++  limitations under the License.
++
++  The signed distance field computation (jump flooding) and the ray casting
++  are based on SlicerLive by Steve Pieper (https://github.com/pieper/SlicerLive,
++  Apache License 2.0).
++
++==============================================================================*/
++
++#ifndef __vtkSegmentationLabelmapSurfaceMapper_h
++#define __vtkSegmentationLabelmapSurfaceMapper_h
++
++#include "vtkSlicerSegmentationsModuleMRMLDisplayableManagerExport.h"
++
++// VTK includes
++#include <vtkMapper.h>
++
++class vtkOrientedImageData;
++
++/// \brief Render a labelmap as smooth surfaces, computed on the GPU.
++///
++/// The mapper computes a signed distance field of the labelmap on the GPU
++/// (jump flooding algorithm, in fragment shader passes that write 3D texture slices,
++/// followed by Gaussian smoothing) and ray casts its zero level set.
++/// No polygonal mesh is generated, so the surface is updated quickly when the labelmap changes.
++///
++/// Labels that are not added by SetLabelColor are treated as background.
++/// Model coordinates of the mapper are the IJK coordinates of the labelmap
++/// (the actor's matrix is expected to map them to world coordinates).
++///
++/// Uses only OpenGL features that are available in both OpenGL 3.2 and OpenGL ES 3.0 (WebGL2),
++/// with 16-bit floating-point render targets (EXT_color_buffer_float on WebGL2).
++class VTK_SLICER_SEGMENTATIONS_MODULE_MRMLDISPLAYABLEMANAGER_EXPORT vtkSegmentationLabelmapSurfaceMapper : public vtkMapper
++{
++public:
++  static vtkSegmentationLabelmapSurfaceMapper* New();
++  vtkTypeMacro(vtkSegmentationLabelmapSurfaceMapper, vtkMapper);
++  void PrintSelf(ostream& os, vtkIndent indent) override;
++
++  /// Labelmap to render. Geometry (spacing, directions) is taken into account when computing distances.
++  void SetLabelmap(vtkOrientedImageData* labelmap);
++  vtkOrientedImageData* GetLabelmap();
++
++  /// Show the voxels that have the specified label value with the specified color and opacity.
++  /// Surfaces of segments that touch each other are only shown where they touch if they are in different mappers.
++  void SetLabelColor(int labelValue, double r, double g, double b, double opacity = 1.0);
++  /// Remove all label colors (all labels are hidden).
++  void RemoveAllLabelColors();
++
++  /// Smoothing of the surface, between 0 (no smoothing, surface follows voxel boundaries) and 1 (strong smoothing).
++  /// Same meaning as the "Smoothing factor" conversion parameter of closed surface representation.
++  /// The distance field is smoothed by a Gaussian (standard deviation is 1.4 * SmoothingFactor times the largest voxel size,
++  /// the same in all directions in physical space), combined with the result of applying it twice ("twicing"),
++  /// so that curved surfaces do not shrink and thin structures are preserved.
++  /// Gaps between segments that are narrower than the standard deviation are filled.
++  vtkSetClampMacro(SmoothingFactor, double, 0.0, 1.0);
++  vtkGetMacro(SmoothingFactor, double);
++
++  /// The labelmap is downsampled if its distance field would have more voxels than this.
++  /// Larger values preserve more details, but need more GPU memory: about 11 bytes per voxel while the distance field
++  /// is computed, 3 bytes per voxel after that.
++  vtkSetClampMacro(MaximumNumberOfVoxels, vtkIdType, 4096, VTK_ID_MAX);
++  vtkGetMacro(MaximumNumberOfVoxels, vtkIdType);
++
++  /// Show the surface where clipping planes cut segments (enabled by default).
++  /// Clipping planes are set by SetClippingPlanes, in world coordinates; the kept region is where all plane functions are positive.
++  vtkSetMacro(CapClippedSurface, bool);
++  vtkGetMacro(CapClippedSurface, bool);
++  vtkBooleanMacro(CapClippedSurface, bool);
++
++  /// Opacity of the cap surface, relative to the opacity of the segment.
++  vtkSetClampMacro(CapOpacity, double, 0.0, 1.0);
++  vtkGetMacro(CapOpacity, double);
++
++  /// Number of times the signed distance field has been computed (for testing).
++  vtkGetMacro(NumberOfDistanceFieldComputations, int);
++
++  /// Intersect a ray (in IJK coordinates of the labelmap, between P1 + T1 * (P2 - P1) and P1 + T2 * (P2 - P1)) with
++  /// the surface of the shown segments (computed from the labelmap on the CPU, the surface follows the boundary of
++  /// voxels, not smoothed). Returns true if there is an intersection, and its parametric coordinate, position and normal.
++  /// The mapper responds to vtkMRMLAccuratePicker::IntersectRayEvent with this.
++  bool IntersectWithRay(const double p1[3], const double p2[3], double t1, double t2, double& t, double position[3], double normal[3]);
++
++  /// Get the label of the shown segment that is at the specified position (in IJK coordinates of the labelmap),
++  /// or the nearest one within the specified distance (in voxels). Returns 0 if there is no shown segment there.
++  int GetShownLabelAtPosition(const double ijk[3], double maximumDistance = 1.5);
++
++  void Render(vtkRenderer* ren, vtkActor* actor) override;
++  void ReleaseGraphicsResources(vtkWindow* window) override;
++  using Superclass::GetBounds;
++  double* GetBounds() VTK_SIZEHINT(6) override;
++
++protected:
++  vtkSegmentationLabelmapSurfaceMapper();
++  ~vtkSegmentationLabelmapSurfaceMapper() override;
++
++  int FillInputPortInformation(int port, vtkInformation* info) override;
++
++  double SmoothingFactor{ 0.5 };
++  bool CapClippedSurface{ true };
++  double CapOpacity{ 1.0 };
++  vtkIdType MaximumNumberOfVoxels{ 32 * 1024 * 1024 };
++  int NumberOfDistanceFieldComputations{ 0 };
++
++private:
++  vtkSegmentationLabelmapSurfaceMapper(const vtkSegmentationLabelmapSurfaceMapper&) = delete;
++  void operator=(const vtkSegmentationLabelmapSurfaceMapper&) = delete;
++
++  class vtkInternal;
++  vtkInternal* Internal;
++};
++
++#endif
+diff --git a/Modules/Loadable/Segmentations/Resources/UI/qSlicerSegmentationsSettingsPanel.ui b/Modules/Loadable/Segmentations/Resources/UI/qSlicerSegmentationsSettingsPanel.ui
+index 6d4d3adf6c..78d7a42dfb 100644
+--- a/Modules/Loadable/Segmentations/Resources/UI/qSlicerSegmentationsSettingsPanel.ui
++++ b/Modules/Loadable/Segmentations/Resources/UI/qSlicerSegmentationsSettingsPanel.ui
+@@ -141,7 +141,24 @@ Note: This applies to segment tables in Segment Editor and Segmentations modules
+      </property>
+     </widget>
+    </item>
+-   <item row="6" column="0" colspan="2">
++   <item row="6" column="0">
++    <widget class="QLabel" name="DefaultRepresentation3DLabel">
++     <property name="toolTip">
++      <string>Representation of new segmentations in 3D views. Binary labelmap: smooth surfaces computed on the GPU (experimental).</string>
++     </property>
++     <property name="text">
++      <string>Representation in 3D views:</string>
++     </property>
++    </widget>
++   </item>
++   <item row="6" column="1">
++    <widget class="ctkComboBox" name="DefaultRepresentation3DComboBox">
++     <property name="toolTip">
++      <string>Representation of new segmentations in 3D views. Binary labelmap: smooth surfaces computed on the GPU (experimental).</string>
++     </property>
++    </widget>
++   </item>
++   <item row="7" column="0" colspan="2">
+     <spacer name="verticalSpacer">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentEditorWidget.cxx b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentEditorWidget.cxx
+index 247c5eb0ae..4e357a7ec4 100644
+--- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentEditorWidget.cxx
++++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentEditorWidget.cxx
+@@ -897,8 +897,9 @@ void qMRMLSegmentEditorWidget::updateWidgetFromSegmentationNode()
+       // Remember whether closed surface is present so that it can be re-converted later if necessary
+       bool closedSurfacePresent = segmentationNode->GetSegmentation()->ContainsRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
+       bool binaryLabelmapPresent = segmentationNode->GetSegmentation()->ContainsRepresentation(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
+-      // Show closed surface in 3D if present
+-      if (displayNode && closedSurfacePresent)
++      // Show closed surface in 3D if present, unless a representation is already chosen for 3D
++      const char* preferredRepresentation3D = displayNode ? displayNode->GetPreferredDisplayRepresentationName3D() : nullptr;
++      if (displayNode && closedSurfacePresent && (!preferredRepresentation3D || !preferredRepresentation3D[0]))
+       {
+         displayNode->SetPreferredDisplayRepresentationName3D(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
+       }
+diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx
+index 44bde2fb55..cb009ac094 100644
+--- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx
++++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx
+@@ -425,6 +425,8 @@ void qMRMLSegmentationDisplayNodeWidget::populate3DRepresentationsCombobox()
+   {
+     d->comboBox_DisplayedRepresentation3D->addItem(reprIt->c_str());
+   }
++  // Binary labelmap can be displayed as smooth surfaces computed on the GPU (experimental)
++  d->comboBox_DisplayedRepresentation3D->addItem(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
+ 
+   // Unblock signals
+   d->comboBox_DisplayedRepresentation3D->blockSignals(false);
+diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx
+index 63c55d60cf..feb2c52770 100644
+--- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx
++++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx
+@@ -25,6 +25,7 @@
+ 
+ // Qt includes
+ #include <QAction>
++#include <QActionGroup>
+ #include <QApplication>
+ #include <QDebug>
+ #include <QIcon>
+@@ -52,10 +53,16 @@ public:
+   /// This property holds whether smoothing internal to surface nets filter is used
+   bool setInternalSmoothing(int internalSmoothing);
+ 
++  /// Representation shown in 3D views (closed surface or binary labelmap), the same as the
++  /// representation in 3D views of the display node
++  std::string representation3D();
++
+   QAction* SurfaceSmoothingEnabledAction{ nullptr };
+   QAction* SurfaceNetsEnableAction{ nullptr };
+   QAction* SurfaceNetsSmoothingEnableAction{ nullptr };
+   ctkSliderWidget* SurfaceSmoothingSlider{ nullptr };
++  QAction* ClosedSurfaceRepresentationAction{ nullptr };
++  QAction* BinaryLabelmapRepresentationAction{ nullptr };
+   bool Locked{ false };
+   vtkWeakPointer<vtkMRMLSegmentationNode> SegmentationNode;
+ };
+@@ -122,12 +129,46 @@ void qMRMLSegmentationShow3DButtonPrivate::init()
+   smoothingFactorAction->setDefaultWidget(this->SurfaceSmoothingSlider);
+   surfaceSmoothingFactorMenu->addAction(smoothingFactorAction);
+ 
++  // Representation shown in 3D views (the same as in the segmentation display node widget)
++  QMenu* representationMenu = new QMenu(qMRMLSegmentationShow3DButton::tr("Representation"), show3DButtonMenu);
++  representationMenu->setObjectName("show3DRepresentationMenu");
++  QActionGroup* representationActions = new QActionGroup(representationMenu);
++  representationActions->setExclusive(true);
++  this->BinaryLabelmapRepresentationAction = new QAction(qMRMLSegmentationShow3DButton::tr("Binary labelmap"), representationMenu);
++  QString binaryLabelmapToolTip = qMRMLSegmentationShow3DButton::tr("Show the binary labelmap as smooth surfaces computed on the GPU (experimental).");
++  this->BinaryLabelmapRepresentationAction->setToolTip(binaryLabelmapToolTip);
++  this->BinaryLabelmapRepresentationAction->setData(QString::fromStdString(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName()));
++  this->ClosedSurfaceRepresentationAction = new QAction(qMRMLSegmentationShow3DButton::tr("Closed surface"), representationMenu);
++  QString closedSurfaceToolTip = qMRMLSegmentationShow3DButton::tr("Show the closed surface representation, created from the binary labelmap.");
++  this->ClosedSurfaceRepresentationAction->setToolTip(closedSurfaceToolTip);
++  this->ClosedSurfaceRepresentationAction->setData(QString::fromStdString(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName()));
++  for (QAction* action : { this->BinaryLabelmapRepresentationAction, this->ClosedSurfaceRepresentationAction })
++  {
++    action->setCheckable(true);
++    representationActions->addAction(action);
++    representationMenu->addAction(action);
++  }
++  QObject::connect(representationActions, SIGNAL(triggered(QAction*)), q, SLOT(onRepresentationActionTriggered(QAction*)));
++
+   show3DButtonMenu->addMenu(surfaceSmoothingFactorMenu);
++  show3DButtonMenu->addMenu(representationMenu);
+   show3DButtonMenu->addMenu(experimentalMenu);
+   q->setMenu(show3DButtonMenu);
+   q->setEnabled(false);
+ }
+ 
++//-----------------------------------------------------------------------------
++std::string qMRMLSegmentationShow3DButtonPrivate::representation3D()
++{
++  vtkMRMLSegmentationNode* segmentationNode = this->SegmentationNode;
++  vtkMRMLSegmentationDisplayNode* displayNode = segmentationNode ? vtkMRMLSegmentationDisplayNode::SafeDownCast(segmentationNode->GetDisplayNode()) : nullptr;
++  if (displayNode && displayNode->IsBinaryLabelmapPreferredDisplayRepresentation3D())
++  {
++    return vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
++  }
++  return vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName();
++}
++
+ //-----------------------------------------------------------------------------
+ bool qMRMLSegmentationShow3DButtonPrivate::setSurfaceSmoothingFactor(double smoothingFactor)
+ {
+@@ -146,9 +187,10 @@ bool qMRMLSegmentationShow3DButtonPrivate::setSurfaceSmoothingFactor(double smoo
+   {
+     QApplication::setOverrideCursor(QCursor(Qt::BusyCursor));
+     this->SegmentationNode->GetSegmentation()->CreateRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName(), true);
+-    this->SegmentationNode->Modified();
+     QApplication::restoreOverrideCursor();
+   }
++  // Binary labelmap shown in 3D uses the smoothing factor, too
++  this->SegmentationNode->Modified();
+   return true;
+ }
+ 
+@@ -220,6 +262,7 @@ void qMRMLSegmentationShow3DButton::setSegmentationNode(vtkMRMLSegmentationNode*
+   qvtkReconnect(d->SegmentationNode, node, vtkSegmentation::SegmentAdded, this, SLOT(updateWidgetFromMRML()));
+   qvtkReconnect(d->SegmentationNode, node, vtkSegmentation::SegmentRemoved, this, SLOT(updateWidgetFromMRML()));
+   qvtkReconnect(d->SegmentationNode, node, vtkSegmentation::ContainedRepresentationNamesModified, this, SLOT(updateWidgetFromMRML()));
++  qvtkReconnect(d->SegmentationNode, node, vtkMRMLDisplayableNode::DisplayModifiedEvent, this, SLOT(updateWidgetFromMRML()));
+ 
+   vtkMRMLSegmentationNode* segmentationNode = vtkMRMLSegmentationNode::SafeDownCast(node);
+   d->SegmentationNode = segmentationNode;
+@@ -241,11 +284,20 @@ void qMRMLSegmentationShow3DButton::updateWidgetFromMRML()
+                      && d->SegmentationNode->GetSegmentation()->GetSourceRepresentationName() != //
+                           vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
+ 
+-    // Change button state based on whether it contains closed surface representation
+-    bool closedSurfacePresent = d->SegmentationNode->GetSegmentation()->ContainsRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
++    // Change button state based on whether it contains the representation shown in 3D views
++    // (and, for binary labelmap, whether it is visible in 3D)
++    std::string representation3D = d->representation3D();
++    bool representationPresent = d->SegmentationNode->GetSegmentation()->ContainsRepresentation(representation3D);
++    vtkMRMLSegmentationDisplayNode* displayNode = vtkMRMLSegmentationDisplayNode::SafeDownCast(d->SegmentationNode->GetDisplayNode());
++    if (representation3D == vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName())
++    {
++      representationPresent = representationPresent && displayNode && displayNode->GetVisibility3D();
++    }
+     bool wasBlocked = this->blockSignals(true);
+-    this->setChecked(closedSurfacePresent);
++    this->setChecked(representationPresent);
+     this->blockSignals(wasBlocked);
++    d->BinaryLabelmapRepresentationAction->setChecked(representation3D == vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
++    d->ClosedSurfaceRepresentationAction->setChecked(representation3D == vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
+   }
+   else
+   {
+@@ -313,38 +365,72 @@ void qMRMLSegmentationShow3DButton::onToggled(bool on)
+   {
+     return;
+   }
++  vtkSegmentation* segmentation = d->SegmentationNode->GetSegmentation();
++  vtkMRMLSegmentationDisplayNode* displayNode = vtkMRMLSegmentationDisplayNode::SafeDownCast(d->SegmentationNode->GetDisplayNode());
++  const std::string closedSurfaceName = vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName();
++  const std::string binaryLabelmapName = vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
++  std::string representation3D = d->representation3D();
+ 
+   MRMLNodeModifyBlocker segmentationNodeBlocker(d->SegmentationNode);
+ 
+   if (on)
+   {
+-    // Button is pressed, create closed surface representation and show it.
+-    // Make sure closed surface representation exists
+-    if (d->SegmentationNode->GetSegmentation()->CreateRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName()))
++    // Button is pressed: create the representation that is shown in 3D views (only that one) and show it
++    if (segmentation->CreateRepresentation(representation3D) && displayNode)
+     {
+-      vtkMRMLSegmentationDisplayNode* displayNode = vtkMRMLSegmentationDisplayNode::SafeDownCast(d->SegmentationNode->GetDisplayNode());
+-      if (displayNode)
++      displayNode->SetPreferredDisplayRepresentationName3D(representation3D.c_str());
++      if (representation3D == binaryLabelmapName)
+       {
+-        // Set closed surface as displayed poly data representation
+-        displayNode->SetPreferredDisplayRepresentationName3D(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
++        displayNode->SetVisibility3D(true);
+       }
+       // But keep binary labelmap for 2D
+-      bool binaryLabelmapPresent = d->SegmentationNode->GetSegmentation()->ContainsRepresentation(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
+-      if (binaryLabelmapPresent && displayNode)
++      if (segmentation->ContainsRepresentation(binaryLabelmapName))
+       {
+-        displayNode->SetPreferredDisplayRepresentationName2D(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName());
++        displayNode->SetPreferredDisplayRepresentationName2D(binaryLabelmapName.c_str());
+       }
+     }
+   }
+   else
+   {
+-    // Button is released, remove the closed surface representation
+-    // (but only if it's not the source representation).
+-    if (d->SegmentationNode->GetSegmentation()->GetSourceRepresentationName() != vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName())
++    // Button is released: remove the closed surface and binary labelmap representations
++    // (unless they are the source representation)
++    for (const std::string& name : { closedSurfaceName, binaryLabelmapName })
++    {
++      if (segmentation->GetSourceRepresentationName() != name)
++      {
++        segmentation->RemoveRepresentation(name);
++      }
++    }
++    // A source representation that is shown in 3D is hidden instead
++    if (displayNode && representation3D == binaryLabelmapName && segmentation->GetSourceRepresentationName() == binaryLabelmapName)
++    {
++      displayNode->SetVisibility3D(false);
++    }
++  }
++}
++
++//-----------------------------------------------------------------------------
++void qMRMLSegmentationShow3DButton::onRepresentationActionTriggered(QAction* action)
++{
++  Q_D(qMRMLSegmentationShow3DButton);
++  vtkMRMLSegmentationNode* segmentationNode = d->SegmentationNode;
++  vtkMRMLSegmentationDisplayNode* displayNode = segmentationNode ? vtkMRMLSegmentationDisplayNode::SafeDownCast(segmentationNode->GetDisplayNode()) : nullptr;
++  if (!action || !displayNode)
++  {
++    return;
++  }
++  std::string representation3D = action->data().toString().toStdString();
++  displayNode->SetPreferredDisplayRepresentationName3D(representation3D.c_str());
++  if (this->isChecked())
++  {
++    // Shown in 3D: show the chosen representation
++    d->SegmentationNode->GetSegmentation()->CreateRepresentation(representation3D);
++    if (representation3D == vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName())
+     {
+-      d->SegmentationNode->GetSegmentation()->RemoveRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
++      displayNode->SetVisibility3D(true);
+     }
+   }
++  this->updateWidgetFromMRML();
+ }
+ 
+ //-----------------------------------------------------------------------------
+diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
+index c91814f58f..c10bbe8e18 100644
+--- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
++++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
+@@ -56,6 +56,7 @@ protected slots:
+   void onEnableSurfaceNetsToggled(bool surfaceNetsEnabled);
+   void onEnableSurfaceNetsSmoothingToggled(bool surfaceNetsSmoothingEnabled);
+   void onSurfaceSmoothingFactorChanged(double newSmoothingFactor);
++  void onRepresentationActionTriggered(QAction* action);
+   void updateWidgetFromMRML();
+ 
+ protected:
+diff --git a/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.cxx b/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.cxx
+index 985033139a..f8fcc3765f 100644
+--- a/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.cxx
++++ b/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.cxx
+@@ -38,6 +38,7 @@
+ #include <vtkSlicerTerminologiesModuleLogic.h>
+ 
+ #include <vtkMRMLSegmentEditorNode.h>
++#include <vtkSegmentationConverter.h>
+ 
+ // --------------------------------------------------------------------------
+ // qSlicerSegmentationsSettingsPanelPrivate
+@@ -124,12 +125,29 @@ void qSlicerSegmentationsSettingsPanelPrivate::init()
+   this->DefaultOverwriteModeComboBox->addItem(qSlicerSegmentationsSettingsPanel::tr("Allow overlap"), QString(/*no tr*/ "OverwriteNone"));
+   q->registerProperty("Segmentations/DefaultOverwriteMode", this->DefaultOverwriteModeComboBox, "currentUserDataAsString", SIGNAL(currentIndexChanged(int)));
+ 
++  // Default representation in 3D views. Binary labelmap is shown as smooth surfaces computed on the GPU (experimental).
++  this->DefaultRepresentation3DComboBox->addItem(qSlicerSegmentationsSettingsPanel::tr("Default (closed surface)"), QString());
++  this->DefaultRepresentation3DComboBox->addItem(qSlicerSegmentationsSettingsPanel::tr("Binary labelmap"),
++                                                 QString::fromStdString(vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName()));
++  this->DefaultRepresentation3DComboBox->addItem(qSlicerSegmentationsSettingsPanel::tr("Closed surface"),
++                                                 QString::fromStdString(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName()));
++  q->registerProperty(/*no tr*/ "Segmentations/DefaultRepresentation3D",
++                      this->DefaultRepresentation3DComboBox,
++                      "currentUserDataAsString",
++                      SIGNAL(currentIndexChanged(int)),
++                      qSlicerSegmentationsSettingsPanel::tr("Representation of new segmentations in 3D views"),
++                      ctkSettingsPanel::OptionNone);
++
+   // Actions to propagate to the application when settings are changed
+   QObject::connect(this->AutoOpacitiesCheckBox, SIGNAL(toggled(bool)), q, SLOT(setAutoOpacities(bool)));
+   QObject::connect(this->SurfaceSmoothingCheckBox, SIGNAL(toggled(bool)), q, SLOT(setDefaultSurfaceSmoothing(bool)));
+   QObject::connect(this->UseTerminologyCheckBox, SIGNAL(toggled(bool)), q, SLOT(setUseTerminology(bool)));
+   QObject::connect(this->EditDefaultTerminologyEntryPushButton, SIGNAL(clicked()), q, SLOT(onEditDefaultTerminologyEntry()));
+   QObject::connect(this->DefaultOverwriteModeComboBox, &QComboBox::currentTextChanged, q, &qSlicerSegmentationsSettingsPanel::setDefaultOverwriteMode);
++  QObject::connect(this->DefaultRepresentation3DComboBox,
++                   QOverload<int>::of(&QComboBox::currentIndexChanged),
++                   q,
++                   [this, q]() { q->setDefaultRepresentation3D(this->DefaultRepresentation3DComboBox->currentData().toString()); });
+ 
+   // Update default segmentation node from settings when startup completed.
+   QObject::connect(qSlicerApplication::application(), SIGNAL(startupCompleted()), q, SLOT(updateDefaultSegmentationNodeFromWidget()));
+@@ -252,6 +270,16 @@ void qSlicerSegmentationsSettingsPanel::updateDefaultSegmentationNodeFromWidget(
+ {
+   Q_D(qSlicerSegmentationsSettingsPanel);
+   this->setDefaultSurfaceSmoothing(d->SurfaceSmoothingCheckBox->isChecked());
++  this->setDefaultRepresentation3D(d->DefaultRepresentation3DComboBox->currentData().toString());
++}
++
++// --------------------------------------------------------------------------
++void qSlicerSegmentationsSettingsPanel::setDefaultRepresentation3D(QString representationName)
++{
++  if (this->segmentationsLogic())
++  {
++    this->segmentationsLogic()->SetDefaultRepresentation3D(representationName.toStdString());
++  }
+ }
+ 
+ // --------------------------------------------------------------------------
+diff --git a/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.h b/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.h
+index c2216ce22d..102a25e82f 100644
+--- a/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.h
++++ b/Modules/Loadable/Segmentations/qSlicerSegmentationsSettingsPanel.h
+@@ -62,6 +62,7 @@ protected slots:
+   void setDefaultTerminologyEntry(QString);
+   void updateDefaultSegmentationNodeFromWidget();
+   void setDefaultOverwriteMode(QString);
++  void setDefaultRepresentation3D(QString);
+   void updateDefaultOverwriteModeFromWidget();
+ 
+ signals:
+-- 
+2.44.0.windows.1
+

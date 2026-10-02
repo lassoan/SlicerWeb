@@ -97,6 +97,8 @@ async function setSegmentDisplay(props: Record<string, unknown>) {
   refreshSegmentDisplay();
 }
 const representationItems = computed(() => info.value?.representations ?? []);
+// 3D views show binary labelmap (as smooth surfaces) or a surface representation, whether or not it exists yet
+const representation3DItems = computed(() => [...new Set(["Binary labelmap", "Closed surface", ...representationItems.value])]);
 
 // ------------------------------------------------------------------ representations
 const conversionError = ref("");
@@ -303,9 +305,9 @@ async function collapseLayers() {
               </div>
             </SwFormRow>
             <SwFormRow label="Representation in 3D views">
-              <SwComboBox :items="representationItems" :current-index="Math.max(0, representationItems.indexOf(display.representation3D))"
+              <SwComboBox :items="representation3DItems" :current-index="Math.max(0, representation3DItems.indexOf(display.representation3D))"
                 tool-tip="Representation that is shown as a model in 3D and as slice intersections in 2D if exists"
-                @current-index-changed="setDisplayProperties({ representation3D: representationItems[$event] })" />
+                @current-index-changed="setDisplayProperties({ representation3D: representation3DItems[$event] })" />
             </SwFormRow>
             <SwFormRow label="Representation in 2D views">
               <SwComboBox :items="representationItems" :current-index="Math.max(0, representationItems.indexOf(display.representation2D))"

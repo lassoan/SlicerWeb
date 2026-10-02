@@ -474,6 +474,10 @@ class ModuleManager:
 
         requested = list(names) if names else list(self._descriptors) + list(self._scripted_sources)
         loaded = [name for name in requested if name not in self._modules and self.loadModule(name) is not None]
+        if "Segmentations" in loaded:
+            from .panels_segmentations import applyDefaultSegmentationSettings
+
+            applyDefaultSegmentationSettings()
         host.emit("modules-changed", self.moduleSummaries())
         self._emit("modulesLoaded", loaded)
 

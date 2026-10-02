@@ -45,6 +45,13 @@ export interface AppSettings {
    * views still render on their own, and the canvas copies all of them whenever one has rendered.
    */
   "Rendering/SharedWebGLContext": boolean;
+  /**
+   * The representation that new segmentations show in 3D views: "Binary labelmap" (smooth surfaces
+   * that the GPU computes from the labelmap; experimental), "Closed surface" (a surface mesh made
+   * from the labelmap), or "" for Slicer's default (closed surface for now). The web viewer shows binary
+   * labelmap by default: it needs no conversion, so segmentations show at once and update while edited.
+   */
+  "Segmentations/DefaultRepresentation3D": string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -55,6 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,
   "Rendering/SharedWebGLContext": false,
+  "Segmentations/DefaultRepresentation3D": "Binary labelmap",
 };
 
 /** The settings kept in the browser, with the defaults for whatever is not kept. */

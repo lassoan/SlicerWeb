@@ -16,7 +16,7 @@ const jspiSupported = !!(bridge as { jspiSupported?: boolean } | undefined)?.jsp
 interface Section { id: string; title: string }
 const sections: Section[] = [
   { id: "general", title: "General" }, { id: "modules", title: "Modules" }, { id: "rendering", title: "Rendering" },
-  { id: "developer", title: "Developer" },
+  { id: "segmentations", title: "Segmentations" }, { id: "developer", title: "Developer" },
 ];
 const section = ref(sections[0].id);
 
@@ -108,6 +108,22 @@ const favouritesFromAddress = new URLSearchParams(window.location.search).has("f
               Every view is drawn into one canvas rather than one of its own. A browser allows only so many WebGL
               contexts at a time - about eight on a phone - so a layout of nine views cannot give each of them one;
               a context also costs a few megabytes of graphics memory. The views are rebuilt when this is changed.
+            </div>
+          </template>
+          <template v-if="section === 'segmentations'">
+            <label class="block text-[13px]" for="defaultRepresentation3D">Representation in 3D views</label>
+            <select id="defaultRepresentation3D" data-name="defaultRepresentation3D"
+              class="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground"
+              :value="store.settings['Segmentations/DefaultRepresentation3D']"
+              @change="setSetting('Segmentations/DefaultRepresentation3D', ($event.target as HTMLSelectElement).value)">
+              <option value="">Default (closed surface)</option>
+              <option value="Binary labelmap">Binary labelmap</option>
+              <option value="Closed surface">Closed surface</option>
+            </select>
+            <div class="mt-1 text-[12px] text-muted-foreground">
+              The representation that new segmentations show in 3D views. Binary labelmap is shown as smooth surfaces
+              that the GPU computes from the labelmap (experimental); closed surface is a surface mesh made from it.
+              (Slicer setting <code>Segmentations/DefaultRepresentation3D</code>.)
             </div>
           </template>
           <template v-if="section === 'developer'">

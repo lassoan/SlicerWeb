@@ -73,12 +73,56 @@ await drag(cx - 60, cy + 40, 8, 4, -3);
 const afterSecond = Number(await py(`painted()`));
 check("a second stroke paints as well", afterSecond > afterDrag, `${afterSecond} voxels`);
 
+// as on desktop, a stroke shows a preview of the brushes while the mouse moves and paints on release
+const yellowPixels = () => page.evaluate(async () => {
+  await window.slicerWeb.bridge.call("renderView", ["Red"]);
+  const host = document.querySelector("#slicer-view-Red");
+  const canvas = host?.matches("canvas") ? host : host?.querySelector("canvas");
+  const gl = canvas?.getContext("webgl2");
+  if (!gl) return -1;
+  const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+  gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  let count = 0;
+  for (let p = 0; p < pixels.length; p += 4) {
+    if (pixels[p] > pixels[p + 2] + 40 && pixels[p + 1] > pixels[p + 2] + 40 && Math.abs(pixels[p] - pixels[p + 1]) < 40) count++;
+  }
+  return count;
+});
+const yellowBefore = await yellowPixels();
+await page.mouse.move(cx + 40, cy - 60);
+await page.mouse.down();
+for (let i = 1; i <= 8; i++) { await page.mouse.move(cx + 40 + 6 * i, cy - 60); await page.waitForTimeout(20); }
+await page.waitForTimeout(300);
+const duringStroke = Number(await py(`painted()`));
+const yellowDuring = await yellowPixels();
+check("while the mouse moves the segment is not changed yet", duringStroke === afterSecond, `${duringStroke} vs ${afterSecond} voxels`);
+check("and the brushes of the stroke are shown", yellowDuring > yellowBefore + 50, `${yellowDuring} vs ${yellowBefore} yellow pixels`);
+await page.mouse.up();
+await page.waitForTimeout(800);
+const afterRelease = Number(await py(`painted()`));
+check("releasing the button paints the stroke", afterRelease > afterSecond, `${afterRelease} voxels`);
+const yellowAfter = await yellowPixels();
+check("and removes the preview", yellowAfter < yellowBefore + 50, `${yellowAfter} vs ${yellowBefore} yellow pixels`);
+
+// a fast stroke (mouse positions far apart) paints the same as a slow one along the same line
+await run(`slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegment(0).GetRepresentation("Binary labelmap").Initialize()`);
+await run(`(lambda s: s.Modified())(slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0])`);
+await drag(cx - 80, cy + 80, 3, 40, 0);
+const fast = Number(await py(`painted()`));
+await run(`slicer.util.getNodesByClass("vtkMRMLSegmentationNode")[0].GetSegmentation().GetNthSegment(0).GetRepresentation("Binary labelmap").Initialize()`);
+await drag(cx - 80, cy + 80, 40, 3, 0);
+const slow = Number(await py(`painted()`));
+check("a fast stroke leaves no gaps", fast > 0 && Math.abs(fast - slow) <= 0.05 * slow, `${fast} vs ${slow} voxels`);
+await drag(cx, cy, 12, 5, 2);
+await drag(cx - 60, cy + 40, 8, 4, -3);
+const afterRepaint = Number(await py(`painted()`));
+
 // and erasing takes some of it away
 await panel.getByRole("button", { name: "Erase", exact: true }).first().click();
 await page.waitForTimeout(800);
 await drag(cx, cy, 12, 5, 2);
 const afterErase = Number(await py(`painted()`));
-check("erasing takes it away again", afterErase < afterSecond, `${afterErase} voxels`);
+check("erasing takes it away again", afterErase < afterRepaint, `${afterErase} vs ${afterRepaint} voxels`);
 
 // the threshold effect offers the values of the volume being segmented
 await panel.getByRole("button", { name: "Threshold", exact: true }).first().click();

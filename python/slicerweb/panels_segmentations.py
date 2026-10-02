@@ -80,7 +80,9 @@ def segmentationModuleInfo(nodeID):
         "visibility3D": bool(display.GetVisibility3D()),
         "sliceIntersectionThickness": int(display.GetSliceIntersectionThickness()),
         "representation2D": display.GetPreferredDisplayRepresentationName2D() or "",
-        "representation3D": display.GetPreferredDisplayRepresentationName3D() or "",
+        # what is shown in 3D: the chosen representation, or what the display node falls back to (closed surface)
+        "representation3D": (display.GetPreferredDisplayRepresentationName3D() or display.GetDisplayRepresentationName3D()
+                             or "Closed surface"),
         # No view named means every view, as vtkMRMLDisplayNode takes it
         "allViews": not viewIDs,
         "views": [{"id": view.GetID(), "name": view.GetLayoutLabel() or view.GetLayoutName(),
@@ -106,6 +108,17 @@ def segmentDisplayInfo(nodeID, segmentID):
         "opacity2DOutline": float(display.GetSegmentOpacity2DOutline(segmentID)),
         "opacity3D": float(display.GetSegmentOpacity3D(segmentID)),
     }
+
+
+def applyDefaultSegmentationSettings():
+    """Settings for new segmentations, as desktop Slicer's Segmentations settings panel applies them
+    (the representation shown in 3D views)."""
+    import slicer
+
+    logic = slicer.app.applicationLogic().GetModuleLogic("Segmentations")
+    if logic is None:
+        return
+    logic.SetDefaultRepresentation3D(str(slicer.app.userSettings().value("Segmentations/DefaultRepresentation3D", "") or ""))
 
 
 @method()

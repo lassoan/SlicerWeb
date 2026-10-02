@@ -66,7 +66,8 @@ class SegmentEditor:
         self.sphereBrush = False
         self._observers = []  # (interactor, tag)
         self._painting = None  # (view, mode)
-        self._strokeExtent = None
+        self._strokePoints = []
+        self._feedbackActors = []
         self._sourceVolume = None
         self._sourceVolumeObservers = []
 
@@ -179,8 +180,7 @@ class SegmentEditor:
             "canUndo": bool(self.logic.CanUndo()),
             "canRedo": bool(self.logic.CanRedo()),
             "scalarRange": scalarRange,
-            "show3D": bool(seg is not None and seg.GetSegmentation().ContainsRepresentation(
-                slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName())),
+            "show3D": self._shownIn3D(seg),
             # An effect works on the segment in hand, so with no segments there is nothing any of
             # them can do; growing from seeds needs two of them to grow towards each other.
             "segmentsWithContent": self._segmentIDsWithContent().GetNumberOfValues() if seg is not None else 0,
@@ -254,6 +254,7 @@ class SegmentEditor:
         for interactor, tag in self._observers:
             interactor.RemoveObserver(tag)
         self._observers = []
+        self._hideStrokeFeedback()
         self._painting = None
 
     def refreshViewObservers(self):
@@ -280,7 +281,7 @@ class SegmentEditor:
                 self._paintAt(view, caller.GetEventPosition())
                 abort(caller, event)
             elif event == "LeftButtonReleaseEvent" and self._painting is not None:
-                self._endStroke()
+                self._endStroke(caller.GetEventPosition())
                 abort(caller, event)
             elif event in ("MouseWheelForwardEvent", "MouseWheelBackwardEvent") and caller.GetShiftKey():
                 # Shift and the wheel make the brush bigger or smaller, by the fifth that Slicer's
@@ -290,64 +291,169 @@ class SegmentEditor:
 
         return handler
 
+    # As in desktop Slicer's Paint effect (with its default "delayed paint"), a stroke is shown as a
+    # series of brushes while the mouse moves and the segment is painted once, when the button is
+    # released: quick feedback however large the segmentation is, and one update of the segment.
+    MaximumPointDistanceInStroke = 0.2  # brushes of the preview are at most this many diameters apart
+
     def _beginStroke(self, view):
         self.logic.SaveStateForUndo()
         self.logic.UpdateMaskLabelmap()
         self.logic.UpdateReferenceGeometryImage()
         self.logic.ResetModifierLabelmapToDefault()
         self._painting = (view, "Remove" if self.effect == "Erase" else "Add")
-        self._strokeExtent = None
+        self._strokePoints = []  # brush centers (RAS) where the mouse was
+        self._showStrokeFeedback(view)
 
     def _paintAt(self, view, xy):
+        """Add a point to the stroke and show the brushes up to it."""
+        ras = [0.0, 0.0, 0.0, 0.0]
+        view.GetSliceNode().GetXYToRAS().MultiplyPoint([float(xy[0]), float(xy[1]), 0.0, 1.0], ras)
+        center = ras[:3]
+        if self._strokePoints:
+            # Brushes between mouse positions that are far apart, so that the preview has no gaps
+            last = self._strokePoints[-1]
+            spacing = self.MaximumPointDistanceInStroke * 2.0 * self.brushRadius
+            count = int(math.dist(last, center) / spacing) - 1 if spacing > 0 else 0
+            for index in range(count):
+                weight = (index + 1) / (count + 1)
+                self._feedbackPoints.InsertNextPoint([last[a] + weight * (center[a] - last[a]) for a in range(3)])
+        self._feedbackPoints.InsertNextPoint(center)
+        self._feedbackPoints.Modified()
+        self._strokePoints.append(center)
+        for feedbackView, _actor in self._feedbackActors:
+            feedbackView.ScheduleRender()
+
+    def _showStrokeFeedback(self, paintView):
+        """Brushes of the stroke, cut by the plane of each slice view and drawn in all 3D views."""
+        import slicer
+        import vtk
+
+        if self.sphereBrush:
+            brush = vtk.vtkSphereSource()
+            brush.SetRadius(self.brushRadius)
+            brush.SetPhiResolution(16)
+            brush.SetThetaResolution(32)
+        else:
+            # A disk in the slice plane: a cylinder as thick as what is painted (a voxel)
+            modifier = self.logic.GetModifierLabelmap()
+            brush = vtk.vtkCylinderSource()
+            brush.SetRadius(self.brushRadius)
+            brush.SetHeight(min(modifier.GetSpacing()) if modifier is not None else 1.0)
+            brush.SetResolution(32)
+        sliceToRas = paintView.GetSliceNode().GetSliceToRAS()
+        orientation = vtk.vtkMatrix4x4()
+        for r in range(3):
+            for c in range(3):
+                orientation.SetElement(r, c, sliceToRas.GetElement(r, c))
+        brushToWorld = vtk.vtkTransform()
+        brushToWorld.Concatenate(orientation)
+        brushToWorld.RotateX(90)  # the cylinder's axis (y) along the slice normal
+        orientedBrush = vtk.vtkTransformPolyDataFilter()
+        orientedBrush.SetTransform(brushToWorld)
+        orientedBrush.SetInputConnection(brush.GetOutputPort())
+        self._feedbackPoints = vtk.vtkPoints()
+        points = vtk.vtkPolyData()
+        points.SetPoints(self._feedbackPoints)
+        glyphs = vtk.vtkGlyph3D()
+        glyphs.SetInputData(points)
+        glyphs.SetSourceConnection(orientedBrush.GetOutputPort())
+        glyphs.ScalingOff()
+        glyphs.OrientOff()
+        self._feedbackActors = []
+        for view in slicer.app.layoutManager().views().values():
+            renderer = view.GetRenderer()
+            if renderer is None:
+                continue
+            if view.IsA("vtkSlicerWebSliceView"):
+                sliceNode = view.GetSliceNode()
+                planeToRas = sliceNode.GetSliceToRAS()
+                plane = vtk.vtkPlane()
+                plane.SetOrigin([planeToRas.GetElement(r, 3) for r in range(3)])
+                plane.SetNormal([planeToRas.GetElement(r, 2) for r in range(3)])
+                cutter = vtk.vtkCutter()
+                cutter.SetCutFunction(plane)
+                cutter.SetGenerateCutScalars(0)
+                cutter.SetInputConnection(glyphs.GetOutputPort())
+                rasToXy = vtk.vtkTransform()
+                rasToXy.SetMatrix(sliceNode.GetXYToRAS())
+                rasToXy.Inverse()
+                toXy = vtk.vtkTransformPolyDataFilter()
+                toXy.SetTransform(rasToXy)
+                toXy.SetInputConnection(cutter.GetOutputPort())
+                mapper = vtk.vtkPolyDataMapper2D()
+                mapper.SetInputConnection(toXy.GetOutputPort())
+                actor = vtk.vtkActor2D()
+                actor.GetProperty().SetOpacity(0.5)
+            elif view.IsA("vtkSlicerWebThreeDView"):
+                mapper = vtk.vtkPolyDataMapper()
+                mapper.SetInputConnection(glyphs.GetOutputPort())
+                actor = vtk.vtkActor()
+                actor.PickableOff()
+            else:
+                continue
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0.7, 0.7, 0.0)
+            renderer.AddViewProp(actor)
+            self._feedbackActors.append((view, actor))
+
+    def _hideStrokeFeedback(self):
+        for view, actor in self._feedbackActors:
+            view.GetRenderer().RemoveViewProp(actor)
+            view.ScheduleRender()
+        self._feedbackActors = []
+
+    def _paintStroke(self):
+        """Paint the brush along the stroke into the modifier labelmap: around each mouse position
+        and along the lines between them. Returns the extent that was painted, or None."""
         import numpy as np
         import vtk
         from vtk.util import numpy_support
 
         modifier = self.logic.GetModifierLabelmap()
-        if modifier is None:
-            return
-        sliceNode = view.GetSliceNode()
-        xyToRas = sliceNode.GetXYToRAS()
-        ras = [0.0, 0.0, 0.0, 0.0]
-        xyToRas.MultiplyPoint([float(xy[0]), float(xy[1]), 0.0, 1.0], ras)
+        if modifier is None or not self._strokePoints:
+            return None
         worldToImage = vtk.vtkMatrix4x4()
         modifier.GetWorldToImageMatrix(worldToImage)
-        ijk = [0.0, 0.0, 0.0, 0.0]
-        worldToImage.MultiplyPoint(ras[:3] + [1.0], ijk)
-        spacing = modifier.GetSpacing()
+        imageToWorld = vtk.vtkMatrix4x4()
+        modifier.GetImageToWorldMatrix(imageToWorld)
+        worldToImageArray = np.array([[worldToImage.GetElement(r, c) for c in range(4)] for r in range(3)])
+        imageToWorldArray = np.array([[imageToWorld.GetElement(r, c) for c in range(4)] for r in range(3)])
+        centers = [worldToImageArray @ np.array(list(point) + [1.0]) for point in self._strokePoints]
+        spacing = np.array(modifier.GetSpacing())
+        radiusVoxels = self.brushRadius / spacing
         extent = modifier.GetExtent()
-        radiusVoxels = [self.brushRadius / s for s in spacing]
-        lo = [max(extent[2 * a], int(math.floor(ijk[a] - radiusVoxels[a]))) for a in range(3)]
-        hi = [min(extent[2 * a + 1], int(math.ceil(ijk[a] + radiusVoxels[a]))) for a in range(3)]
-        if any(lo[a] > hi[a] for a in range(3)):
-            return
         dims = modifier.GetDimensions()
         scalars = modifier.GetPointData().GetScalars()
-        arr = numpy_support.vtk_to_numpy(scalars).reshape(dims[2], dims[1], dims[0])
-        k, j, i = np.meshgrid(np.arange(lo[2], hi[2] + 1), np.arange(lo[1], hi[1] + 1), np.arange(lo[0], hi[0] + 1), indexing="ij")
-        d2 = ((i - ijk[0]) / radiusVoxels[0]) ** 2 + ((j - ijk[1]) / radiusVoxels[1]) ** 2 + ((k - ijk[2]) / radiusVoxels[2]) ** 2
-        mask = d2 <= 1.0
-        if not self.sphereBrush:
-            # Restrict to the slice: distance from the slice plane less than half voxel along the normal
-            imageToWorld = vtk.vtkMatrix4x4()
-            modifier.GetImageToWorldMatrix(imageToWorld)
-            sliceToRas = sliceNode.GetSliceToRAS()
-            normal = np.array([sliceToRas.GetElement(r, 2) for r in range(3)])
-            normal /= np.linalg.norm(normal) or 1.0
-            m = np.array([[imageToWorld.GetElement(r, c) for c in range(4)] for r in range(3)])
-            pts = np.stack([i, j, k, np.ones_like(i)], axis=-1).astype(float) @ m.T
-            dist = np.abs((pts - np.array(ras[:3])) @ normal)
-            mask &= dist <= 0.5 * min(spacing) + 1e-6
-        sub = arr[lo[2]:hi[2] + 1, lo[1]:hi[1] + 1, lo[0]:hi[0] + 1]
-        sub[mask] = 1
+        voxels = numpy_support.vtk_to_numpy(scalars).reshape(dims[2], dims[1], dims[0])
+        sliceToRas = self._painting[0].GetSliceNode().GetSliceToRAS()
+        normal = np.array([sliceToRas.GetElement(r, 2) for r in range(3)])
+        normal /= np.linalg.norm(normal) or 1.0
+        planePoint = np.array(self._strokePoints[0])
+        painted = None
+        for start, end in list(zip(centers, centers[1:])) or [(centers[0], centers[0])]:
+            lo = [max(extent[2 * a], int(math.floor(min(start[a], end[a]) - radiusVoxels[a]))) for a in range(3)]
+            hi = [min(extent[2 * a + 1], int(math.ceil(max(start[a], end[a]) + radiusVoxels[a]))) for a in range(3)]
+            if any(lo[a] > hi[a] for a in range(3)):
+                continue
+            k, j, i = np.meshgrid(np.arange(lo[2], hi[2] + 1), np.arange(lo[1], hi[1] + 1), np.arange(lo[0], hi[0] + 1), indexing="ij")
+            ijk = np.stack([i, j, k], axis=-1).astype(float)
+            # Within a brush radius of the line between the two mouse positions
+            direction = (end - start) / radiusVoxels
+            offsets = (ijk - start) / radiusVoxels
+            length2 = float(direction @ direction)
+            t = np.clip((offsets @ direction) / length2, 0.0, 1.0)[..., None] if length2 > 0 else 0.0
+            mask = ((offsets - t * direction) ** 2).sum(axis=-1) <= 1.0
+            if not self.sphereBrush:
+                # In the slice only: less than half a voxel from the slice plane
+                world = np.concatenate([ijk, np.ones(ijk.shape[:-1] + (1,))], axis=-1) @ imageToWorldArray.T
+                mask &= np.abs((world - planePoint) @ normal) <= 0.5 * spacing.min() + 1e-6
+            voxels[lo[2]:hi[2] + 1, lo[1]:hi[1] + 1, lo[0]:hi[0] + 1][mask] = 1
+            box = [lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]]
+            painted = box if painted is None else [min(painted[a], box[a]) if a % 2 == 0 else max(painted[a], box[a]) for a in range(6)]
         scalars.Modified()
         modifier.Modified()
-        ext = [lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]]
-        if self._strokeExtent is None:
-            self._strokeExtent = ext
-        else:
-            self._strokeExtent = [min(self._strokeExtent[a], ext[a]) if a % 2 == 0 else max(self._strokeExtent[a], ext[a]) for a in range(6)]
-        self._apply(ext)
+        return painted
 
     def _apply(self, extent=None, mode=None):
         import slicer
@@ -364,8 +470,14 @@ class SegmentEditor:
         else:
             self.logic.ModifySegmentByLabelmap(segmentationNode, segmentID, modifier, modeValue, False, False)
 
-    def _endStroke(self):
+    def _endStroke(self, xy):
+        self._paintAt(self._painting[0], xy)
+        self._hideStrokeFeedback()
+        painted = self._paintStroke()
+        if painted is not None:
+            self._apply(painted)
         self._painting = None
+        self._strokePoints = []
         host.emit("segment-editor-changed", self.state())
 
     # ------------------------------------------------------------------ whole-volume effects
@@ -432,6 +544,20 @@ class SegmentEditor:
         self._apply(mode="Set")
 
     # --- effects that work out what to fill in from what is already there
+
+    @staticmethod
+    def _shownIn3D(segmentationNode):
+        """Whether the "Show 3D" button is pressed: the closed surface exists, or binary labelmap (the
+        representation chosen for 3D) is visible in 3D."""
+        import slicer
+
+        if segmentationNode is None:
+            return False
+        displayNode = segmentationNode.GetDisplayNode()
+        if displayNode is not None and displayNode.IsBinaryLabelmapPreferredDisplayRepresentation3D():
+            return bool(displayNode.GetVisibility3D())
+        return bool(segmentationNode.GetSegmentation().ContainsRepresentation(
+            slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName()))
 
     def _segmentIDsWithContent(self):
         """The segments that have something in them, in the order they are in the segmentation."""
@@ -857,16 +983,15 @@ def segmentEditorShow3D(enabled):
     """Show the segments in the 3D views, as the "Show 3D" button of the Segment Editor does.
 
     A segmentation is shown in 3D by giving it a closed surface, which is built from the labelmaps
-    and kept up to date while they are edited.
+    and kept up to date while they are edited (or, if binary labelmap is chosen for 3D, by showing it).
     """
+    from .panels import showSurfaces
+
     e = editor()
     segmentationNode = e.logic.GetSegmentationNode()
     if segmentationNode is None:
         return False
-    if enabled:
-        segmentationNode.CreateClosedSurfaceRepresentation()
-    else:
-        segmentationNode.RemoveClosedSurfaceRepresentation()
+    showSurfaces(segmentationNode, bool(enabled))
     host.emit("segment-editor-changed", e.state())
     return True
 

@@ -284,7 +284,8 @@ def segmentationInfo(nodeID):
         "name": node.GetName(),
         "segments": segments,
         "sourceRepresentation": seg.GetSourceRepresentationName(),
-        "hasClosedSurface": bool(seg.ContainsRepresentation("Closed surface")),
+        # shown in 3D: as closed surfaces, or as binary labelmap if that is the representation chosen for 3D
+        "hasClosedSurface": bool(d.GetVisibility3D()) if _binaryLabelmapIn3D(d) else bool(seg.ContainsRepresentation("Closed surface")),
         "visible": bool(d.GetVisibility()) if d else False,
         "opacity2DFill": d.GetOpacity2DFill() if d else 0.5,
         "opacity3D": d.GetOpacity3D() if d else 1.0,
@@ -319,11 +320,25 @@ def setSegmentationDisplay(nodeID, properties):
     if "opacity3D" in properties:
         d.SetOpacity3D(float(properties["opacity3D"]))
     if "showSurfaces" in properties:
-        if properties["showSurfaces"]:
-            node.CreateClosedSurfaceRepresentation()
-        else:
-            node.RemoveClosedSurfaceRepresentation()
+        showSurfaces(node, bool(properties["showSurfaces"]))
     return True
+
+
+def _binaryLabelmapIn3D(displayNode):
+    return displayNode is not None and displayNode.IsBinaryLabelmapPreferredDisplayRepresentation3D()
+
+
+def showSurfaces(segmentationNode, show):
+    """Show a segmentation in 3D views or hide it, as the desktop's "Show 3D" button does: by creating or removing
+    its closed surface. If binary labelmap is the representation chosen for 3D views (drawn as surfaces computed
+    on the GPU) it is shown or hidden instead: the representation shown in 3D is only changed by the user."""
+    displayNode = segmentationNode.GetDisplayNode()
+    if _binaryLabelmapIn3D(displayNode):
+        displayNode.SetVisibility3D(show)
+    elif show:
+        segmentationNode.CreateClosedSurfaceRepresentation()
+    else:
+        segmentationNode.RemoveClosedSurfaceRepresentation()
 
 
 # The representations a segmentation may hold, in the order the desktop lists them

@@ -29,12 +29,15 @@ passed by name, so that its value is not on the command line. Everything the bui
 it - the extensions' own code included - so the token to use is a fine-grained one that can only
 read the repositories it is needed for.
 """
-import argparse
-import datetime
-import json
-import os
-import subprocess
 import sys
+
+sys.dont_write_bytecode = True   # nothing generated in the checkout (scripts/__pycache__)
+
+import argparse  # noqa: E402
+import datetime  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts"))
 import localsettings  # noqa: E402
@@ -79,8 +82,11 @@ def main():
         if subprocess.run(["docker", "build", "-t", IMAGE, os.path.join(ROOT, "docker")]).returncode != 0:
             return 1
 
+    # This checkout is read-only in the container: everything built goes to the build volume and to
+    # the dist folder, nothing into the sources (Python writes no bytecode next to them either)
     command = ["docker", "run", "--rm", "-i",
-               "-v", f"{VOLUME}:/build", "-v", f"{ROOT}:/work", "-v", f"{dist}:/dist",
+               "-v", f"{VOLUME}:/build", "-v", f"{ROOT}:/work:ro", "-v", f"{dist}:/dist",
+               "-e", "PYTHONDONTWRITEBYTECODE=1",
                "-e", f"SW_PROFILE={os.environ.get('SW_PROFILE', '')}",
                "-e", f"SW_CONFIGURE_ONLY={os.environ.get('SW_CONFIGURE_ONLY', '')}",
                "-e", f"SW_EXTENSIONS={args.extensions}"]

@@ -110,15 +110,14 @@ Slicer's application logic work without threads.
 ## Running it
 
 ```bash
-cd web
-npm install
-npm run dev        # http://localhost:5173
-npm run build && npm run preview
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env dev     # the development server (SW_DEV_PORT, default http://localhost:5173)
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env serve   # the built application (SW_PORT, default http://localhost:4175)
 ```
 
-The wheels, sample data and extensions are taken from the build's `dist` directory; point
-`SLICERWEB_WHEELS`, `SLICERWEB_SAMPLE_DATA` and `SLICERWEB_EXTENSIONS` elsewhere if you keep them
-somewhere else. Pyodide itself is served from the application, not from a CDN.
+Nothing is generated in the checkout: the web application runs in a copy of `web/` in
+`SW_DIST/web-workspace`, where npm installs its packages, and `dev` copies each change of the
+checkout there as it is saved (Vite then reloads it). The wheels, sample data and extensions are
+taken from `SW_DIST`. Pyodide itself is served from the application, not from a CDN.
 
 ## Publishing
 
@@ -167,11 +166,13 @@ The tests drive a real browser (Playwright, `channel: "chrome"`) against a runni
 check what the page and the scene actually did:
 
 ```bash
-cd web
-node tests/browser-smoke.mjs "http://localhost:5173/?sample=CTChest"
-node tests/segment-editor-effects.mjs
-node tests/volume-rendering.mjs
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env test tests/browser-smoke.mjs "http://localhost:5173/?sample=CTChest"
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env test tests/segment-editor-effects.mjs
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env test tests/volume-rendering.mjs
 ```
+
+(They run in the copy of `web/`, where their npm packages are. A screenshot a test is told to save
+goes where it is told: give it a path outside the checkout.)
 
 Each file says at the top what it is for; several of them exist because of a bug that is worth not
 having again.

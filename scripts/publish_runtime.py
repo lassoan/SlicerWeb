@@ -29,14 +29,17 @@ build.py --deployment used, and the repository it is a checkout of). A build is 
 public repository if it has an extension whose source cannot be read without a token: private
 extensions go to a private repository.
 """
-import argparse
-import base64
-import json
-import os
-import shutil
-import subprocess
 import sys
-import tempfile
+
+sys.dont_write_bytecode = True   # nothing generated in the checkout (scripts/__pycache__)
+
+import argparse  # noqa: E402
+import base64  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import localsettings  # noqa: E402

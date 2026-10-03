@@ -6,8 +6,11 @@ import { fileURLToPath, URL } from "node:url";
 import { slicerWebAssets } from "./vite.assets";
 
 /** The commit of SlicerWeb the application is built from ("" outside a checkout), with "+" when files
- *  of it differ from that commit. Shown with the build info of the runtime (the application menu). */
+ *  of it differ from that commit. Shown with the build info of the runtime (the application menu).
+ *  SLICERWEB_APP_VERSION gives it where the sources are a copy (slicerweb.py builds in a copy of web/
+ *  outside the checkout, where npm's files can go). */
 function appVersion() {
+  if (process.env.SLICERWEB_APP_VERSION !== undefined) return process.env.SLICERWEB_APP_VERSION;
   try {
     const commit = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
     const modified = execSync("git status --porcelain --untracked-files=no", { encoding: "utf8" }).trim() !== "";

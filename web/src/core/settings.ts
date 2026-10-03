@@ -48,8 +48,9 @@ export interface AppSettings {
   /**
    * The representation that new segmentations show in 3D views: "Binary labelmap" (smooth surfaces
    * that the GPU computes from the labelmap; experimental), "Closed surface" (a surface mesh made
-   * from the labelmap), or "" for Slicer's default (closed surface for now). The web viewer shows binary
-   * labelmap by default: it needs no conversion, so segmentations show at once and update while edited.
+   * from the labelmap), or "" for the default. The default is binary labelmap in the web viewer (desktop
+   * Slicer's is closed surface): it needs no conversion, which could be slow here, so segmentations show
+   * at once and update while edited.
    */
   "Segmentations/DefaultRepresentation3D": string;
 }
@@ -62,7 +63,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,
   "Rendering/SharedWebGLContext": false,
-  "Segmentations/DefaultRepresentation3D": "Binary labelmap",
+  "Segmentations/DefaultRepresentation3D": "",
 };
 
 /** The settings kept in the browser, with the defaults for whatever is not kept. */

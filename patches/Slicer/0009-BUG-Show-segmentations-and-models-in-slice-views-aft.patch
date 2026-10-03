@@ -1,0 +1,106 @@
+From 3a9ca56e36e98d74b5fe4b0dec7fe10f086cc5f4 Mon Sep 17 00:00:00 2001
+From: Andras Lasso <lasso@queensu.ca>
+Date: Fri, 2 Oct 2026 07:13:04 -0400
+Subject: [PATCH] BUG: Show segmentations and models in slice views after
+ loading a scene
+
+Displayable managers request an update from MRML (SetUpdateFromMRMLRequested)
+when the scene is processed in batch, for example while a scene is loaded,
+but the update is only done when a render of the view is requested. Several
+displayable managers (segmentations, models, and transforms in slice views)
+did not request a render when batch processing ended, so after loading a
+scene their nodes were not shown until something else requested a render,
+such as moving the slice.
+
+vtkMRMLAbstractDisplayableManager now requests a render when batch
+processing, closing, importing, or restoring the scene ends and an update
+was requested meanwhile, so that each displayable manager does not need
+to do it.
+
+Slice node changes are ignored during batch processing, therefore the
+segmentations 2D displayable manager now also gets the current slice
+position when it creates its pipelines.
+---
+ .../vtkMRMLAbstractDisplayableManager.cxx     | 23 +++++++++++++++++++
+ .../vtkMRMLAbstractDisplayableManager.h       |  5 ++++
+ ...kMRMLSegmentationsDisplayableManager2D.cxx |  7 ++++++
+ 3 files changed, 35 insertions(+)
+
+diff --git a/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.cxx b/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.cxx
+index cfdbc9d536..88980e7528 100644
+--- a/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.cxx
++++ b/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.cxx
+@@ -710,6 +710,29 @@ void vtkMRMLAbstractDisplayableManager::SetMRMLSceneInternal(vtkMRMLScene* newSc
+   this->SetAndObserveMRMLSceneEventsInternal(newScene, sceneEvents.GetPointer());
+ }
+ 
++//---------------------------------------------------------------------------
++void vtkMRMLAbstractDisplayableManager::ProcessMRMLSceneEvents(vtkObject* caller, unsigned long event, void* callData)
++{
++  this->Superclass::ProcessMRMLSceneEvents(caller, event, callData);
++  // Displayable managers usually only request an update from MRML while the scene is processed in batch (e.g., loaded).
++  // When that is over, the update has to be done, otherwise it would wait until something else requests a render
++  // of the view (for example, moving the slice).
++  bool sceneChangeEnded = false;
++  switch (event)
++  {
++    case vtkMRMLScene::EndBatchProcessEvent:
++    case vtkMRMLScene::EndCloseEvent:
++    case vtkMRMLScene::EndImportEvent:
++    case vtkMRMLScene::EndRestoreEvent: sceneChangeEnded = true; break;
++    default: break;
++  }
++  vtkMRMLScene* scene = this->GetMRMLScene();
++  if (sceneChangeEnded && this->Internal->UpdateFromMRMLRequested && scene && !scene->IsBatchProcessing())
++  {
++    this->RequestRender();
++  }
++}
++
+ //---------------------------------------------------------------------------
+ void vtkMRMLAbstractDisplayableManager::AddMRMLDisplayableManagerEvent(int eventId)
+ {
+diff --git a/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.h b/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.h
+index 404f485ea1..a1537769aa 100644
+--- a/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.h
++++ b/Libs/MRML/DisplayableManager/vtkMRMLAbstractDisplayableManager.h
+@@ -153,6 +153,11 @@ protected:
+   /// or OnMRMLSceneEndImport() if the new scene is valid
+   void SetMRMLSceneInternal(vtkMRMLScene* newScene) override;
+ 
++  /// Process scene events as vtkMRMLAbstractLogic does. In addition, when batch processing, closing, importing, or
++  /// restoring the scene ends, an update that was requested by SetUpdateFromMRMLRequested() meanwhile is done
++  /// (by requesting a render), so that displayable managers do not need to request a render themselves.
++  void ProcessMRMLSceneEvents(vtkObject* caller, unsigned long event, void* callData) override;
++
+   /// ProcessMRMLNodesEvents calls OnMRMLDisplayableNodeModifiedEvent when the
+   /// displayable node (e.g. vtkMRMLSliceNode, vtkMRMLViewNode) is Modified.
+   /// Could be overloaded in DisplayableManager subclass.
+diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager2D.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager2D.cxx
+index fd4053b3ca..4ab80cd0eb 100644
+--- a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager2D.cxx
++++ b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager2D.cxx
+@@ -370,6 +370,10 @@ void vtkMRMLSegmentationsDisplayableManager2D::vtkInternal::SetSliceNode(vtkMRML
+ //---------------------------------------------------------------------------
+ void vtkMRMLSegmentationsDisplayableManager2D::vtkInternal::UpdateSliceNode()
+ {
++  if (!this->SliceNode)
++  {
++    return;
++  }
+   // Update the Slice node transform then update the DisplayNode pipelines to account for plane location
+   this->SliceXYToRAS->DeepCopy(this->SliceNode->GetXYToRAS());
+   PipelinesCacheType::iterator displayNodeIt;
+@@ -1421,6 +1425,9 @@ void vtkMRMLSegmentationsDisplayableManager2D::UpdateFromMRML()
+     return;
+   }
+   this->Internal->ClearDisplayableNodes();
++  // Slice node changes are ignored during batch processing (e.g., while a scene is loaded),
++  // therefore get the current slice position before the pipelines are created.
++  this->Internal->UpdateSliceNode();
+ 
+   vtkMRMLSegmentationNode* mNode = nullptr;
+   std::vector<vtkMRMLNode*> mNodes;
+-- 
+2.44.0.windows.1
+

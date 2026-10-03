@@ -9,6 +9,12 @@ import { SwButton, SwCheckBox, SwCollapsible, SwComboBox, SwFormRow, SwNodeSelec
 import type { SlicerRuntime } from "@/core/runtime";
 import PopupMenu from "../components/PopupMenu.vue";
 import SegmentList from "../components/SegmentList.vue";
+import clipKeepNegativeIcon from "../assets/clipping/ClipKeepNegative.svg";
+import clipKeepPositiveIcon from "../assets/clipping/ClipKeepPositive.svg";
+import clipOffIcon from "../assets/clipping/ClipOff.svg";
+import clippingIntersectionIcon from "../assets/clipping/ClippingIntersection.svg";
+import clippingUnionIcon from "../assets/clipping/ClippingUnion.svg";
+import Show3DButton from "../components/Show3DButton.vue";
 import { openModule, store } from "../store";
 import { useNodeState } from "./useNodeState";
 import { useSelectedNode } from "./useSelectedNode";
@@ -23,10 +29,15 @@ interface SegmentationInfo {
   opacity3D: number;
 }
 interface ViewEntry { id: string; name: string; kind: "slice" | "threeD"; checked: boolean }
+type ClipState = "off" | "positive" | "negative";
+interface ClippingInfo {
+  enabled: boolean; capSurface: boolean; capOpacity: number; outline: boolean; clipNodeID: string | null;
+  clipType: "intersection" | "union"; clippingNodes: { id: string; state: ClipState }[];
+}
 interface DisplayInfo {
   visible: boolean; opacity: number; opacity2DFill: number; opacity2DOutline: number; opacity3D: number;
   visibility2DFill: boolean; visibility2DOutline: boolean; visibility3D: boolean; sliceIntersectionThickness: number;
-  representation2D: string; representation3D: string; allViews: boolean; views: ViewEntry[];
+  representation2D: string; representation3D: string; allViews: boolean; views: ViewEntry[]; clipping: ClippingInfo;
 }
 interface ModuleInfo { sourceGeometry: string; layers: { segmentCount: number; layerCount: number }; representations: string[]; display: DisplayInfo | null }
 interface SegmentDisplay {
@@ -45,7 +56,6 @@ const { state: info, refresh: refreshInfo } = useNodeState<ModuleInfo>("segmenta
 // The representations, as qMRMLSegmentationRepresentationsListView lists them: read with the
 // segmentation, since a conversion changes what it holds.
 const { state: representations, refresh: refreshRepresentations } = useNodeState<Representations>("segmentationRepresentations", nodeID);
-const setDisplay = (props: Record<string, unknown>) => nodeID.value && bridge.call("setSegmentationDisplay", [nodeID.value, props]);
 
 // ------------------------------------------------------------------ segments
 // The segment chosen in the list; Add chooses the new one, Remove takes the chosen one away
@@ -96,6 +106,38 @@ async function setSegmentDisplay(props: Record<string, unknown>) {
   await bridge.call("setSegmentDisplayProperties", [nodeID.value, currentSegment.value, props]);
   refreshSegmentDisplay();
 }
+// ------------------------------------------------------------------ clipping (qMRMLClipNodeDisplayWidget, qMRMLClipNodeWidget)
+const CLIPPING_NODE_CLASSES = ["vtkMRMLSliceNode", "vtkMRMLMarkupsPlaneNode", "vtkMRMLMarkupsROINode", "vtkMRMLModelNode"];
+// Which side of a clipping node is kept: tool buttons with icons, one of them always pressed (as qMRMLClipNodeWidget).
+// The icons are those of desktop Slicer, drawn for a light background: they are shown on one here too.
+const CLIP_STATES: { state: ClipState; icon: string; tip: string }[] = [
+  { state: "negative", icon: clipKeepNegativeIcon, tip: "Keep the negative side of the clipping node" },
+  { state: "positive", icon: clipKeepPositiveIcon, tip: "Keep the positive side of the clipping node" },
+  { state: "off", icon: clipOffIcon, tip: "The clipping node does not clip" },
+];
+// Union clips away the union of what the clipping nodes clip away, intersection only the intersection of it
+const CLIP_TYPES: { type: "union" | "intersection"; text: string; icon: string; tip: string }[] = [
+  { type: "union", text: "Union", icon: clippingUnionIcon, tip: "Clip away the union of the spaces that the clipping nodes clip away: keep only what all of them keep" },
+  { type: "intersection", text: "Intersection", icon: clippingIntersectionIcon,
+    tip: "Clip away the intersection of the spaces that the clipping nodes clip away: keep what any of them keeps" },
+];
+const clipping = computed(() => display.value?.clipping ?? null);
+function setClipping(props: Partial<ClippingInfo> & { ensureClipNode?: boolean }) {
+  return setDisplayProperties({ clipping: props });
+}
+// Opening the clipping section makes sure that there is a clip node to edit (as desktop Slicer does)
+const clippingOpen = ref(false);
+watch([clippingOpen, nodeID], () => {
+  if (clippingOpen.value && clipping.value && !clipping.value.clipNodeID) setClipping({ ensureClipNode: true });
+});
+/** The clipping nodes with one more row (no node) for adding another, as the desktop's list has. */
+const clippingNodeRows = computed(() => [...(clipping.value?.clippingNodes ?? []), { id: "", state: "positive" as ClipState }]);
+function setClippingNode(index: number, change: { id?: string | null; state?: ClipState }) {
+  const nodes = clippingNodeRows.value.map((n) => ({ ...n }));
+  nodes[index] = { ...nodes[index], ...change, id: change.id === undefined ? nodes[index].id : change.id ?? "" };
+  return setClipping({ clippingNodes: nodes.filter((n) => n.id) });
+}
+
 const representationItems = computed(() => info.value?.representations ?? []);
 // 3D views show binary labelmap (as smooth surfaces) or a surface representation, whether or not it exists yet
 const representation3DItems = computed(() => [...new Set(["Binary labelmap", "Closed surface", ...representationItems.value])]);
@@ -281,9 +323,7 @@ async function collapseLayers() {
       <div class="flex flex-wrap items-center gap-1">
         <SwButton data-name="addSegment" tool-tip="Add empty segment" @clicked="addSegment"><Plus :size="14" />Add</SwButton>
         <SwButton data-name="removeSegment" tool-tip="Remove selected segment" :enabled="!!currentSegment" @clicked="removeSegment"><Minus :size="14" />Remove</SwButton>
-        <SwButton text="Show 3D" :primary="state.hasClosedSurface" data-name="show3D"
-          :tool-tip="state.hasClosedSurface ? 'Hide the segments in the 3D views' : 'Show the segments in the 3D views'"
-          @clicked="setDisplay({ showSurfaces: !state.hasClosedSurface })" />
+        <Show3DButton :segmentation-node-id="nodeID" @changed="refreshInfo(); refreshRepresentations()" />
         <span class="flex-1" />
         <SwButton text="Edit…" tool-tip="Go to Segment Editor module" @clicked="openModule('SegmentEditor')" />
       </div>
@@ -339,6 +379,51 @@ async function collapseLayers() {
                 <SwSlider :value="segmentDisplay.opacity3D" :minimum="0" :maximum="1" :single-step="0.05" :decimals="2" @value-changed="setSegmentDisplay({ opacity3D: $event })" />
               </div>
             </template>
+          </SwCollapsible>
+          <SwCollapsible v-if="clipping" text="Clipping" collapsed data-name="clippingSection"
+            @contents-collapsed="clippingOpen = !$event">
+            <div class="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1 text-[12px]">
+              <span>Enable</span>
+              <SwCheckBox :checked="clipping.enabled" data-name="clippingEnabled"
+                tool-tip="Clip the segmentation in 3D views with the clipping nodes of the clip node"
+                @toggled="setClipping({ enabled: $event })" />
+              <span class="self-start pt-1" title="Nodes that clip, and which of their sides is kept">Clip by</span>
+              <div class="flex min-w-0 flex-col gap-1">
+                <div v-for="(row, i) in clippingNodeRows" :key="`${i}-${row.id}`" class="flex items-center gap-1" data-name="clippingNodeRow" :data-node="row.id">
+                  <SwNodeSelector class="min-w-0 flex-1" :node-types="CLIPPING_NODE_CLASSES" :current-node-id="row.id || null" none-enabled show-hidden
+                    :enabled="!!clipping.clipNodeID" @current-node-changed="setClippingNode(i, { id: $event })" />
+                  <button v-for="c in CLIP_STATES" :key="c.state" type="button" :title="c.tip" :data-state="c.state" :disabled="!row.id"
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded border disabled:opacity-40"
+                    :class="row.id && row.state === c.state ? 'border-input bg-accent' : 'border-transparent hover:bg-accent/60'"
+                    @click="setClippingNode(i, { state: c.state })"><img :src="c.icon" alt="" class="h-4 w-4 rounded-sm bg-white/90 p-px" /></button>
+                </div>
+              </div>
+              <span title="When more than one clipping node is used, this option controls if the union or the intersection of the spaces that they clip away is clipped away">Clipping type</span>
+              <div class="flex gap-1" data-name="clipType">
+                <button v-for="c in CLIP_TYPES" :key="c.type" type="button" :title="c.tip" :data-type="c.type" :disabled="!clipping.clipNodeID"
+                  class="flex items-center gap-1 rounded border px-1.5 py-0.5 disabled:opacity-40"
+                  :class="clipping.clipType === c.type ? 'border-input bg-accent' : 'border-transparent hover:bg-accent/60'"
+                  @click="setClipping({ clipType: c.type })"><img :src="c.icon" alt="" class="h-4 w-4 rounded-sm bg-white/90" />{{ c.text }}</button>
+              </div>
+              <span>Cap visibility</span>
+              <div class="flex min-w-0 items-center gap-2">
+                <SwCheckBox :checked="clipping.capSurface" data-name="clippingCapSurface" tool-tip="Show a cap where the clipping cuts the segments"
+                  @toggled="setClipping({ capSurface: $event })" />
+                <span>Opacity</span>
+                <SwSlider class="min-w-0 flex-1" :value="clipping.capOpacity" :minimum="0" :maximum="1" :single-step="0.05" :decimals="2"
+                  :enabled="clipping.capSurface" data-name="clippingCapOpacity" @value-changed="setClipping({ capOpacity: $event })" />
+              </div>
+              <span>Outline visibility</span>
+              <SwCheckBox :checked="clipping.outline" data-name="clippingOutline" tool-tip="Show the outline of the cut"
+                @toggled="setClipping({ outline: $event })" />
+            </div>
+            <!-- Usually there is only one clip node in the scene, used by all nodes -->
+            <SwCollapsible text="Advanced" collapsed data-name="clippingAdvanced">
+              <SwFormRow label="Clip node">
+                <SwNodeSelector node-types="vtkMRMLClipNode" :current-node-id="clipping.clipNodeID" none-enabled add-enabled rename-enabled show-hidden
+                  base-name="ClipNode" data-name="clipNodeSelector" @current-node-changed="setClipping({ clipNodeID: $event })" />
+              </SwFormRow>
+            </SwCollapsible>
           </SwCollapsible>
         </template>
         <div v-else class="text-[12px] text-muted-foreground">The segmentation has no display node.</div>

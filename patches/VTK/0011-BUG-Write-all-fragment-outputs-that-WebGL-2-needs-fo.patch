@@ -1,0 +1,66 @@
+From 0dff254387da31f696d2e30a4ae937a63a271483 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Fri, 2 Oct 2026 10:02:50 -0400
+Subject: [PATCH] BUG: Write all fragment outputs that WebGL 2 needs for active
+ draw buffers
+
+WebGL 2 does not draw (GL_INVALID_OPERATION "Active draw buffers with
+missing fragment shader outputs") when the framebuffer has active draw
+buffers that the fragment shader does not write. Desktop OpenGL allows
+this; the values there are undefined. vtkSSAOPass renders its delegate
+into a framebuffer with three draw buffers (color, position, normal), so
+with ambient shadows the gradient background, 2D actors, and other
+geometry that writes only the color were not drawn in WebGL.
+
+On OpenGL ES, every fragment shader that has outputs now declares the
+outputs up to the minimum MAX_DRAW_BUFFERS (4) and writes zero to those it
+does not write otherwise, at the start of main(). Declaring them is not
+enough: outputs that are not written are removed by the compiler.
+---
+ Rendering/OpenGL2/vtkOpenGLShaderCache.cxx | 26 ++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/Rendering/OpenGL2/vtkOpenGLShaderCache.cxx b/Rendering/OpenGL2/vtkOpenGLShaderCache.cxx
+index 6586922013..b1b9e0654a 100644
+--- a/Rendering/OpenGL2/vtkOpenGLShaderCache.cxx
++++ b/Rendering/OpenGL2/vtkOpenGLShaderCache.cxx
+@@ -10,6 +10,7 @@
+ #include "vtkShaderProgram.h"
+ 
+ #include <sstream>
++#include <string>
+ 
+ #include "vtksys/MD5.h"
+ 
+@@ -251,6 +252,31 @@ unsigned int vtkOpenGLShaderCache::ReplaceShaderValues(std::string& VSSource, st
+       count++;
+     }
+   }
++#ifdef GL_ES_VERSION_3_0
++  // WebGL 2 does not draw (INVALID_OPERATION) if the framebuffer has active draw buffers that the fragment shader
++  // does not write, which desktop OpenGL allows (the values there are undefined). Render passes draw with several
++  // active draw buffers, into which other shaders draw too (for example, the background and 2D actors into the
++  // framebuffer of vtkSSAOPass), so the outputs that a shader does not write are declared and zero is written to them
++  // at the start of main(). Only outputs that a shader writes count, the compiler removes the others.
++  const unsigned int numberOfOutputs = 4; // the minimum MAX_DRAW_BUFFERS of WebGL 2 and OpenGL ES 3
++  std::string unusedOutputsImpl;
++  for (unsigned int location = count; count > 0 && location < numberOfOutputs; ++location)
++  {
++    std::string name = "fragOutputUnused" + std::to_string(location);
++    fragDecls += "layout(location = " + std::to_string(location) + ") out vec4 " + name + ";\n";
++    unusedOutputsImpl += "  " + name + " = vec4(0.0);\n";
++  }
++  if (!unusedOutputsImpl.empty())
++  {
++    std::string::size_type mainPosition = FSSource.find("void main()");
++    std::string::size_type bodyPosition =
++      (mainPosition != std::string::npos) ? FSSource.find('{', mainPosition) : std::string::npos;
++    if (bodyPosition != std::string::npos)
++    {
++      FSSource.insert(bodyPosition + 1, "\n" + unusedOutputsImpl);
++    }
++  }
++#endif
+ #ifdef GL_ES_VERSION_3_0
+   // Emulate texture buffers with 2D textures.
+   vtkShaderProgram::Substitute(VSSource, "samplerBuffer", "sampler2D");

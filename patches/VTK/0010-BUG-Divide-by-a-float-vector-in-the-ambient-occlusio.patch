@@ -1,0 +1,25 @@
+From 6929922c319089350d4a92e5713cd8cb823625a4 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Fri, 2 Oct 2026 09:28:20 -0400
+Subject: [PATCH] BUG: Divide by a float vector in the ambient occlusion blur
+ shader
+
+The blur of vtkSSAOPass divided vec2 offsets by the ivec2 that textureSize returns. GLSL ES
+(OpenGL ES 3, WebGL 2) has no implicit conversion from int to float, so the shader did not
+compile there and ambient occlusion was never shown.
+---
+ Rendering/OpenGL2/vtkSSAOPass.cxx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Rendering/OpenGL2/vtkSSAOPass.cxx b/Rendering/OpenGL2/vtkSSAOPass.cxx
+--- a/Rendering/OpenGL2/vtkSSAOPass.cxx
++++ b/Rendering/OpenGL2/vtkSSAOPass.cxx
+@@ -443,7 +443,7 @@ void vtkSSAOPass::RenderCombine(vtkOpenGLRenderWindow* renWin)
+
+     if (this->Blur)
+     {
+-      ssImpl << "  ivec2 size = textureSize(texSSAO, 0);"
++      ssImpl << "  vec2 size = vec2(textureSize(texSSAO, 0));"
+                 "  float ao = 0.195346 * texture(texSSAO, texCoord).r + \n"
+                 "    0.077847 * texture(texSSAO, texCoord + vec2(-1, -1) / size).r +\n"
+                 "    0.077847 * texture(texSSAO, texCoord + vec2(-1, 1) / size).r +\n"

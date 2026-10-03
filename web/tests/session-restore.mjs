@@ -33,7 +33,34 @@ await page.waitForFunction(() => /CT-chest/.test(document.body.innerText), null,
 await page.waitForTimeout(6000);
 await page.evaluate(() => window.slicerWeb.bridge.evalPython(
   'n = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode", "Measurement"); n.AddControlPoint(0, 0, 0); n.AddControlPoint(10, 0, 0)', "exec"));
-await page.waitForTimeout(500);
+// and a segmentation, a green ball in the middle of the volume
+await page.evaluate(() => window.slicerWeb.bridge.evalPython(`
+import numpy as np, slicer
+volume = slicer.util.getNode("CT-chest")
+seg = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Segmentation")
+seg.CreateDefaultDisplayNodes()
+seg.SetReferenceImageGeometryParameterFromVolumeNode(volume)
+segmentId = seg.GetSegmentation().AddEmptySegment("ball", "ball", (0.1, 0.9, 0.1))
+shape = slicer.util.arrayFromVolume(volume).shape
+k, j, i = np.indices(shape)
+c = np.array(shape) // 2
+slicer.util.updateSegmentBinaryLabelmapFromArray((((k - c[0]) ** 2 + (j - c[1]) ** 2 + (i - c[2]) ** 2) < 40 ** 2).astype(np.uint8), seg, segmentId, volume)
+`, "exec"));
+await page.waitForTimeout(1000);
+/** Pixels of the segment's color in the Red slice view. */
+const segmentPixels = (page) => page.evaluate(async () => {
+  await window.slicerWeb.bridge.call("renderView", ["Red"]);
+  const host = document.querySelector("#slicer-view-Red");
+  const canvas = host?.matches("canvas") ? host : host?.querySelector("canvas");
+  const gl = canvas?.getContext("webgl2");
+  if (!gl) return -1;
+  const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+  gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+  let count = 0;
+  for (let p = 0; p < pixels.length; p += 4) if (pixels[p + 1] > pixels[p] + 50 && pixels[p + 1] > pixels[p + 2] + 50) count++;
+  return count;
+});
+const segmentPixelsBefore = await segmentPixels(page);
 const rows = (page) => page.locator(".sw-row").count();
 const before = await nodes(page);
 const rowsBefore = await rows(page);
@@ -69,6 +96,9 @@ check("the next start asks about it", /Restore the scene/.test(offered), true);
 console.log("asked:", offered.replace(/\s+/g, " "));
 const after = await nodes(page);
 check("and brings it back whole", JSON.stringify(after), JSON.stringify(before));
+const segmentPixelsAfter = await segmentPixels(page);
+check("and the segmentation is shown in the slice views at once", segmentPixelsBefore > 100 && Math.abs(segmentPixelsAfter - segmentPixelsBefore) < 0.05 * segmentPixelsBefore, true);
+console.log(`segment pixels in the Red view: ${segmentPixelsBefore} before, ${segmentPixelsAfter} after`);
 check("with the module that was open", await page.evaluate(() => window.slicerWeb.store.activeModule), "Markups");
 check("rather than the sample the address names as well", (after.match(/CT-chest/g) ?? []).length, 1);
 // A bundle comes in inside a batch, and its subject hierarchy items are resolved only once the

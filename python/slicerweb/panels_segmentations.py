@@ -88,8 +88,81 @@ def segmentationModuleInfo(nodeID):
         "views": [{"id": view.GetID(), "name": view.GetLayoutLabel() or view.GetLayoutName(),
                    "kind": "slice" if view.IsA("vtkMRMLSliceNode") else "threeD",
                    "checked": not viewIDs or view.GetID() in viewIDs} for view in _viewNodes()],
+        "clipping": _clippingInfo(display),
     }
     return info
+
+
+# The nodes that can clip (qMRMLClipNodeWidget offers the same)
+CLIPPING_NODE_CLASSES = ["vtkMRMLSliceNode", "vtkMRMLMarkupsPlaneNode", "vtkMRMLMarkupsROINode", "vtkMRMLModelNode"]
+_CLIPPING_STATES = {0: "off", 1: "positive", 2: "negative"}
+
+
+def _clippingInfo(display):
+    """The "Clipping" section of the desktop's segmentation display widget: the clipping settings of the display node
+    (qMRMLClipNodeDisplayWidget) and of its clip node (qMRMLClipNodeWidget)."""
+    import slicer
+
+    clipNode = display.GetClipNode()
+    info = {
+        "enabled": bool(display.GetClipping()),
+        "capSurface": bool(display.GetClippingCapSurface()),
+        "capOpacity": float(display.GetClippingCapOpacity()),
+        "outline": bool(display.GetClippingOutline()),
+        "clipNodeID": clipNode.GetID() if clipNode is not None else None,
+        "clipType": "intersection",
+        "clippingNodes": [],
+    }
+    if clipNode is not None:
+        info["clipType"] = "union" if clipNode.GetClipType() == slicer.vtkMRMLClipNode.ClipUnion else "intersection"
+        info["clippingNodes"] = [{"id": clipNode.GetNthClippingNodeID(i),
+                                  "state": _CLIPPING_STATES.get(clipNode.GetNthClippingNodeState(i), "off")}
+                                 for i in range(clipNode.GetNumberOfClippingNodes())]
+    return info
+
+
+def _setClipping(display, clipping):
+    """Change what _clippingInfo tells; the clip node is made if there is none yet and one is needed."""
+    import slicer
+
+    if "enabled" in clipping:
+        display.SetClipping(bool(clipping["enabled"]))
+    if "capSurface" in clipping:
+        display.SetClippingCapSurface(bool(clipping["capSurface"]))
+    if "capOpacity" in clipping:
+        display.SetClippingCapOpacity(float(clipping["capOpacity"]))
+    if "outline" in clipping:
+        display.SetClippingOutline(bool(clipping["outline"]))
+    if "clipNodeID" in clipping:
+        display.SetAndObserveClipNodeID(clipping["clipNodeID"] or None)
+    if clipping.get("ensureClipNode") and display.GetClipNode() is None:
+        # The clipping section was opened: use the clip node of the scene (usually there is only one, used by all
+        # nodes), or make one, as desktop Slicer's clipping widgets do
+        clipNode = display.GetScene().GetFirstNodeByClass("vtkMRMLClipNode")
+        if clipNode is None:
+            clipNode = display.GetScene().AddNewNodeByClass("vtkMRMLClipNode")
+        display.SetAndObserveClipNodeID(clipNode.GetID())
+    clipNodeKeys = ("clipType", "clippingNodes")
+    if not any(key in clipping for key in clipNodeKeys):
+        return
+    clipNode = display.GetClipNode()
+    if clipNode is None:
+        clipNode = display.GetScene().AddNewNodeByClass("vtkMRMLClipNode", "ClipNode")
+        display.SetAndObserveClipNodeID(clipNode.GetID())
+    wasModified = clipNode.StartModify()
+    try:
+        if "clipType" in clipping:
+            clipNode.SetClipType(slicer.vtkMRMLClipNode.ClipUnion if clipping["clipType"] == "union"
+                                 else slicer.vtkMRMLClipNode.ClipIntersection)
+        if "clippingNodes" in clipping:
+            states = {name: value for value, name in _CLIPPING_STATES.items()}
+            clipNode.RemoveAllClippingNodeIDs()
+            for entry in clipping["clippingNodes"]:
+                if entry.get("id"):
+                    clipNode.AddAndObserveClippingNodeID(entry["id"])
+                    clipNode.SetClippingNodeState(entry["id"], states.get(entry.get("state"), 0))
+    finally:
+        clipNode.EndModify(wasModified)
 
 
 @method()
@@ -110,6 +183,12 @@ def segmentDisplayInfo(nodeID, segmentID):
     }
 
 
+# The representation new segmentations show in 3D views when the setting is "Default". Desktop Slicer's default is
+# closed surface; here it is binary labelmap (smooth surfaces computed on the GPU), as making closed surfaces in the
+# browser could be slow.
+DEFAULT_REPRESENTATION_3D = "Binary labelmap"
+
+
 def applyDefaultSegmentationSettings():
     """Settings for new segmentations, as desktop Slicer's Segmentations settings panel applies them
     (the representation shown in 3D views)."""
@@ -118,7 +197,8 @@ def applyDefaultSegmentationSettings():
     logic = slicer.app.applicationLogic().GetModuleLogic("Segmentations")
     if logic is None:
         return
-    logic.SetDefaultRepresentation3D(str(slicer.app.userSettings().value("Segmentations/DefaultRepresentation3D", "") or ""))
+    representation = str(slicer.app.userSettings().value("Segmentations/DefaultRepresentation3D", "") or "")
+    logic.SetDefaultRepresentation3D(representation or DEFAULT_REPRESENTATION_3D)
 
 
 @method()
@@ -142,6 +222,8 @@ def setSegmentationDisplayProperties(nodeID, properties):
         for key, (setter, kind) in setters.items():
             if key in properties:
                 getattr(display, setter)(kind(properties[key]))
+        if "clipping" in properties:
+            _setClipping(display, properties["clipping"])
         if "views" in properties:
             # None (or every view) means all views, as the display node takes an empty list
             display.RemoveAllViewNodeIDs()

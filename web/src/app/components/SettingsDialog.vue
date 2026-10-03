@@ -116,7 +116,7 @@ const favouritesFromAddress = new URLSearchParams(window.location.search).has("f
               class="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground"
               :value="store.settings['Segmentations/DefaultRepresentation3D']"
               @change="setSetting('Segmentations/DefaultRepresentation3D', ($event.target as HTMLSelectElement).value)">
-              <option value="">Default (closed surface)</option>
+              <option value="">Default (binary labelmap)</option>
               <option value="Binary labelmap">Binary labelmap</option>
               <option value="Closed surface">Closed surface</option>
             </select>

@@ -340,11 +340,12 @@ check("Show 3D on shows it again, without creating closed surfaces", afterShow =
 // Application setting: the representation that new segmentations show in 3D views
 const newSegmentation3D = () => value(`(lambda s: (s.CreateDefaultDisplayNodes(), str(s.GetDisplayNode().GetPreferredDisplayRepresentationName3D()))[1])(
     slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode"))`);
-check("on the web, segmentations show binary labelmap in 3D by default", defaultRepresentation3D === "Binary labelmap", defaultRepresentation3D);
-await page.evaluate(() => window.slicerWeb.bridge.call("setApplicationSettings", [{ "Segmentations/DefaultRepresentation3D": "Binary labelmap" }]));
-check("with the setting, new segmentations show binary labelmap in 3D", (await newSegmentation3D()) === "Binary labelmap");
+check("the setting is Default at first", defaultRepresentation3D === "", JSON.stringify(defaultRepresentation3D));
+check("which on the web means new segmentations show binary labelmap in 3D", (await newSegmentation3D()) === "Binary labelmap");
+await page.evaluate(() => window.slicerWeb.bridge.call("setApplicationSettings", [{ "Segmentations/DefaultRepresentation3D": "Closed surface" }]));
+check("with Closed surface, new segmentations show closed surface in 3D", (await newSegmentation3D()) === "Closed surface");
 await page.evaluate(() => window.slicerWeb.bridge.call("setApplicationSettings", [{ "Segmentations/DefaultRepresentation3D": "" }]));
-check("with Default (closed surface) they do not choose a representation", (await newSegmentation3D()) === "None");
+check("and with Default again, binary labelmap", (await newSegmentation3D()) === "Binary labelmap");
 
 check("no GL or shader errors", glErrors.length === 0, glErrors.slice(0, 3).join(" | "));
 await browser.close();

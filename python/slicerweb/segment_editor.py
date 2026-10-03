@@ -352,12 +352,16 @@ class SegmentEditor:
         orientedBrush = vtk.vtkTransformPolyDataFilter()
         orientedBrush.SetTransform(brushToWorld)
         orientedBrush.SetInputConnection(brush.GetOutputPort())
+        # Normals that point outwards (as the desktop's brush has), for lighting in 3D views
+        brushNormals = vtk.vtkPolyDataNormals()
+        brushNormals.SetInputConnection(orientedBrush.GetOutputPort())
+        brushNormals.AutoOrientNormalsOn()
         self._feedbackPoints = vtk.vtkPoints()
         points = vtk.vtkPolyData()
         points.SetPoints(self._feedbackPoints)
         glyphs = vtk.vtkGlyph3D()
         glyphs.SetInputData(points)
-        glyphs.SetSourceConnection(orientedBrush.GetOutputPort())
+        glyphs.SetSourceConnection(brushNormals.GetOutputPort())
         glyphs.ScalingOff()
         glyphs.OrientOff()
         self._feedbackActors = []
@@ -388,6 +392,7 @@ class SegmentEditor:
             elif view.IsA("vtkSlicerWebThreeDView"):
                 mapper = vtk.vtkPolyDataMapper()
                 mapper.SetInputConnection(glyphs.GetOutputPort())
+                mapper.ScalarVisibilityOff()
                 actor = vtk.vtkActor()
                 actor.PickableOff()
             else:
@@ -547,17 +552,10 @@ class SegmentEditor:
 
     @staticmethod
     def _shownIn3D(segmentationNode):
-        """Whether the "Show 3D" button is pressed: the closed surface exists, or binary labelmap (the
-        representation chosen for 3D) is visible in 3D."""
-        import slicer
+        """Whether the "Show 3D" button is pressed."""
+        from .panels import shownIn3D
 
-        if segmentationNode is None:
-            return False
-        displayNode = segmentationNode.GetDisplayNode()
-        if displayNode is not None and displayNode.IsBinaryLabelmapPreferredDisplayRepresentation3D():
-            return bool(displayNode.GetVisibility3D())
-        return bool(segmentationNode.GetSegmentation().ContainsRepresentation(
-            slicer.vtkSegmentationConverter.GetSegmentationClosedSurfaceRepresentationName()))
+        return shownIn3D(segmentationNode)
 
     def _segmentIDsWithContent(self):
         """The segments that have something in them, in the order they are in the segmentation."""

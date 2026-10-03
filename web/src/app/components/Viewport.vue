@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { Eye, EyeOff, Link2, Link2Off, Pin, ScanSearch, Maximize2, Minimize2 } from "@lucide/vue";
 import PopupMenu from "./PopupMenu.vue";
+import ShadowsSettings from "./ShadowsSettings.vue";
 import TouchMagnifier from "./TouchMagnifier.vue";
 import TableView from "./TableView.vue";
 import PlotView from "./PlotView.vue";
@@ -449,6 +450,10 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
           :class="linked ? 'text-highlight' : ''" @click="setLinked(!linked)">
           <Link2 v-if="linked" :size="16" /><Link2Off v-else :size="16" />Link views
         </button>
+        <template v-if="isThreeD">
+          <div class="my-1 border-t border-input" />
+          <ShadowsSettings :layout-name="view.layoutName ?? ''" />
+        </template>
       </PopupMenu>
       <template v-else>
         <span class="inline-block h-3 w-3 shrink-0 rounded-sm" :style="{ background: view.color ?? '#888' }" />

@@ -5,6 +5,7 @@ import { Brush, Eraser, SlidersHorizontal, Undo2, Redo2, Plus, Minus, Sparkles, 
 import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox, SwFormRow, SwNodeSelector, SwRangeSlider, SwSlider, SwButton, SwComboBox } from "@/widgets";
 import SegmentList from "../components/SegmentList.vue";
+import Show3DButton from "../components/Show3DButton.vue";
 import { store } from "../store";
 
 interface EditorState {
@@ -187,9 +188,7 @@ onBeforeUnmount(() => {
       <div class="flex items-center gap-1">
         <SwButton @clicked="run('segmentEditorAddSegment')"><Plus :size="14" />Add</SwButton>
         <SwButton @clicked="run('segmentEditorRemoveSegment')"><Minus :size="14" />Remove</SwButton>
-        <SwButton text="Show 3D" :primary="state.show3D" data-name="show3DButton"
-          :tool-tip="state.show3D ? 'Hide the segments in the 3D views' : 'Show the segments in the 3D views'"
-          @clicked="run('segmentEditorShow3D', [!state.show3D])" />
+        <Show3DButton :segmentation-node-id="state.segmentationNodeID" @changed="refresh()" />
         <div class="flex-1" />
         <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight disabled:opacity-30" :disabled="!state.canUndo" title="Undo"
           @click="run('segmentEditorUndo')"><Undo2 :size="16" /></button>

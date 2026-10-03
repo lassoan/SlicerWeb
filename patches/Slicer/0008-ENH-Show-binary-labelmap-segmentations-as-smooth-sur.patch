@@ -1,4 +1,4 @@
-From 0e3337dd597af0842da7b2932e52699e92d5aac3 Mon Sep 17 00:00:00 2001
+From 6c3af218145fb0b2197a5eb7edadcb4cbd09e2b8 Mon Sep 17 00:00:00 2001
 From: Andras Lasso <lasso@queensu.ca>
 Date: Fri, 2 Oct 2026 01:52:58 -0400
 Subject: [PATCH] ENH: Show binary labelmap segmentations as smooth surfaces in
@@ -18,7 +18,8 @@ OpenGL and WebGL2 (requires EXT_color_buffer_float).
 - Opaque segments share one surface with soft color seams, each
   translucent segment has its own (depth peeling and order independent
   translucency are supported).
-- Clipping with caps, per-segment 3D opacity and visibility, lighting,
+- Clipping (union and intersection clip types) with caps and outline,
+  per-segment 3D opacity and visibility, lighting,
   shadows (screen-space ambient occlusion).
 - Picking: vtkMRMLAccuratePicker asks the mapper to intersect the ray
   (new IntersectRayEvent), so Shift+mouse move, Pick3D and painting in
@@ -44,17 +45,17 @@ for new segmentations can be set in application settings
  .../vtkSlicerSegmentationsModuleLogic.cxx     |   40 +
  .../Logic/vtkSlicerSegmentationsModuleLogic.h |    9 +
  .../Segmentations/MRMLDM/CMakeLists.txt       |    2 +
- ...kMRMLSegmentationsDisplayableManager3D.cxx |  315 ++-
- .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2323 +++++++++++++++++
- .../vtkSegmentationLabelmapSurfaceMapper.h    |  124 +
+ ...kMRMLSegmentationsDisplayableManager3D.cxx |  338 ++-
+ .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2466 +++++++++++++++++
+ .../vtkSegmentationLabelmapSurfaceMapper.h    |  148 +
  .../UI/qSlicerSegmentationsSettingsPanel.ui   |   19 +-
  .../Widgets/qMRMLSegmentEditorWidget.cxx      |    5 +-
  .../qMRMLSegmentationDisplayNodeWidget.cxx    |    2 +
- .../Widgets/qMRMLSegmentationShow3DButton.cxx |  122 +-
+ .../Widgets/qMRMLSegmentationShow3DButton.cxx |  136 +-
  .../Widgets/qMRMLSegmentationShow3DButton.h   |    1 +
  .../qSlicerSegmentationsSettingsPanel.cxx     |   28 +
  .../qSlicerSegmentationsSettingsPanel.h       |    1 +
- 19 files changed, 3057 insertions(+), 28 deletions(-)
+ 19 files changed, 3261 insertions(+), 28 deletions(-)
  create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
  create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
 
@@ -94,7 +95,7 @@ index 0b1c8b4bf3..00f0a0fcc2 100644
  std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName2D()
  {
 diff --git a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
-index d1efb07bed..5c4882e3ac 100644
+index b9cdff2c83..8fcc80f34e 100644
 --- a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
 +++ b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
 @@ -190,13 +190,19 @@ public:
@@ -354,7 +355,7 @@ index 78a84a5ab0..d271e96d20 100644
  
  set(${KIT}_TARGET_LIBRARIES
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
-index 34aacdc73e..74217ca3a0 100644
+index 34aacdc73e..8b413a7942 100644
 --- a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
 @@ -20,6 +20,7 @@
@@ -386,7 +387,7 @@ index 34aacdc73e..74217ca3a0 100644
  #include <vtkPlanes.h>
  #include <vtkPolyData.h>
  #include <vtkPolyDataMapper.h>
-@@ -61,6 +69,10 @@
+@@ -61,6 +69,13 @@
  #include <vtkSmartPointer.h>
  #include <vtkTransform.h>
  #include <vtkTransformPolyDataFilter.h>
@@ -394,16 +395,20 @@ index 34aacdc73e..74217ca3a0 100644
 +
 +// STD includes
 +#include <algorithm>
++#include <functional>
++#include <iterator>
++#include <set>
  
  //---------------------------------------------------------------------------
  vtkStandardNewMacro(vtkMRMLSegmentationsDisplayableManager3D);
-@@ -130,6 +142,40 @@ public:
+@@ -130,6 +145,42 @@ public:
    typedef std::map<vtkMRMLSegmentationNode*, std::set<vtkMRMLSegmentationDisplayNode*>> SegmentationToDisplayCacheType;
    SegmentationToDisplayCacheType SegmentationToDisplayNodes;
  
 +  /// Display pipeline of segments of a binary labelmap layer, used when the 3D representation is binary labelmap.
-+  /// The labelmap is rendered as smooth surfaces, computed on the GPU. Opaque segments of a layer are shown by one
-+  /// pipeline; each translucent segment has its own, so that its surface is shown where it touches other segments.
++  /// The labelmap is rendered as smooth surfaces, computed on the GPU. Segments of a layer that have the same opacity
++  /// are shown by one pipeline (translucent ones are composited front to back by the mapper, without the surfaces where
++  /// they touch each other), so that rendering stays fast when many segments are translucent.
 +  struct LabelmapPipeline
 +  {
 +    LabelmapPipeline()
@@ -420,8 +425,9 @@ index 34aacdc73e..74217ca3a0 100644
 +    /// Pickable segments shown by the pipeline
 +    std::map<int, std::string> PickableSegmentIDsByLabel;
 +  };
-+  /// first: shared labelmap of the layer, second: translucent segment shown by the pipeline (empty for the opaque segments)
-+  typedef std::pair<vtkOrientedImageData*, std::string> LabelmapPipelineKey;
++  /// first: shared labelmap of the layer, second: -1 for the opaque segments, otherwise the rank of the opacity of the
++  /// translucent segments (0 for the highest opacity), so that changing the opacity keeps the pipeline
++  typedef std::pair<vtkOrientedImageData*, int> LabelmapPipelineKey;
 +  typedef std::map<LabelmapPipelineKey, LabelmapPipeline> LabelmapPipelineMapType;
 +  std::map<vtkMRMLSegmentationDisplayNode*, LabelmapPipelineMapType> LabelmapPipelines;
 +
@@ -438,7 +444,7 @@ index 34aacdc73e..74217ca3a0 100644
    // Segmentations
    void AddSegmentationNode(vtkMRMLSegmentationNode* displayableNode);
    void RemoveSegmentationNode(vtkMRMLSegmentationNode* displayableNode);
-@@ -145,6 +191,12 @@ public:
+@@ -145,6 +196,12 @@ public:
    void UpdateAllDisplayNodesForSegment(vtkMRMLSegmentationNode* segmentationNode);
    void UpdateSegmentPipelines(vtkMRMLSegmentationDisplayNode* displayNode, PipelineMapType& segmentPipelines);
    void UpdateDisplayNodePipeline(vtkMRMLSegmentationDisplayNode* displayNode, PipelineMapType& segmentPipelines);
@@ -451,7 +457,7 @@ index 34aacdc73e..74217ca3a0 100644
    void RemoveDisplayNode(vtkMRMLSegmentationDisplayNode* displayNode);
  
    // Observations
-@@ -162,6 +214,8 @@ public:
+@@ -162,6 +219,8 @@ public:
    void FindPickedDisplayNodeFromMesh(vtkPointSet* mesh);
    /// Find first picked node from prop3Ds in cell picker and set PickedNodeID in Internal
    void FindFirstPickedDisplayNodeFromPickerProp3Ds();
@@ -460,7 +466,7 @@ index 34aacdc73e..74217ca3a0 100644
  
  public:
    /// Picker of segment prop in renderer
-@@ -310,6 +364,7 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayableTra
+@@ -310,6 +369,7 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayableTra
  //---------------------------------------------------------------------------
  void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::RemoveDisplayNode(vtkMRMLSegmentationDisplayNode* displayNode)
  {
@@ -468,7 +474,7 @@ index 34aacdc73e..74217ca3a0 100644
    PipelinesCacheType::iterator pipelinesIter = this->DisplayPipelines.find(displayNode);
    if (pipelinesIter == this->DisplayPipelines.end())
    {
-@@ -504,14 +559,24 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
+@@ -504,14 +564,24 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
  
    // Determine which representation to show
    std::string shownRepresentationName = displayNode->GetDisplayRepresentationName3D();
@@ -495,7 +501,7 @@ index 34aacdc73e..74217ca3a0 100644
      return;
    }
  
-@@ -780,6 +845,247 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
+@@ -780,6 +850,265 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
    }
  }
  
@@ -552,7 +558,7 @@ index 34aacdc73e..74217ca3a0 100644
 +    }
 +  }
 +
-+  // Shown segments of each labelmap layer: opaque segments together, each translucent segment separately
++  // Shown segments of each labelmap layer, grouped by opacity
 +  const char* binaryLabelmapName = vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
 +  std::map<LabelmapPipelineKey, std::vector<std::string>> shownSegmentIDsInPipelines;
 +  std::map<LabelmapPipelineKey, double> pipelineOpacities;
@@ -561,6 +567,17 @@ index 34aacdc73e..74217ca3a0 100644
 +  {
 +    std::vector<std::string> segmentIDs;
 +    segmentation->GetSegmentIDs(segmentIDs);
++    std::set<double, std::greater<double>> translucentOpacities;
++    for (const std::string& segmentID : segmentIDs)
++    {
++      vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties properties;
++      displayNode->GetSegmentDisplayProperties(segmentID, properties);
++      double opacity = displayOpacity * properties.Opacity3D;
++      if (opacity < 1.0)
++      {
++        translucentOpacities.insert(opacity);
++      }
++    }
 +    for (const std::string& segmentID : segmentIDs)
 +    {
 +      vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties properties;
@@ -575,10 +592,10 @@ index 34aacdc73e..74217ca3a0 100644
 +      {
 +        continue;
 +      }
-+      bool opaque = (opacity >= 1.0);
-+      LabelmapPipelineKey key(labelmap, opaque ? std::string() : segmentID);
++      int rank = (opacity >= 1.0) ? -1 : static_cast<int>(std::distance(translucentOpacities.begin(), translucentOpacities.find(opacity)));
++      LabelmapPipelineKey key(labelmap, rank);
 +      shownSegmentIDsInPipelines[key].push_back(segmentID);
-+      pipelineOpacities[key] = opaque ? 1.0 : opacity;
++      pipelineOpacities[key] = std::min(opacity, 1.0);
 +    }
 +  }
 +
@@ -678,8 +695,15 @@ index 34aacdc73e..74217ca3a0 100644
 +
 +    pipeline.Mapper->SetSmoothingFactor(smoothingFactor);
 +    pipeline.Mapper->SetClippingPlanes(clippingPlanes);
++    // ClipUnion clips away the union of the clipped spaces (keeps where all planes keep), ClipIntersection only their
++    // intersection (keeps where any plane keeps), as for models
++    pipeline.Mapper->SetKeepWhereAnyClippingPlaneKeeps(clipNode && clipNode->GetClipType() == vtkMRMLClipNode::ClipIntersection);
 +    pipeline.Mapper->SetCapClippedSurface(displayNode->GetClippingCapSurface());
 +    pipeline.Mapper->SetCapOpacity(displayNode->GetClippingCapOpacity());
++    // Clipping outline as models show it: in the edge color of the display node
++    pipeline.Mapper->SetClippingOutline(displayNode->GetClippingOutline());
++    pipeline.Mapper->SetOutlineColor(displayNode->GetEdgeColor());
++    pipeline.Mapper->SetOutlineWidth(std::max(1.0, static_cast<double>(displayNode->GetLineWidth())));
 +
 +    vtkProperty* actorProperty = pipeline.Actor->GetProperty();
 +    actorProperty->SetOpacity(pipelineOpacities[key]);
@@ -743,7 +767,7 @@ index 34aacdc73e..74217ca3a0 100644
  //---------------------------------------------------------------------------
  void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::AddObservations(vtkMRMLSegmentationNode* node)
  {
-@@ -1136,6 +1442,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
+@@ -1136,6 +1465,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
      //   one that is picked and it may be of different type (volume, model, etc.)
      this->Internal->FindFirstPickedDisplayNodeFromPickerProp3Ds();
    }
@@ -757,10 +781,10 @@ index 34aacdc73e..74217ca3a0 100644
  }
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
 new file mode 100644
-index 0000000000..74097616ac
+index 0000000000..a0d44f4d57
 --- /dev/null
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
-@@ -0,0 +1,2323 @@
+@@ -0,0 +1,2466 @@
 +/*==============================================================================
 +
 +  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
@@ -835,7 +859,7 @@ index 0000000000..74097616ac
 +
 +// Standard deviation of the Gaussian smoothing for SmoothingFactor = 1, relative to the largest voxel size.
 +// The default SmoothingFactor (0.5) keeps the surface smooth without rounding off small details.
-+const double SmoothingSigmaPerFactor = 1.4;
++const double SmoothingSigmaPerFactor = 1.7;
 +
 +//----------------------------------------------------------------------------
 +// Shader sources start with //VTK::System::Dec, which is replaced by #version: in OpenGL ES it must be on the first line.
@@ -1176,7 +1200,11 @@ index 0000000000..74097616ac
 +uniform float opacity;
 +uniform int numberOfClippingPlanes;
 +uniform vec4 clippingPlanesMC[16];
++uniform int keepWhereAnyPlaneKeeps;
 +uniform int capClippedSurface;
++uniform int clippingOutline;
++uniform vec3 outlineColor;
++uniform float outlineWidth;
 +uniform float capOpacity;
 +uniform int stopAtOpaqueDepth;
 +uniform vec2 viewportOrigin;
@@ -1365,6 +1393,50 @@ index 0000000000..74097616ac
 +  compositeSurface(positionMC, gradientGrid * mcToGridScale, vec4(color.rgb, color.a * opacity));
 +}
 +
++// Composite a point of uniform color (not lit) front to back
++void compositeFlat(vec3 positionMC, vec4 color)
++{
++  accumulatedColor += (1.0 - accumulatedColor.a) * vec4(color.rgb * color.a, color.a);
++  if (firstDepth < 0.0)
++  {
++    vec4 positionDC = MCDCMatrix * vec4(positionMC, 1.0);
++    firstDepth = clamp(0.5 * positionDC.z / positionDC.w + 0.5, 0.0, 1.0);
++    vec4 positionVC = MCVCMatrix * vec4(positionMC, 1.0);
++    firstPositionVC = positionVC.xyz / positionVC.w;
++    firstNormalVC = vec3(0.0, 0.0, 1.0);
++  }
++}
++
++// Composite the outline of the segments on a clipping plane: the points of the plane that are closer to the surface of
++// the segments (measured in the plane) than half of the outline width. Returns true if the point is on the outline.
++bool compositeOutline(vec3 positionMC, vec4 plane)
++{
++  // Size of a pixel at the point, in millimeters (view coordinates are in millimeters)
++  vec4 positionDC = MCDCMatrix * vec4(positionMC, 1.0);
++  positionDC /= positionDC.w;
++  vec4 neighborMC = DCMCMatrix * vec4(positionDC.x + 2.0 / viewportSize.x, positionDC.yzw);
++  vec4 neighborVC = MCVCMatrix * vec4(neighborMC.xyz / neighborMC.w, 1.0);
++  vec4 positionVC = MCVCMatrix * vec4(positionMC, 1.0);
++  float pixelSizeMm = length(neighborVC.xyz / neighborVC.w - positionVC.xyz / positionVC.w);
++  // Distance from the curve in the plane: distance from the surface divided by the in-plane part of its gradient
++  // (the normal matrix maps gradients from model to view coordinates, which are in millimeters)
++  vec3 gridPosition = positionMC * mcToGridScale + mcToGridOffset;
++  float distanceMm = distanceAtGrid(gridPosition);
++  vec3 gradientGrid = vec3(
++    distanceAtGrid(gridPosition + vec3(0.5, 0.0, 0.0)) - distanceAtGrid(gridPosition - vec3(0.5, 0.0, 0.0)),
++    distanceAtGrid(gridPosition + vec3(0.0, 0.5, 0.0)) - distanceAtGrid(gridPosition - vec3(0.0, 0.5, 0.0)),
++    distanceAtGrid(gridPosition + vec3(0.0, 0.0, 0.5)) - distanceAtGrid(gridPosition - vec3(0.0, 0.0, 0.5)));
++  vec3 gradientVC = normalMatrix * (gradientGrid * mcToGridScale);
++  vec3 planeNormalVC = normalize(normalMatrix * plane.xyz);
++  float inPlaneGradient = max(length(gradientVC - dot(gradientVC, planeNormalVC) * planeNormalVC), 0.2);
++  if (abs(distanceMm) / inPlaneGradient > 0.5 * outlineWidth * pixelSizeMm)
++  {
++    return false;
++  }
++  compositeFlat(positionMC, vec4(outlineColor, opacity));
++  return true;
++}
++
 +// Composite the cap of the segments where a clipping plane cuts them
 +void compositeCap(vec3 positionMC, vec4 plane)
 +{
@@ -1373,95 +1445,29 @@ index 0000000000..74097616ac
 +  compositeSurface(positionMC, plane.xyz, vec4(color.rgb, color.a * opacity * capOpacity));
 +}
 +
-+void main()
++// Composite the segments along the ray between tFrom and tTo (sphere tracing). fromPlane and toPlane are the clipping
++// planes that cut the ray there (-1 if none), where the cut is capped and outlined.
++void compositeKeptPart(vec3 rayDirection, float tFrom, float tTo, int fromPlane, int toPlane)
 +{
-+  vec3 rayDirection = parallelProjection == 1 ? viewDirectionMC : normalize(boxPositionMC - eyePositionMC);
-+  rayDirection = mix(rayDirection, vec3(1.0e-6), lessThan(abs(rayDirection), vec3(1.0e-6)));
-+  vec3 inverseDirection = 1.0 / rayDirection;
-+  vec3 t0 = (boxMin - boxPositionMC) * inverseDirection;
-+  vec3 t1 = (boxMax - boxPositionMC) * inverseDirection;
-+  vec3 tNearAxis = min(t0, t1);
-+  vec3 tFarAxis = max(t0, t1);
-+  float tNear = max(max(tNearAxis.x, tNearAxis.y), tNearAxis.z);
-+  float tFar = min(min(tFarAxis.x, tFarAxis.y), tFarAxis.z);
-+  // Only back faces cast rays (the ray leaves the box at this fragment)
-+  float tolerance = 1.0e-3 * length(boxMax - boxMin);
-+  if (tFar > tolerance)
++  if (tFrom >= tTo || accumulatedColor.a > 0.99)
 +  {
-+    discard;
++    return;
 +  }
-+  float tStart = tNear;
-+  if (parallelProjection == 0)
-+  {
-+    tStart = max(tStart, -length(boxPositionMC - eyePositionMC));
-+  }
-+  float tEnd = 0.0;
-+
-+  // Clipping: the kept region is where all plane functions are positive, an interval along the ray
-+  int startPlane = -1;
-+  int endPlane = -1;
-+  for (int i = 0; i < numberOfClippingPlanes; i++)
-+  {
-+    vec4 plane = clippingPlanesMC[i];
-+    float rate = dot(plane.xyz, rayDirection);
-+    float value = dot(plane.xyz, boxPositionMC) + plane.w;
-+    if (abs(rate) < 1.0e-12)
-+    {
-+      if (value < 0.0)
-+      {
-+        discard;
-+      }
-+      continue;
-+    }
-+    float tPlane = -value / rate;
-+    if (rate > 0.0 && tPlane > tStart)
-+    {
-+      tStart = tPlane;
-+      startPlane = i;
-+    }
-+    else if (rate < 0.0 && tPlane < tEnd)
-+    {
-+      tEnd = tPlane;
-+      endPlane = i;
-+    }
-+  }
-+
-+  // Translucent surfaces are not hidden by the depth test, the ray stops at opaque geometry
-+  if (stopAtOpaqueDepth == 1)
-+  {
-+    vec2 pixel = gl_FragCoord.xy - viewportOrigin;
-+    float opaqueDepth = texelFetch(opaqueDepthTexture, ivec2(pixel), 0).r;
-+    if (opaqueDepth < 1.0)
-+    {
-+      vec4 opaquePositionMC = DCMCMatrix * vec4(2.0 * pixel / viewportSize - 1.0, 2.0 * opaqueDepth - 1.0, 1.0);
-+      float tOpaque = dot(opaquePositionMC.xyz / opaquePositionMC.w - boxPositionMC, rayDirection);
-+      if (tOpaque < tEnd)
-+      {
-+        tEnd = tOpaque;
-+        endPlane = -1;
-+      }
-+    }
-+  }
-+  if (tStart >= tEnd)
-+  {
-+    discard;
-+  }
-+
-+  // March along the ray (sphere tracing) and composite each crossing of the surface
-+  float t = tStart;
++  float t = tFrom;
 +  float previousDistance = distanceAt(boxPositionMC + t * rayDirection);
-+  if (previousDistance <= 0.0 && startPlane >= 0 && capClippedSurface == 1)
++  bool onStartOutline = fromPlane >= 0 && clippingOutline == 1 && compositeOutline(boxPositionMC + t * rayDirection, clippingPlanesMC[fromPlane]);
++  if (!onStartOutline && previousDistance <= 0.0 && fromPlane >= 0 && capClippedSurface == 1)
 +  {
-+    compositeCap(boxPositionMC + t * rayDirection, clippingPlanesMC[startPlane]);
++    compositeCap(boxPositionMC + t * rayDirection, clippingPlanesMC[fromPlane]);
 +  }
 +  for (int i = 0; i < 4096; i++)
 +  {
-+    if (t >= tEnd || accumulatedColor.a > 0.99)
++    if (t >= tTo || accumulatedColor.a > 0.99)
 +    {
 +      break;
 +    }
 +    float previousT = t;
-+    t = min(t + max(abs(previousDistance) * mcPerMm * 0.9, minimumStep), tEnd);
++    t = min(t + max(abs(previousDistance) * mcPerMm * 0.9, minimumStep), tTo);
 +    float currentDistance = distanceAt(boxPositionMC + t * rayDirection);
 +    if ((previousDistance > 0.0) != (currentDistance > 0.0))
 +    {
@@ -1485,9 +1491,129 @@ index 0000000000..74097616ac
 +    }
 +    previousDistance = currentDistance;
 +  }
-+  if (previousDistance <= 0.0 && endPlane >= 0 && capClippedSurface == 1 && accumulatedColor.a <= 0.99)
++  bool onEndOutline = toPlane >= 0 && clippingOutline == 1 && accumulatedColor.a <= 0.99
++                      && compositeOutline(boxPositionMC + tTo * rayDirection, clippingPlanesMC[toPlane]);
++  if (!onEndOutline && previousDistance <= 0.0 && toPlane >= 0 && capClippedSurface == 1 && accumulatedColor.a <= 0.99)
 +  {
-+    compositeCap(boxPositionMC + tEnd * rayDirection, clippingPlanesMC[endPlane]);
++    compositeCap(boxPositionMC + tTo * rayDirection, clippingPlanesMC[toPlane]);
++  }
++}
++
++void main()
++{
++  vec3 rayDirection = parallelProjection == 1 ? viewDirectionMC : normalize(boxPositionMC - eyePositionMC);
++  rayDirection = mix(rayDirection, vec3(1.0e-6), lessThan(abs(rayDirection), vec3(1.0e-6)));
++  vec3 inverseDirection = 1.0 / rayDirection;
++  vec3 t0 = (boxMin - boxPositionMC) * inverseDirection;
++  vec3 t1 = (boxMax - boxPositionMC) * inverseDirection;
++  vec3 tNearAxis = min(t0, t1);
++  vec3 tFarAxis = max(t0, t1);
++  float tNear = max(max(tNearAxis.x, tNearAxis.y), tNearAxis.z);
++  float tFar = min(min(tFarAxis.x, tFarAxis.y), tFarAxis.z);
++  // Only back faces cast rays (the ray leaves the box at this fragment)
++  float tolerance = 1.0e-3 * length(boxMax - boxMin);
++  if (tFar > tolerance)
++  {
++    discard;
++  }
++  float tRayStart = tNear;
++  if (parallelProjection == 0)
++  {
++    tRayStart = max(tRayStart, -length(boxPositionMC - eyePositionMC));
++  }
++  float tRayEnd = 0.0;
++
++  // Translucent surfaces are not hidden by the depth test, the ray stops at opaque geometry
++  if (stopAtOpaqueDepth == 1)
++  {
++    vec2 pixel = gl_FragCoord.xy - viewportOrigin;
++    float opaqueDepth = texelFetch(opaqueDepthTexture, ivec2(pixel), 0).r;
++    if (opaqueDepth < 1.0)
++    {
++      vec4 opaquePositionMC = DCMCMatrix * vec4(2.0 * pixel / viewportSize - 1.0, 2.0 * opaqueDepth - 1.0, 1.0);
++      float tOpaque = dot(opaquePositionMC.xyz / opaquePositionMC.w - boxPositionMC, rayDirection);
++      tRayEnd = min(tRayEnd, tOpaque);
++    }
++  }
++  if (tRayStart >= tRayEnd)
++  {
++    discard;
++  }
++
++  if (keepWhereAnyPlaneKeeps == 0 || numberOfClippingPlanes == 0)
++  {
++    // The kept region is where all plane functions are positive: an interval along the ray
++    float tStart = tRayStart;
++    float tEnd = tRayEnd;
++    int startPlane = -1;
++    int endPlane = -1;
++    for (int i = 0; i < numberOfClippingPlanes; i++)
++    {
++      vec4 plane = clippingPlanesMC[i];
++      float rate = dot(plane.xyz, rayDirection);
++      float value = dot(plane.xyz, boxPositionMC) + plane.w;
++      if (abs(rate) < 1.0e-12)
++      {
++        if (value < 0.0)
++        {
++          discard;
++        }
++        continue;
++      }
++      float tPlane = -value / rate;
++      if (rate > 0.0 && tPlane > tStart)
++      {
++        tStart = tPlane;
++        startPlane = i;
++      }
++      else if (rate < 0.0 && tPlane < tEnd)
++      {
++        tEnd = tPlane;
++        endPlane = i;
++      }
++    }
++    compositeKeptPart(rayDirection, tStart, tEnd, startPlane, endPlane);
++  }
++  else
++  {
++    // The kept region is where any plane function is positive: the ray is clipped only where all of them are negative,
++    // an interval along the ray, and kept before and after it
++    float tClipStart = -1.0e30;
++    float tClipEnd = 1.0e30;
++    int clipStartPlane = -1;
++    int clipEndPlane = -1;
++    bool clipped = true;
++    for (int i = 0; i < numberOfClippingPlanes; i++)
++    {
++      vec4 plane = clippingPlanesMC[i];
++      float rate = dot(plane.xyz, rayDirection);
++      float value = dot(plane.xyz, boxPositionMC) + plane.w;
++      if (abs(rate) < 1.0e-12)
++      {
++        clipped = clipped && value < 0.0;
++        continue;
++      }
++      float tPlane = -value / rate;
++      if (rate < 0.0 && tPlane > tClipStart)
++      {
++        tClipStart = tPlane;
++        clipStartPlane = i;
++      }
++      else if (rate > 0.0 && tPlane < tClipEnd)
++      {
++        tClipEnd = tPlane;
++        clipEndPlane = i;
++      }
++    }
++    if (!clipped || tClipStart >= tClipEnd || tClipEnd <= tRayStart || tClipStart >= tRayEnd)
++    {
++      compositeKeptPart(rayDirection, tRayStart, tRayEnd, -1, -1);
++    }
++    else
++    {
++      compositeKeptPart(rayDirection, tRayStart, tClipStart, -1, clipStartPlane);
++      compositeKeptPart(rayDirection, tClipEnd, tRayEnd, clipEndPlane, -1);
++    }
 +  }
 +  if (accumulatedColor.a <= 0.0)
 +  {
@@ -1822,12 +1948,6 @@ index 0000000000..74097616ac
 +    return false;
 +  }
 +
-+  this->FloatLabels = (labelExtents->MaximumLabel > 255);
-+  switch (this->Labelmap->GetScalarType())
-+  {
-+    vtkTemplateMacro(CopyLabelsAs<VTK_TT>(this->Labelmap, this->EffectiveExtent, this->FloatLabels, this->LabelsUnsignedChar, this->LabelsFloat));
-+  }
-+
 +  // Grid of the distance field: the labelmap (downsampled if needed) with padding on each side,
 +  // so that segments touching the labelmap boundary are capped.
 +  vtkNew<vtkMatrix4x4> imageToWorld;
@@ -1843,14 +1963,31 @@ index 0000000000..74097616ac
 +    double column[3] = { imageToWorld->GetElement(0, axis), imageToWorld->GetElement(1, axis), imageToWorld->GetElement(2, axis) };
 +    voxelSizes[axis] = vtkMath::Norm(column);
 +  }
-+  auto gridDimension = [this](int axis) { return (this->LabelDimensions[axis] + this->Downsampling[axis] - 1) / this->Downsampling[axis] + 2 * this->Padding; };
++  // The downsampling factor is chosen for the extent of all labels (not only the shown ones), rounded up, so that
++  // all segments of a labelmap are shown at the same resolution (whether they are opaque, translucent, or others are
++  // hidden) and editing near their boundary does not change it (which would change the appearance of the whole surface).
++  int allLabelsDimensions[3] = { 0, 0, 0 };
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    int minimum = VTK_INT_MAX;
++    int maximum = VTK_INT_MIN;
++    for (const auto& labelExtent : labelExtents->Extents)
++    {
++      minimum = std::min(minimum, labelExtent.second[axis * 2]);
++      maximum = std::max(maximum, labelExtent.second[axis * 2 + 1]);
++    }
++    const int sizeGranularity = 64;
++    allLabelsDimensions[axis] = (maximum - minimum + 1 + sizeGranularity - 1) / sizeGranularity * sizeGranularity;
++  }
++  auto plannedGridDimension = [this, &allLabelsDimensions](int axis)
++  { return (allLabelsDimensions[axis] + this->Downsampling[axis] - 1) / this->Downsampling[axis] + 2 * this->Padding; };
 +  while (true)
 +  {
-+    vtkIdType numberOfVoxels = static_cast<vtkIdType>(gridDimension(0)) * gridDimension(1) * gridDimension(2);
++    vtkIdType numberOfVoxels = static_cast<vtkIdType>(plannedGridDimension(0)) * plannedGridDimension(1) * plannedGridDimension(2);
 +    int axisToDownsample = -1;
 +    for (int axis = 0; axis < 3; ++axis)
 +    {
-+      if (gridDimension(axis) > maximumDimension)
++      if (plannedGridDimension(axis) > maximumDimension)
 +      {
 +        axisToDownsample = axis;
 +      }
@@ -1863,7 +2000,7 @@ index 0000000000..74097616ac
 +    {
 +      for (int axis = 0; axis < 3; ++axis)
 +      {
-+        if (this->Downsampling[axis] < this->LabelDimensions[axis]
++        if (this->Downsampling[axis] < allLabelsDimensions[axis]
 +            && (axisToDownsample < 0 || voxelSizes[axis] * this->Downsampling[axis] < voxelSizes[axisToDownsample] * this->Downsampling[axisToDownsample]))
 +        {
 +          axisToDownsample = axis;
@@ -1876,6 +2013,24 @@ index 0000000000..74097616ac
 +    }
 +    this->Downsampling[axisToDownsample]++;
 +  }
++  // Downsampled voxels are blocks of labelmap voxels at fixed positions (multiples of the downsampling factor),
++  // so that a change of the shown labels' extent does not change which labelmap voxels are combined.
++  const int* labelmapExtent = this->Labelmap->GetExtent();
++  for (int axis = 0; axis < 3; ++axis)
++  {
++    int factor = this->Downsampling[axis];
++    int alignedStart = static_cast<int>(std::floor(static_cast<double>(this->EffectiveExtent[axis * 2]) / factor)) * factor;
++    this->EffectiveExtent[axis * 2] = std::max(alignedStart, labelmapExtent[axis * 2]);
++    this->LabelDimensions[axis] = this->EffectiveExtent[axis * 2 + 1] - this->EffectiveExtent[axis * 2] + 1;
++  }
++  auto gridDimension = [this](int axis) { return (this->LabelDimensions[axis] + this->Downsampling[axis] - 1) / this->Downsampling[axis] + 2 * this->Padding; };
++
++  this->FloatLabels = (labelExtents->MaximumLabel > 255);
++  switch (this->Labelmap->GetScalarType())
++  {
++    vtkTemplateMacro(CopyLabelsAs<VTK_TT>(this->Labelmap, this->EffectiveExtent, this->FloatLabels, this->LabelsUnsignedChar, this->LabelsFloat));
++  }
++
 +  // Region of the grid where labels changed
 +  bool sameExtent = std::equal(previousEffectiveExtent, previousEffectiveExtent + 6, this->EffectiveExtent);
 +  labelsMayChangeInRegion = labelsMayChangeInRegion && previousFloatLabels == this->FloatLabels && sameExtent;
@@ -2687,12 +2842,19 @@ index 0000000000..74097616ac
 +    }
 +  }
 +  program->SetUniformi("numberOfClippingPlanes", numberOfClippingPlanes);
++  program->SetUniformi("keepWhereAnyPlaneKeeps", this->External->KeepWhereAnyClippingPlaneKeeps ? 1 : 0);
 +  if (numberOfClippingPlanes > 0)
 +  {
 +    program->SetUniform4fv("clippingPlanesMC", numberOfClippingPlanes, clippingPlanes);
 +  }
 +  program->SetUniformi("capClippedSurface", this->External->CapClippedSurface ? 1 : 0);
 +  program->SetUniformf("capOpacity", static_cast<float>(this->External->CapOpacity));
++  program->SetUniformi("clippingOutline", this->External->ClippingOutline ? 1 : 0);
++  float outlineColor[3] = { static_cast<float>(this->External->OutlineColor[0]),
++                            static_cast<float>(this->External->OutlineColor[1]),
++                            static_cast<float>(this->External->OutlineColor[2]) };
++  program->SetUniform3f("outlineColor", outlineColor);
++  program->SetUniformf("outlineWidth", static_cast<float>(this->External->OutlineWidth));
 +
 +  distanceTexture->Activate();
 +  this->LabelTexture->Activate();
@@ -2704,16 +2866,17 @@ index 0000000000..74097616ac
 +  bool stopAtOpaqueDepth = actor->IsRenderingTranslucentPolygonalGeometry() && this->CaptureOpaqueDepth(ren);
 +  vtkOpenGLState* ostate = renWin->GetState();
 +  program->SetUniformi("stopAtOpaqueDepth", stopAtOpaqueDepth ? 1 : 0);
++  // Viewport: for reading the opaque depth and for the size of pixels (clipping outline)
++  int viewport[4] = { 0, 0, 1, 1 };
++  ostate->vtkglGetIntegerv(GL_VIEWPORT, viewport);
++  float viewportOrigin[2] = { static_cast<float>(viewport[0]), static_cast<float>(viewport[1]) };
++  float viewportSize[2] = { static_cast<float>(viewport[2]), static_cast<float>(viewport[3]) };
++  program->SetUniform2f("viewportOrigin", viewportOrigin);
++  program->SetUniform2f("viewportSize", viewportSize);
 +  if (stopAtOpaqueDepth)
 +  {
 +    this->OpaqueDepthTexture->Activate();
 +    program->SetUniformi("opaqueDepthTexture", this->OpaqueDepthTexture->GetTextureUnit());
-+    int viewport[4] = { 0, 0, 1, 1 };
-+    ostate->vtkglGetIntegerv(GL_VIEWPORT, viewport);
-+    float viewportOrigin[2] = { static_cast<float>(viewport[0]), static_cast<float>(viewport[1]) };
-+    float viewportSize[2] = { static_cast<float>(viewport[2]), static_cast<float>(viewport[3]) };
-+    program->SetUniform2f("viewportOrigin", viewportOrigin);
-+    program->SetUniform2f("viewportSize", viewportSize);
 +  }
 +  else
 +  {
@@ -2823,6 +2986,10 @@ index 0000000000..74097616ac
 +  os << indent << "SmoothingFactor: " << this->SmoothingFactor << "\n";
 +  os << indent << "CapClippedSurface: " << (this->CapClippedSurface ? "true" : "false") << "\n";
 +  os << indent << "CapOpacity: " << this->CapOpacity << "\n";
++  os << indent << "KeepWhereAnyClippingPlaneKeeps: " << (this->KeepWhereAnyClippingPlaneKeeps ? "true" : "false") << "\n";
++  os << indent << "ClippingOutline: " << (this->ClippingOutline ? "true" : "false") << "\n";
++  os << indent << "OutlineColor: " << this->OutlineColor[0] << ", " << this->OutlineColor[1] << ", " << this->OutlineColor[2] << "\n";
++  os << indent << "OutlineWidth: " << this->OutlineWidth << "\n";
 +  os << indent << "MaximumNumberOfVoxels: " << this->MaximumNumberOfVoxels << "\n";
 +  os << indent << "NumberOfDistanceFieldComputations: " << this->NumberOfDistanceFieldComputations << "\n";
 +}
@@ -3086,10 +3253,10 @@ index 0000000000..74097616ac
 +}
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
 new file mode 100644
-index 0000000000..522215a2b9
+index 0000000000..ea2553200c
 --- /dev/null
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,148 @@
 +/*==============================================================================
 +
 +  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
@@ -3152,7 +3319,7 @@ index 0000000000..522215a2b9
 +
 +  /// Smoothing of the surface, between 0 (no smoothing, surface follows voxel boundaries) and 1 (strong smoothing).
 +  /// Same meaning as the "Smoothing factor" conversion parameter of closed surface representation.
-+  /// The distance field is smoothed by a Gaussian (standard deviation is 1.4 * SmoothingFactor times the largest voxel size,
++  /// The distance field is smoothed by a Gaussian (standard deviation is 1.7 * SmoothingFactor times the largest voxel size,
 +  /// the same in all directions in physical space), combined with the result of applying it twice ("twicing"),
 +  /// so that curved surfaces do not shrink and thin structures are preserved.
 +  /// Gaps between segments that are narrower than the standard deviation are filled.
@@ -3166,7 +3333,8 @@ index 0000000000..522215a2b9
 +  vtkGetMacro(MaximumNumberOfVoxels, vtkIdType);
 +
 +  /// Show the surface where clipping planes cut segments (enabled by default).
-+  /// Clipping planes are set by SetClippingPlanes, in world coordinates; the kept region is where all plane functions are positive.
++  /// Clipping planes are set by SetClippingPlanes, in world coordinates; the kept region is where all plane functions are
++  /// positive (as for other VTK mappers), or where any of them is, see KeepWhereAnyClippingPlaneKeeps.
 +  vtkSetMacro(CapClippedSurface, bool);
 +  vtkGetMacro(CapClippedSurface, bool);
 +  vtkBooleanMacro(CapClippedSurface, bool);
@@ -3174,6 +3342,25 @@ index 0000000000..522215a2b9
 +  /// Opacity of the cap surface, relative to the opacity of the segment.
 +  vtkSetClampMacro(CapOpacity, double, 0.0, 1.0);
 +  vtkGetMacro(CapOpacity, double);
++
++  /// Keep the region where any clipping plane function is positive, instead of where all of them are (disabled by default).
++  /// This is the ClipIntersection clip type of vtkMRMLClipNode (which clips away the intersection of the clipped spaces).
++  vtkSetMacro(KeepWhereAnyClippingPlaneKeeps, bool);
++  vtkGetMacro(KeepWhereAnyClippingPlaneKeeps, bool);
++  vtkBooleanMacro(KeepWhereAnyClippingPlaneKeeps, bool);
++
++  /// Show the outline of the segments on clipping planes: the curve where the planes cut the surface (disabled by default).
++  vtkSetMacro(ClippingOutline, bool);
++  vtkGetMacro(ClippingOutline, bool);
++  vtkBooleanMacro(ClippingOutline, bool);
++
++  /// Color of the clipping outline.
++  vtkSetVector3Macro(OutlineColor, double);
++  vtkGetVector3Macro(OutlineColor, double);
++
++  /// Width of the clipping outline, in pixels.
++  vtkSetClampMacro(OutlineWidth, double, 0.5, 100.0);
++  vtkGetMacro(OutlineWidth, double);
 +
 +  /// Number of times the signed distance field has been computed (for testing).
 +  vtkGetMacro(NumberOfDistanceFieldComputations, int);
@@ -3202,6 +3389,10 @@ index 0000000000..522215a2b9
 +  double SmoothingFactor{ 0.5 };
 +  bool CapClippedSurface{ true };
 +  double CapOpacity{ 1.0 };
++  bool KeepWhereAnyClippingPlaneKeeps{ false };
++  bool ClippingOutline{ false };
++  double OutlineColor[3]{ 0.0, 0.0, 0.0 };
++  double OutlineWidth{ 1.0 };
 +  vtkIdType MaximumNumberOfVoxels{ 32 * 1024 * 1024 };
 +  int NumberOfDistanceFieldComputations{ 0 };
 +
@@ -3261,10 +3452,10 @@ index 247c5eb0ae..4e357a7ec4 100644
          displayNode->SetPreferredDisplayRepresentationName3D(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
        }
 diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx
-index 44bde2fb55..cb009ac094 100644
+index bc37c37c49..2d1bf5f229 100644
 --- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx
 +++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationDisplayNodeWidget.cxx
-@@ -425,6 +425,8 @@ void qMRMLSegmentationDisplayNodeWidget::populate3DRepresentationsCombobox()
+@@ -419,6 +419,8 @@ void qMRMLSegmentationDisplayNodeWidget::populate3DRepresentationsCombobox()
    {
      d->comboBox_DisplayedRepresentation3D->addItem(reprIt->c_str());
    }
@@ -3274,7 +3465,7 @@ index 44bde2fb55..cb009ac094 100644
    // Unblock signals
    d->comboBox_DisplayedRepresentation3D->blockSignals(false);
 diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx
-index 63c55d60cf..feb2c52770 100644
+index 63c55d60cf..ee692e4153 100644
 --- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx
 +++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.cxx
 @@ -25,6 +25,7 @@
@@ -3393,7 +3584,7 @@ index 63c55d60cf..feb2c52770 100644
    }
    else
    {
-@@ -313,38 +365,72 @@ void qMRMLSegmentationShow3DButton::onToggled(bool on)
+@@ -313,40 +365,88 @@ void qMRMLSegmentationShow3DButton::onToggled(bool on)
    {
      return;
    }
@@ -3440,7 +3631,8 @@ index 63c55d60cf..feb2c52770 100644
 +    // Button is released: remove the closed surface and binary labelmap representations
 +    // (unless they are the source representation)
 +    for (const std::string& name : { closedSurfaceName, binaryLabelmapName })
-+    {
+     {
+-      d->SegmentationNode->GetSegmentation()->RemoveRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
 +      if (segmentation->GetSourceRepresentationName() != name)
 +      {
 +        segmentation->RemoveRepresentation(name);
@@ -3450,10 +3642,10 @@ index 63c55d60cf..feb2c52770 100644
 +    if (displayNode && representation3D == binaryLabelmapName && segmentation->GetSourceRepresentationName() == binaryLabelmapName)
 +    {
 +      displayNode->SetVisibility3D(false);
-+    }
-+  }
-+}
-+
+     }
+   }
+ }
+ 
 +//-----------------------------------------------------------------------------
 +void qMRMLSegmentationShow3DButton::onRepresentationActionTriggered(QAction* action)
 +{
@@ -3465,21 +3657,36 @@ index 63c55d60cf..feb2c52770 100644
 +    return;
 +  }
 +  std::string representation3D = action->data().toString().toStdString();
++  bool shown = this->isChecked();
++  vtkSegmentation* segmentation = d->SegmentationNode->GetSegmentation();
++  MRMLNodeModifyBlocker segmentationNodeBlocker(d->SegmentationNode);
 +  displayNode->SetPreferredDisplayRepresentationName3D(representation3D.c_str());
-+  if (this->isChecked())
++  if (shown)
 +  {
 +    // Shown in 3D: show the chosen representation
-+    d->SegmentationNode->GetSegmentation()->CreateRepresentation(representation3D);
++    segmentation->CreateRepresentation(representation3D);
 +    if (representation3D == vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName())
-     {
--      d->SegmentationNode->GetSegmentation()->RemoveRepresentation(vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName());
++    {
 +      displayNode->SetVisibility3D(true);
-     }
-   }
++    }
++  }
++  // Remove the representation that is not shown in 3D anymore (unless it is the source representation),
++  // so that it is not kept up to date for nothing (updating closed surface while editing is expensive)
++  const std::string closedSurfaceName = vtkSegmentationConverter::GetSegmentationClosedSurfaceRepresentationName();
++  const std::string binaryLabelmapName = vtkSegmentationConverter::GetSegmentationBinaryLabelmapRepresentationName();
++  for (const std::string& name : { closedSurfaceName, binaryLabelmapName })
++  {
++    if (name != representation3D && name != segmentation->GetSourceRepresentationName())
++    {
++      segmentation->RemoveRepresentation(name);
++    }
++  }
 +  this->updateWidgetFromMRML();
- }
- 
++}
++
  //-----------------------------------------------------------------------------
+ void qMRMLSegmentationShow3DButton::onEnableSurfaceSmoothingToggled(bool smoothingEnabled)
+ {
 diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
 index c91814f58f..c10bbe8e18 100644
 --- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h

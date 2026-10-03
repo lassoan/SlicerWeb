@@ -85,8 +85,47 @@ def viewControllerInfo(layoutName):
         "backgroundColor2": [round(c, 3) for c in node.GetBackgroundColor2()],
         "linked": bool(node.GetLinkedControl()),
         "renderMode": "orthographic" if node.GetRenderMode() == node.Orthographic else "perspective",
+        # The "Shadows" menu of the desktop's 3D view controller
+        "shadowsVisibility": bool(node.GetShadowsVisibility()),
+        "ambientShadowsSizeScale": float(node.GetAmbientShadowsSizeScale()),
+        "ambientShadowsVolumeOpacityThreshold": float(node.GetAmbientShadowsVolumeOpacityThreshold()),
+        "ambientShadowsIntensityScale": float(node.GetAmbientShadowsIntensityScale()),
+        "ambientShadowsIntensityShift": float(node.GetAmbientShadowsIntensityShift()),
     })
     return common
+
+
+# Ambient shadow settings of 3D views: view node setter and the flag that tells linked views to follow
+_SHADOW_PROPERTIES = {
+    "shadowsVisibility": ("SetShadowsVisibility", bool, "ShadowsVisibilityFlag"),
+    "ambientShadowsSizeScale": ("SetAmbientShadowsSizeScale", float, "AmbientShadowsSizeScaleFlag"),
+    "ambientShadowsVolumeOpacityThreshold": ("SetAmbientShadowsVolumeOpacityThreshold", float, "AmbientShadowsVolumeOpacityThresholdFlag"),
+    "ambientShadowsIntensityScale": ("SetAmbientShadowsIntensityScale", float, "AmbientShadowsIntensityScaleFlag"),
+    "ambientShadowsIntensityShift": ("SetAmbientShadowsIntensityShift", float, "AmbientShadowsIntensityShiftFlag"),
+}
+
+
+def _viewLogic(viewNode):
+    logics = slicer.app.applicationLogic().GetViewLogics()
+    for i in range(logics.GetNumberOfItems() if logics else 0):
+        logic = logics.GetItemAsObject(i)
+        if logic.GetViewNode() is viewNode:
+            return logic
+    return None
+
+
+def _setShadowProperties(node, properties):
+    """Set ambient shadow settings as the desktop's 3D view controller does: through the view logic, so that linked
+    3D views get them too."""
+    logic = _viewLogic(node)
+    for key, (setter, kind, flag) in _SHADOW_PROPERTIES.items():
+        if key not in properties:
+            continue
+        if logic is not None:
+            logic.StartViewNodeInteraction(getattr(slicer.vtkMRMLViewNode, flag))
+        getattr(node, setter)(kind(properties[key]))
+        if logic is not None:
+            logic.EndViewNodeInteraction()
 
 
 @method()
@@ -120,6 +159,8 @@ def setViewControllerProperties(layoutName, properties):
                 node.SetRenderMode(node.Orthographic if properties["renderMode"] == "orthographic" else node.Perspective)
     finally:
         node.EndModify(wasModifying)
+    if kind == "threeD":
+        _setShadowProperties(node, properties)
     if kind == "slice":
         # The slice view's own state goes through the slice logic, as the view's bar does, so that
         # linked views follow.

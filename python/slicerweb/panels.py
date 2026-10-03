@@ -212,7 +212,49 @@ def markupsInfo(nodeID):
         "glyphScale": d.GetGlyphScale() if d else 3.0,
         "textScale": d.GetTextScale() if d else 3.0,
         "fillOpacity": d.GetFillOpacity() if d else 0.5,
+        "handles": _handlesInfo(d) if d else None,
     }
+
+
+# Interaction handles of markups (the desktop's qMRMLMarkupsInteractionHandleWidget): for each kind, whether it is shown
+# and which of its components (X, Y, Z axes and the view plane)
+_HANDLE_KINDS = ("translation", "rotation", "scale")
+
+
+def _handlesInfo(d):
+    info = {
+        "visible": bool(d.GetHandlesInteractive()),
+        "canScale": bool(d.GetCanDisplayScaleHandles()),
+        "size": float(d.GetInteractionHandleScale()),
+        "opacity": float(d.GetInteractionHandleOpacity()),
+    }
+    for kind in _HANDLE_KINDS:
+        name = kind.capitalize()
+        info[kind] = {
+            "visible": bool(getattr(d, f"Get{name}HandleVisibility")()),
+            "components": [bool(c) for c in getattr(d, f"Get{name}HandleComponentVisibility")()],
+        }
+    return info
+
+
+def _setHandles(d, handles):
+    wasModifying = d.StartModify()
+    try:
+        if "visible" in handles:
+            d.SetHandlesInteractive(bool(handles["visible"]))
+        if "size" in handles:
+            d.SetInteractionHandleScale(float(handles["size"]))
+        if "opacity" in handles:
+            d.SetInteractionHandleOpacity(float(handles["opacity"]))
+        for kind in _HANDLE_KINDS:
+            name = kind.capitalize()
+            settings = handles.get(kind) or {}
+            if "visible" in settings:
+                getattr(d, f"Set{name}HandleVisibility")(bool(settings["visible"]))
+            if "components" in settings:
+                getattr(d, f"Set{name}HandleComponentVisibility")(*[bool(c) for c in settings["components"]])
+    finally:
+        d.EndModify(wasModifying)
 
 
 @method()
@@ -226,6 +268,7 @@ def setMarkupsDisplay(nodeID, properties):
         "textScale": lambda v: d.SetTextScale(float(v)),
         "fillOpacity": lambda v: d.SetFillOpacity(float(v)),
         "locked": lambda v: node.SetLocked(bool(v)),
+        "handles": lambda v: _setHandles(d, v),
     }
     for k, v in properties.items():
         if k in setters:
@@ -285,7 +328,7 @@ def segmentationInfo(nodeID):
         "segments": segments,
         "sourceRepresentation": seg.GetSourceRepresentationName(),
         # shown in 3D: as closed surfaces, or as binary labelmap if that is the representation chosen for 3D
-        "hasClosedSurface": bool(d.GetVisibility3D()) if _binaryLabelmapIn3D(d) else bool(seg.ContainsRepresentation("Closed surface")),
+        "hasClosedSurface": shownIn3D(node),
         "visible": bool(d.GetVisibility()) if d else False,
         "opacity2DFill": d.GetOpacity2DFill() if d else 0.5,
         "opacity3D": d.GetOpacity3D() if d else 1.0,
@@ -319,26 +362,128 @@ def setSegmentationDisplay(nodeID, properties):
         d.SetOpacity2DFill(float(properties["opacity2DFill"]))
     if "opacity3D" in properties:
         d.SetOpacity3D(float(properties["opacity3D"]))
+    # The menu of the "Show 3D" button: the representation shown in 3D views and the smoothing of the surfaces
+    if "representation3D" in properties:
+        setRepresentation3D(node, str(properties["representation3D"]))
+    if "smoothingFactor" in properties:
+        setSurfaceSmoothingFactor(node, float(properties["smoothingFactor"]))
     if "showSurfaces" in properties:
         showSurfaces(node, bool(properties["showSurfaces"]))
     return True
+
+
+_BINARY_LABELMAP = "Binary labelmap"
+_CLOSED_SURFACE = "Closed surface"
+_SMOOTHING_FACTOR = "Smoothing factor"
 
 
 def _binaryLabelmapIn3D(displayNode):
     return displayNode is not None and displayNode.IsBinaryLabelmapPreferredDisplayRepresentation3D()
 
 
-def showSurfaces(segmentationNode, show):
-    """Show a segmentation in 3D views or hide it, as the desktop's "Show 3D" button does: by creating or removing
-    its closed surface. If binary labelmap is the representation chosen for 3D views (drawn as surfaces computed
-    on the GPU) it is shown or hidden instead: the representation shown in 3D is only changed by the user."""
+def representation3D(segmentationNode):
+    """The representation the "Show 3D" button shows: binary labelmap if that is chosen for 3D views (drawn as
+    surfaces computed on the GPU), otherwise closed surface (qMRMLSegmentationShow3DButton does the same)."""
+    return _BINARY_LABELMAP if _binaryLabelmapIn3D(segmentationNode.GetDisplayNode()) else _CLOSED_SURFACE
+
+
+def shownIn3D(segmentationNode):
+    """Whether the "Show 3D" button is pressed: binary labelmap (chosen for 3D) is visible in 3D, or the closed
+    surface exists."""
+    if segmentationNode is None:
+        return False
     displayNode = segmentationNode.GetDisplayNode()
     if _binaryLabelmapIn3D(displayNode):
-        displayNode.SetVisibility3D(show)
-    elif show:
-        segmentationNode.CreateClosedSurfaceRepresentation()
+        return bool(displayNode.GetVisibility3D())
+    return bool(segmentationNode.GetSegmentation().ContainsRepresentation(_CLOSED_SURFACE))
+
+
+def showSurfaces(segmentationNode, show):
+    """Show a segmentation in 3D views or hide it, as the desktop's "Show 3D" button does.
+
+    Showing creates only the representation chosen for 3D views (and shows binary labelmap, which is usually
+    there already). Hiding removes the closed surface and binary labelmap representations, except the source
+    representation, which is hidden instead if it is the one shown in 3D. The representation shown in 3D is
+    only changed by the user."""
+    segmentation = segmentationNode.GetSegmentation()
+    displayNode = segmentationNode.GetDisplayNode()
+    chosen = representation3D(segmentationNode)
+    source = segmentation.GetSourceRepresentationName()
+    if show:
+        if segmentation.CreateRepresentation(chosen) and displayNode is not None:
+            displayNode.SetPreferredDisplayRepresentationName3D(chosen)
+            displayNode.SetVisibility3D(True)
+            # But keep binary labelmap for 2D
+            if segmentation.ContainsRepresentation(_BINARY_LABELMAP):
+                displayNode.SetPreferredDisplayRepresentationName2D(_BINARY_LABELMAP)
     else:
-        segmentationNode.RemoveClosedSurfaceRepresentation()
+        for name in (_CLOSED_SURFACE, _BINARY_LABELMAP):
+            if source != name:
+                segmentation.RemoveRepresentation(name)
+        if displayNode is not None and chosen == _BINARY_LABELMAP and source == _BINARY_LABELMAP:
+            displayNode.SetVisibility3D(False)
+
+
+def setRepresentation3D(segmentationNode, name):
+    """Choose the representation shown in 3D views; if the segmentation is shown in 3D, show that one. The other one
+    is removed (unless it is the source representation), so that it is not kept up to date for nothing: updating a
+    closed surface while the segmentation is edited is expensive."""
+    displayNode = segmentationNode.GetDisplayNode()
+    if displayNode is None:
+        return
+    segmentation = segmentationNode.GetSegmentation()
+    shown = shownIn3D(segmentationNode)
+    wasModifying = segmentationNode.StartModify()
+    displayNode.SetPreferredDisplayRepresentationName3D(name)
+    if shown:
+        segmentation.CreateRepresentation(name)
+        displayNode.SetVisibility3D(True)
+    for other in (_CLOSED_SURFACE, _BINARY_LABELMAP):
+        if other != name and other != segmentation.GetSourceRepresentationName():
+            segmentation.RemoveRepresentation(other)
+    segmentationNode.EndModify(wasModifying)
+
+
+def surfaceSmoothingFactor(segmentationNode):
+    """The smoothing factor of the surfaces (0..1). Its sign in the conversion parameter says whether smoothing is
+    enabled; the menu sets its size and keeps the sign, as the desktop's does."""
+    value = segmentationNode.GetSegmentation().GetConversionParameter(_SMOOTHING_FACTOR)
+    try:
+        return abs(float(value))
+    except ValueError:
+        return 0.5
+
+
+def setSurfaceSmoothingFactor(segmentationNode, factor):
+    """Set how much the surfaces are smoothed: a closed surface is made again, binary labelmap shown in 3D is
+    smoothed by the GPU with the same factor."""
+    segmentation = segmentationNode.GetSegmentation()
+    try:
+        original = float(segmentation.GetConversionParameter(_SMOOTHING_FACTOR))
+    except ValueError:
+        original = 0.5
+    factor = max(0.0, min(1.0, factor))
+    if factor == abs(original):
+        return
+    if original < 0.0:
+        factor = -factor
+    wasModifying = segmentationNode.StartModify()
+    segmentation.SetConversionParameter(_SMOOTHING_FACTOR, str(factor))
+    if segmentation.ContainsRepresentation(_CLOSED_SURFACE):
+        segmentation.CreateRepresentation(_CLOSED_SURFACE, True)
+    segmentationNode.Modified()
+    segmentationNode.EndModify(wasModifying)
+
+
+@method()
+def segmentationShow3D(nodeID):
+    """What the "Show 3D" button and its menu show for a segmentation."""
+    node = _node(nodeID)
+    return {
+        "shown": shownIn3D(node),
+        "representation3D": representation3D(node),
+        "smoothingFactor": surfaceSmoothingFactor(node),
+    }
 
 
 # The representations a segmentation may hold, in the order the desktop lists them

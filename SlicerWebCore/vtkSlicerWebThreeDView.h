@@ -39,6 +39,10 @@ public:
   /// Displayable managers instantiated in each 3D view (in addition to those registered by modules).
   static void RegisterDefaultDisplayableManagers();
 
+  /// Show ambient shadows (screen-space ambient occlusion) as the view node sets them
+  /// (ShadowsVisibility, AmbientShadows*), as qMRMLThreeDView does. Called when the view node changes.
+  void UpdateShadowsFromViewNode();
+
 protected:
   vtkSlicerWebThreeDView();
   ~vtkSlicerWebThreeDView() override;

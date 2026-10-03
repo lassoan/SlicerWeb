@@ -1,0 +1,36 @@
+From a090e8d352eb84a6059c5fc4507cff9745d7aee8 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Sat, 3 Oct 2026 10:54:18 -0400
+Subject: [PATCH] BUG: Draw positions and normals for ambient occlusion with
+ all polygonal mappers
+
+vtkSSAOPass makes the shaders of every vtkPolyDataMapper write positions and
+normals (PreReplaceShaderValues), but switched on the draw buffers for them
+only for vtkOpenGLPolyDataMapper (SetShaderParameters).
+vtkOpenGLLowMemoryPolyDataMapper, which OpenGL ES uses, is not one: with it
+only the color was drawn, and polygonal surfaces had no ambient occlusion.
+This was hidden while vtkOpenGLState kept stale draw buffers in its cache,
+which skipped the call that switched the second and third ones off.
+---
+ Rendering/OpenGL2/vtkSSAOPass.cxx | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/Rendering/OpenGL2/vtkSSAOPass.cxx b/Rendering/OpenGL2/vtkSSAOPass.cxx
+index ea13720027..be0abadde8 100644
+--- a/Rendering/OpenGL2/vtkSSAOPass.cxx
++++ b/Rendering/OpenGL2/vtkSSAOPass.cxx
+@@ -195,7 +195,10 @@ void vtkSSAOPass::ComputeKernel()
+ bool vtkSSAOPass::SetShaderParameters(vtkShaderProgram* vtkNotUsed(program),
+   vtkAbstractMapper* mapper, vtkProp* vtkNotUsed(prop), vtkOpenGLVertexArrayObject* vtkNotUsed(VAO))
+ {
+-  if (vtkOpenGLPolyDataMapper::SafeDownCast(mapper) != nullptr ||
++  // The same polygonal mappers as those whose shaders write positions and normals (see
++  // PreReplaceShaderValues): vtkOpenGLLowMemoryPolyDataMapper, which OpenGL ES uses, is not a
++  // vtkOpenGLPolyDataMapper.
++  if (vtkPolyDataMapper::SafeDownCast(mapper) != nullptr ||
+     mapper->IsA("vtkOpenGLGPUVolumeRayCastMapper"))
+   {
+     this->FrameBufferObject->ActivateDrawBuffers(3);
+-- 
+2.44.0.windows.1
+

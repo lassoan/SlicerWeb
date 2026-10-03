@@ -1,0 +1,182 @@
+From 8bfb7cdaef32607a246dd9206a4be3f8d4c56570 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Sat, 3 Oct 2026 10:13:22 -0400
+Subject: [PATCH] BUG: Cache all the draw buffers of a framebuffer, not only
+ the first
+
+vtkOpenGLState caches the draw buffers per binding point and re-reads them
+from OpenGL when a framebuffer is bound, but only the first one. The second
+and following ones stayed those of the previously bound framebuffer, and
+vtkglDrawBuffers, which compares only the given count of them, skipped calls
+it had to make:
+
+- A framebuffer bound after one with three draw buffers on (vtkSSAOPass)
+  did not get its second and third ones switched on by
+  ActivateDrawBuffers(3): only the first color buffer was written.
+- Switching from three draw buffers to one was skipped, since the first one
+  was the same.
+
+All the draw buffers are now read when a framebuffer is bound (GL_DRAW_BUFFERi,
+which OpenGL ES has too), those after the count are cached as GL_NONE, and
+all of them are compared.
+---
+ Rendering/OpenGL2/vtkOpenGLState.cxx | 81 +++++++++++++++++++---------
+ 1 file changed, 57 insertions(+), 24 deletions(-)
+
+diff --git a/Rendering/OpenGL2/vtkOpenGLState.cxx b/Rendering/OpenGL2/vtkOpenGLState.cxx
+index 5cc175970f..18fb38efac 100644
+--- a/Rendering/OpenGL2/vtkOpenGLState.cxx
++++ b/Rendering/OpenGL2/vtkOpenGLState.cxx
+@@ -36,6 +36,29 @@
+ //    printed.
+ // 3) All methods check the cache state to see if anything is out of sync
+ //
++namespace
++{
++// Read all the draw buffers of the bound draw framebuffer (the cache has ten). Not only the first:
++// otherwise the others would be the previously bound framebuffer's, and vtkglDrawBuffers would
++// skip a call it has to make (a framebuffer whose second and third draw buffers are off, bound
++// after one that has them on, would not get them switched on). OpenGL ES has GL_DRAW_BUFFERi only.
++void ReadDrawBuffers(unsigned int buffers[10])
++{
++  GLint maximumDrawBuffers = 1;
++  ::glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maximumDrawBuffers);
++  for (int i = 0; i < 10; ++i)
++  {
++    buffers[i] = GL_NONE;
++    if (i < maximumDrawBuffers)
++    {
++      GLint buffer = GL_NONE;
++      ::glGetIntegerv(GL_DRAW_BUFFER0 + i, &buffer);
++      buffers[i] = static_cast<unsigned int>(buffer);
++    }
++  }
++}
++}
++
+ // #undef VTK_REPORT_OPENGL_ERRORS
+ #ifdef VTK_REPORT_OPENGL_ERRORS
+ 
+@@ -320,6 +343,10 @@ vtkOpenGLState::BufferBindingState::BufferBindingState()
+   // this->Framebuffer = nullptr;
+   this->ReadBuffer = GL_NONE;
+   this->DrawBuffers[0] = GL_BACK;
++  for (int i = 1; i < 10; ++i)
++  {
++    this->DrawBuffers[i] = GL_NONE;
++  }
+ }
+ 
+ // bool vtkOpenGLState::BufferBindingState::operator==(
+@@ -497,13 +524,7 @@ void vtkOpenGLState::vtkglBindFramebuffer(unsigned int target, unsigned int val)
+     {
+       cs.DrawBinding.Binding = val;
+       ::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, val);
+-#ifdef GL_DRAW_BUFFER
+-      ::glGetIntegerv(GL_DRAW_BUFFER, (int*)&cs.DrawBinding.DrawBuffers[0]);
+-#elif defined(GL_DRAW_BUFFER0)
+-      // OpenGL ES has no GL_DRAW_BUFFER. Without this the cached value would be the previously
+-      // bound framebuffer's, and vtkglDrawBuffers below would skip a call it has to make.
+-      ::glGetIntegerv(GL_DRAW_BUFFER0, (int*)&cs.DrawBinding.DrawBuffers[0]);
+-#endif
++      ReadDrawBuffers(cs.DrawBinding.DrawBuffers);
+     }
+   }
+ 
+@@ -536,11 +557,21 @@ void vtkOpenGLState::vtkglDrawBuffer(unsigned int val)
+     vtkGenericWarningMacro("at stack loc\n" << msg);
+   }
+ 
++  // (the other draw buffers are switched off)
++  bool changed = (cs.DrawBinding.DrawBuffers[0] != val);
++  for (int i = 1; i < 10; ++i)
++  {
++    changed = changed || (cs.DrawBinding.DrawBuffers[i] != GL_NONE);
++  }
+ #ifndef NO_CACHE
+-  if (cs.DrawBinding.DrawBuffers[0] != val)
++  if (changed)
+ #endif
+   {
+     cs.DrawBinding.DrawBuffers[0] = val;
++    for (int i = 1; i < 10; ++i)
++    {
++      cs.DrawBinding.DrawBuffers[i] = GL_NONE;
++    }
+     ::glDrawBuffers(1, cs.DrawBinding.DrawBuffers);
+   }
+ 
+@@ -550,6 +581,10 @@ void vtkOpenGLState::vtkglDrawBuffer(unsigned int val)
+     if (se.Binding == cs.DrawBinding.Binding)
+     {
+       se.DrawBuffers[0] = val;
++      for (int i = 1; i < 10; ++i)
++      {
++        se.DrawBuffers[i] = GL_NONE;
++      }
+     }
+   }
+ 
+@@ -573,25 +608,25 @@ void vtkOpenGLState::vtkglDrawBuffers(unsigned int count, unsigned int* vals)
+       "A vtkOpenGLFramebufferObject is currently bound but hardware draw buffers were requested.");
+   }
+ 
+-#ifndef NO_CACHE
+-  bool changed = false;
+-  for (int i = 0; i < static_cast<int>(count) && i < 10; ++i)
++  // The cache has all the draw buffers, those after the count switched off: a change of the count
++  // is a change too (from three to one, the second and third are switched off)
++  unsigned int buffers[10];
++  for (unsigned int i = 0; i < 10; ++i)
+   {
+-    if (vals[i] != cs.DrawBinding.DrawBuffers[i])
+-    {
+-      changed = true;
+-    }
++    buffers[i] = i < count ? vals[i] : static_cast<unsigned int>(GL_NONE);
+   }
+-  if (count > 10)
++#ifndef NO_CACHE
++  bool changed = (count > 10);
++  for (int i = 0; i < 10; ++i)
+   {
+-    changed = true;
++    changed = changed || (buffers[i] != cs.DrawBinding.DrawBuffers[i]);
+   }
+   if (changed)
+ #endif
+   {
+-    for (unsigned int i = 0; i < count && i < 10; ++i)
++    for (int i = 0; i < 10; ++i)
+     {
+-      cs.DrawBinding.DrawBuffers[i] = vals[i];
++      cs.DrawBinding.DrawBuffers[i] = buffers[i];
+     }
+     ::glDrawBuffers(count, vals);
+   }
+@@ -601,9 +636,9 @@ void vtkOpenGLState::vtkglDrawBuffers(unsigned int count, unsigned int* vals)
+   {
+     if (se.Binding == cs.DrawBinding.Binding)
+     {
+-      for (unsigned int i = 0; i < count && i < 10; ++i)
++      for (int i = 0; i < 10; ++i)
+       {
+-        se.DrawBuffers[i] = vals[i];
++        se.DrawBuffers[i] = buffers[i];
+       }
+     }
+   }
+@@ -1631,9 +1666,7 @@ void vtkOpenGLState::ResetFramebufferBindings()
+ {
+   auto& cs = this->Stack.top();
+   ::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, (int*)&cs.DrawBinding.Binding);
+-#ifdef GL_DRAW_BUFFER
+-  ::glGetIntegerv(GL_DRAW_BUFFER, (int*)&cs.DrawBinding.DrawBuffers[0]);
+-#endif
++  ReadDrawBuffers(cs.DrawBinding.DrawBuffers);
+ 
+   ::glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, (int*)&cs.ReadBinding.Binding);
+   ::glGetIntegerv(GL_READ_BUFFER, (int*)&cs.ReadBinding.ReadBuffer);
+-- 
+2.44.0.windows.1
+

@@ -17,7 +17,7 @@ const LEVELS = [
 ];
 
 const props = defineProps<{
-  /** Cover the views instead of a strip below them: on a phone, a strip would leave room for a few words only */
+  /** Cover the views and the panels instead of a strip below the views: on a phone, a strip would leave room for a few words only */
   fill?: boolean;
 }>();
 // Buttons a finger can hit where the window fills the views (a phone)
@@ -25,6 +25,25 @@ const buttonClass = computed(() => (props.fill ? "rounded p-2" : "rounded p-1") 
 const iconSize = computed(() => (props.fill ? 18 : 14));
 
 const bridge = inject<SlicerBridge>("bridge")!;
+
+// The levels go to a second row when the first would leave the search less than this
+const MINIMUM_SEARCH_WIDTH = 120;
+const bar = ref<HTMLElement>();
+const title = ref<HTMLElement>();
+const levels = ref<HTMLElement>();
+const levelsOnSecondRow = ref(false);
+function arrangeBar() {
+  if (!bar.value || !levels.value || !title.value) return;
+  const gap = 4;
+  const width = (el: Element) => (el as HTMLElement).offsetWidth + gap;
+  const levelsWidth = [...levels.value.children].reduce((sum, el) => sum + width(el), 0);
+  // the title, and the buttons after the search
+  const others = width(title.value) + [...bar.value.querySelectorAll(":scope > button")].reduce((sum, el) => sum + width(el), 0);
+  const style = getComputedStyle(bar.value);
+  const available = bar.value.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+  levelsOnSecondRow.value = others + levelsWidth + MINIMUM_SEARCH_WIDTH > available;
+}
+let barObserver: ResizeObserver | undefined;
 const runtime = inject<SlicerRuntime>("runtime")!;
 const entries = ref<LogEntry[]>([]);
 const shown = ref<Record<string, boolean>>({ ERROR: true, WARNING: true, INFO: true, DEBUG: false });
@@ -117,22 +136,35 @@ onMounted(async () => {
   });
   scrollToEnd();
 });
-onBeforeUnmount(() => off?.());
+onMounted(() => {
+  barObserver = new ResizeObserver(arrangeBar);
+  if (bar.value) barObserver.observe(bar.value);
+  arrangeBar();
+});
+onBeforeUnmount(() => {
+  off?.();
+  barObserver?.disconnect();
+});
+// (the counts change the width of the level buttons)
+watch(counts, () => nextTick(arrangeBar));
 watch(visible, scrollToEnd);
 </script>
 
 <template>
   <section class="flex flex-col border-input bg-background" data-name="logWindow" aria-label="Application log"
-    :class="fill ? 'absolute inset-0 z-40 shadow-2xl' : 'h-64 shrink-0 border-t'" :data-fill="fill ? 'true' : undefined">
-    <!-- (the bar grows a row when its buttons do not fit in one, rather than lying over the messages) -->
-    <div class="flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-b border-input/60 px-2 py-0.5">
-      <span class="mr-1 text-[12px] font-semibold">Log</span>
-      <button v-for="l in LEVELS" :key="l.name" type="button" :data-name="'level:' + l.name" :aria-pressed="shown[l.name]"
-        class="rounded px-1.5 py-0.5 text-[11px]"
-        :class="shown[l.name] ? 'bg-accent ' + l.color : 'text-muted-foreground hover:bg-accent/40'"
-        @click="toggleLevel(l.name)">
-        {{ l.label }}<span class="ml-1 tabular-nums opacity-70">{{ counts[l.name] }}</span>
-      </button>
+    :class="fill ? 'absolute inset-0 z-50 shadow-2xl' : 'h-64 shrink-0 border-t'" :data-fill="fill ? 'true' : undefined">
+    <!-- The first row has the search and the buttons, Close at the end; the levels are between them
+         where there is room, and on a second row where there is not (rather than lying over the messages) -->
+    <div ref="bar" class="flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-b border-input/60 px-2 py-0.5" data-name="logBar">
+      <span ref="title" class="mr-1 text-[12px] font-semibold">Log</span>
+      <div ref="levels" class="flex items-center gap-1" :class="{ 'order-last w-full pb-0.5': levelsOnSecondRow }" data-name="logLevels">
+        <button v-for="l in LEVELS" :key="l.name" type="button" :data-name="'level:' + l.name" :aria-pressed="shown[l.name]"
+          class="shrink-0 rounded px-1.5 py-0.5 text-[11px]"
+          :class="shown[l.name] ? 'bg-accent ' + l.color : 'text-muted-foreground hover:bg-accent/40'"
+          @click="toggleLevel(l.name)">
+          {{ l.label }}<span class="ml-1 tabular-nums opacity-70">{{ counts[l.name] }}</span>
+        </button>
+      </div>
       <input v-model="search" placeholder="Search"
         class="ml-1 h-6 min-w-24 flex-1 rounded border border-input bg-background px-2 text-[12px] outline-none focus:border-primary" />
       <button type="button" :title="copied ? 'Copied' : 'Copy the messages shown'" data-name="copyLog"

@@ -40,6 +40,27 @@ const tappable = (page, selector) => page.evaluate((sel) => {
   return el.contains(hit) ? "yes" : `covered by ${hit?.tagName} ${hit?.className?.toString().slice(0, 60)}`;
 }, selector);
 
+/** Where the bar's parts are: Close in the top right corner, search and buttons on the first row, the levels where they fit. */
+const barLayout = (page) => page.evaluate(() => {
+  const box = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+  const log = box("[data-name=logWindow]"), close = box("[data-name=closeLog]"), copy = box("[data-name=copyLog]");
+  const search = box("[data-name=logBar] input"), levels = box("[data-name=logLevels]");
+  const middle = (r) => r.top + r.height / 2;
+  return {
+    closeInCorner: Math.abs(log.right - close.right) < 12 && close.top - log.top < 12,
+    firstRow: Math.abs(middle(search) - middle(close)) < 4 && Math.abs(middle(copy) - middle(close)) < 4,
+    levelsBelow: levels.top >= close.bottom - 1,
+    levelsOnFirstRow: Math.abs(middle(levels) - middle(close)) < 4,
+  };
+});
+const layoutChecks = async (page, levelsBelow) => {
+  const layout = await barLayout(page);
+  check("  Close is in the top right corner", layout.closeInCorner, JSON.stringify(layout));
+  check("  the search and the buttons are on the first row", layout.firstRow, JSON.stringify(layout));
+  check(levelsBelow ? "  the levels are on a second row" : "  the levels are on the first row too",
+    levelsBelow ? layout.levelsBelow : layout.levelsOnFirstRow, JSON.stringify(layout));
+};
+
 // ------------------------------------------------------------------ a phone held upright
 {
   const context = await browser.newContext({ viewport: { width: 384, height: 832 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
@@ -48,12 +69,13 @@ const tappable = (page, selector) => page.evaluate((sel) => {
   const log = page.locator("[data-name=logWindow]");
   const box = await log.boundingBox();
   const main = await page.locator("main").boundingBox();
-  check("on a phone the log covers the views", box && main && Math.abs(box.height - main.height) < 2 && Math.abs(box.width - main.width) < 2,
+  check("on a phone the log covers the views", box && main && box.height >= main.height - 2 && box.width >= main.width - 2,
     `${box?.width}x${box?.height} over ${main?.width}x${main?.height}`);
   for (const name of ["copyLog", "downloadLog", "clearLog", "closeLog", "level:ERROR"]) {
     check(`  its ${name} button can be tapped`, (await tappable(page, `[data-name='${name}']`)) === "yes", await tappable(page, `[data-name='${name}']`));
   }
   const copyBox = await page.locator("[data-name=copyLog]").boundingBox();
+  await layoutChecks(page, true);
   check("  with a finger-sized target", copyBox && copyBox.width >= 32 && copyBox.height >= 32, `${copyBox?.width}x${copyBox?.height}`);
   const bar = await page.locator("[data-name=logWindow] > div").first().boundingBox();
   const messages = await page.locator("[data-name=logWindow] > div").nth(1).boundingBox();
@@ -79,6 +101,9 @@ const tappable = (page, selector) => page.evaluate((sel) => {
   const context = await browser.newContext({ viewport: { width: 832, height: 384 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
   const page = await openLog(context);
   check("held sideways, the log covers the views too", (await page.locator("[data-name=logWindow]").getAttribute("data-fill")) === "true");
+  const sideways = await page.locator("[data-name=logWindow]").boundingBox();
+  check("  and the side panels: the whole width", sideways && sideways.width >= 832 - 2, `${sideways?.width} px wide`);
+  await layoutChecks(page, false);
   check("  and Copy can be tapped", (await tappable(page, "[data-name='copyLog']")) === "yes", await tappable(page, "[data-name='copyLog']"));
   await context.close();
 }
@@ -91,6 +116,7 @@ const tappable = (page, selector) => page.evaluate((sel) => {
   const main = await page.locator("main").boundingBox();
   check("on a large screen the log is a strip below the views", box && main && box.height < main.height / 3 && box.y + box.height >= main.y + main.height - 1
     && (await page.locator("[data-name=logWindow]").getAttribute("data-fill")) === null, `${box?.height} px high, of ${main?.height}`);
+  await layoutChecks(page, false);
   check("  and Copy can be clicked", (await tappable(page, "[data-name='copyLog']")) === "yes", await tappable(page, "[data-name='copyLog']"));
   await context.close();
 }

@@ -282,8 +282,8 @@ window.addEventListener("resize", () => (windowSize.value = { width: window.inne
 watchEffect(() => {
   store.panelButtons = windowSize.value.width < 600 && windowSize.value.height > windowSize.value.width;
 });
-// The log window covers the views on a small screen (a phone, upright or sideways): a strip below
-// them would show a few words of a message, with its buttons in the way
+// The log window covers the views and the panels on a small screen (a phone, upright or sideways): a
+// strip below the views would show a few words of a message, with its buttons in the way
 const logWindowFills = computed(() => windowSize.value.width < 768 || windowSize.value.height < 600);
 const panelsOverlay = computed(() => {
   // a phone held upright: always over the views, whose width is little enough already
@@ -375,7 +375,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
         <ViewportGrid :key="`${store.settings['Rendering/SharedWebGLContext'] ? 'shared' : 'own'}-${store.settings['Rendering/MaximumPixelRatio']}`" v-if="store.status === 'ready'" :node="store.layout.description" class="min-h-0 flex-1" />
         <LoadingScreen v-else />
         <ActivityIndicator />
-        <LogWindow v-if="store.logWindowOpen" :fill="logWindowFills" />
+        <LogWindow v-if="store.logWindowOpen && !logWindowFills" />
         <PythonConsole v-if="store.pythonConsoleOpen" />
       </main>
       <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.rightPanelOpen = !store.rightPanelOpen" :disabled="store.status !== 'ready'"
@@ -383,6 +383,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
         <template #header><ModuleTitleBar /></template>
         <ModulePanel />
       </SidePanel>
+      <!-- on a small screen the log covers the views and the panels: beside open panels there would be
+           room for a few words only -->
+      <LogWindow v-if="store.logWindowOpen && logWindowFills" fill />
     </div>
     <ExtensionsManager v-if="store.extensionsManagerOpen" @close="store.extensionsManagerOpen = false" />
     <SettingsDialog v-if="store.settingsDialogOpen" @close="store.settingsDialogOpen = false" />

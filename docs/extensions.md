@@ -115,23 +115,41 @@ scripts of the Python packages. Use a
 
 ### Deployment
 
-A build with private extensions must not go to the public `runtime` release of this repository;
-`publish_runtime.py` refuses to upload extensions to a public repository unless they are in
-`extensions/` here. It goes to a private repository of its own, for example `myorg/slicerweb-deploy`,
-and a checkout of it next to this one is the deployment folder the scripts take (`--deployment`):
+A site is published from a repository of its own, a *deployment*: it says which extensions its
+build has, and holds the workflow that publishes the site. A checkout of it next to this one is the
+deployment folder the scripts take (`--deployment`):
 
 ```
 slicerweb-deploy/
-├── extensions/*.json                  the description files
+├── extensions.json                    the extensions of SlicerWeb it has, by name
+├── extensions/*.json                  description files of its own: other extensions, private ones among them
 ├── .github/workflows/publish-app.yml  builds and publishes the site
 ├── .gitignore                         /.secrets/ and /local.env
 ├── .secrets/github-token              read access to the private repositories (not committed)
 └── local.env                          SW_DIST=... of this computer (optional, not committed)
 ```
 
+`extensions.json` names extensions described in `extensions/` of this repository, so that they are
+not copied and kept up to date in every deployment:
+
+```json
+{
+  "slicerweb": ["SlicerHeart", "SlicerVMTK", "SurfaceMarkup"]
+}
+```
+
+A description file of the deployment's own `extensions/` adds an extension, or takes the place of
+the one of this repository of the same name (to build it at another revision, say). The build puts
+them together in `<dist>/extension-descriptions`, and stops at a name that `extensions/` here has no
+description of.
+
 Its build goes to a dist folder of its own - `SW_DIST` of its `local.env`, by default
-`~/SlicerWeb-build/dist-<name of the folder>` - since a build of an extension folder has only those
+`~/SlicerWeb-build/dist-<name of the folder>` - since a build of a deployment has only its
 extensions.
+
+A build with private extensions must not go to a public repository: `publish_runtime.py` refuses to
+upload a build to one if it has an extension whose source cannot be read without a token. Such a
+deployment is a private repository, for example `myorg/slicerweb-deploy`.
 
 The workflow calls the one of this repository, which takes the runtime from the deployment
 repository's `runtime` release and pushes the site - one commit, no history - to its `gh-pages`
@@ -159,6 +177,11 @@ Build and publish:
 python build.py --deployment ../slicerweb-deploy 60-wheels 80-extensions
 python scripts/publish_runtime.py --deployment ../slicerweb-deploy --publish     # to the repository it is a checkout of
 ```
+
+The published application, <https://lassoan.github.io/slicerweb-app/>, is a deployment too:
+[lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app) (public), whose `main` branch has
+its `extensions.json` and workflow, and whose site is on its branch `deploy/latest`. A change of the
+web application here publishes it again on its own, with the runtime it has (`.github/workflows/publish-app.yml`).
 
 **Channels.** A deployment can publish several versions side by side - `latest`, `stable`, `1.0.0` - each
 to a branch of its own, `deploy/<channel>`, from a runtime release of its own, `runtime-<channel>`, so

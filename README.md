@@ -114,9 +114,13 @@ somewhere else. Pyodide itself is served from the application, not from a CDN.
 
 ## Publishing
 
-The application is published at <https://lassoan.github.io/slicerweb-app/> by the
-[Publish app](.github/workflows/publish-app.yml) workflow, which runs when anything under `web/`
-changes on `main`, and on request.
+The application is published at <https://lassoan.github.io/slicerweb-app/> from
+[lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), a deployment
+([docs/extensions.md](docs/extensions.md)): its `main` branch says which extensions the build has
+(`extensions.json`, by name) and holds the workflow that publishes the site, which calls the
+[Publish app](.github/workflows/publish-app.yml) workflow of this repository. That workflow also runs
+here when anything under `web/` changes on `main`, and publishes the site again with the runtime it
+has.
 
 A build of the site is a few hundred megabytes: the WebAssembly runtime, and the sample data, which
 it carries itself because a site of static files cannot fetch files from servers that refuse
@@ -132,20 +136,21 @@ the site is built with its address from the repository variable `SLICERWEB_DOWNL
 Servers that allow cross-origin requests are read directly, never through the proxy.
 
 Keeping those builds in a branch here would mean carrying every one of them in this repository's
-history for ever, so the site is pushed to a repository of its own,
-[lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), as a single commit with no
-parent: it holds one build and no history.
+history for ever, so the site is pushed to the branch `deploy/latest` of lassoan/slicerweb-app, as a
+single commit with no parent: it holds one build and no history.
 
-The wheels take hours to compile and no runner could build them, so they travel through a release:
+The wheels take hours to compile and no runner could build them, so they travel through a release
+(`runtime-latest` of lassoan/slicerweb-app), from a checkout of it next to this one:
 
 ```sh
-python build.py 60-wheels 80-extensions          # build them here
-python scripts/publish_runtime.py --publish      # upload them, and rebuild the site
+python build.py --deployment ../slicerweb-app all                                   # build them here
+python scripts/publish_runtime.py --deployment ../slicerweb-app --channel latest --publish   # upload them, and rebuild the site
 ```
 
-The site repository's Pages source is its `main` branch, and the workflow writes to it with a
-deploy key of that repository, whose private half is the secret `SLICERWEB_APP_KEY` here (a token
-in `SLICERWEB_APP_TOKEN` is used instead where there is one).
+(`build.bat` and `deploy.bat` there do the same.) The site repository's Pages source is its branch
+`deploy/latest`. The workflow of this repository writes to it with a deploy key of that repository,
+whose private half is the secret `SLICERWEB_APP_KEY` here (a token in `SLICERWEB_APP_TOKEN` is used
+instead where there is one); its own workflow writes with its own token.
 
 ## Tests
 

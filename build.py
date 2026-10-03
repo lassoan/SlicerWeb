@@ -14,7 +14,9 @@ wheels and web bundles are copied to (--dist, or SW_DIST in local.env or the env
 extension folder (--extensions-dir, or SW_EXTENSIONS_DIR) mounted.
 
 A deployment (--deployment, docs/extensions.md) is a checkout of a repository of its own: its
-extensions/ is the extension folder, its local.env has its settings (SW_DIST, by default
+extensions are those of extensions/ here that its extensions.json names, and the description files
+of its own extensions/ (put together in <dist>/extension-descriptions, which is the extension
+folder of the build), its local.env has its settings (SW_DIST, by default
 ~/SlicerWeb-build/dist-<name of the folder>), and its .secrets/ its secrets.
 
 A GitHub token for private repositories is taken from the SW_GIT_TOKEN environment variable, or
@@ -57,13 +59,18 @@ def main():
     parser.add_argument("--dist", default=None, help="where the wheels and web bundles are copied (SW_DIST)")
     args = parser.parse_args()
     if args.deployment:
-        deployment = localsettings.use_deployment(args.deployment)
-        args.extensions_dir = args.extensions_dir or os.path.join(deployment, "extensions")
+        localsettings.use_deployment(args.deployment)
     args.extensions_dir = args.extensions_dir or setting("SW_EXTENSIONS_DIR")
     args.dist = args.dist or localsettings.default_dist()
 
     dist = os.path.abspath(args.dist)
     os.makedirs(dist, exist_ok=True)
+    if args.deployment and not args.extensions_dir:
+        # Those of extensions/ here that it names, and its own (docs/extensions.md)
+        args.extensions_dir = os.path.join(dist, "extension-descriptions")
+        origins = localsettings.assemble_deployment_extensions(args.extensions_dir)
+        print(f"Extensions of the deployment: {', '.join(sorted(n for n, o in origins.items() if o == 'slicerweb')) or 'none'} from SlicerWeb; "
+              f"{', '.join(sorted(n for n, o in origins.items() if o == 'deployment')) or 'none'} of its own")
 
     if subprocess.run(["docker", "image", "inspect", IMAGE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
         if subprocess.run(["docker", "build", "-t", IMAGE, os.path.join(ROOT, "docker")]).returncode != 0:

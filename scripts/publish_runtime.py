@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Upload the WebAssembly runtime of a local build to the "runtime" release, where the
-"Publish app" workflow takes it from (.github/workflows/publish-app.yml).
+"""Upload the WebAssembly runtime of a local build to a release - "runtime", or "runtime-<channel>" -
+where the "Publish app" workflow takes it from (.github/workflows/publish-app.yml).
 
-    python scripts/publish_runtime.py
-    python scripts/publish_runtime.py --publish       # also start the workflow that rebuilds the site
-    python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --publish
-    python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --channel stable --publish
+    python scripts/publish_runtime.py --deployment ../slicerweb-app --channel latest --publish
     python scripts/publish_runtime.py --deployment ../SlicerHeartWebViewer-deploy --channel latest --publish
+    python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --channel stable --publish
+    python scripts/publish_runtime.py --publish       # the "runtime" release of this repository
+
+The published application, https://lassoan.github.io/slicerweb-app/, is a deployment like any other
+(lassoan/slicerweb-app, docs/extensions.md): its build goes to the runtime-latest release there.
 
 A deployment repository can publish several channels - latest, stable, 1.0.0, ... - each to a
 branch of its own, deploy/<channel>, from a runtime release of its own, runtime-<channel>, so that a
@@ -20,16 +22,15 @@ asset is replaced, not accumulated.
 
 Needs the GitHub CLI, signed in with a token that may write to the repository (gh auth login).
 
-A build with extensions of another folder (build.py --extensions-dir), private ones among them,
-goes to a release of a private repository of its own, whose "Publish app" workflow calls this
-repository's (docs/extensions.md). With --deployment, a checkout of that repository, the dist folder
-and the repository are those of the deployment (its local.env, else the dist folder build.py
---deployment used, and the repository it is a checkout of). It is not uploaded to a public repository: extensions that
-extensions/ of this repository does not have would be published with it.
+A deployment's build goes to a release of the deployment's repository, whose "Publish app" workflow
+calls this repository's (docs/extensions.md). With --deployment, a checkout of that repository, the
+dist folder and the repository are those of the deployment (its local.env, else the dist folder
+build.py --deployment used, and the repository it is a checkout of). A build is not uploaded to a
+public repository if it has an extension whose source cannot be read without a token: private
+extensions go to a private repository.
 """
 import argparse
 import base64
-import glob
 import json
 import os
 import shutil
@@ -83,6 +84,31 @@ def workflow_has_input(repository, name):
     return f"\n      {name}:" in text and "workflow_dispatch" in text
 
 
+def public_extension(name, dist):
+    """Whether an extension of a build may go to a public repository: one described in extensions/ of
+    SlicerWeb, as it is there, or one of a deployment (<dist>/extension-descriptions, which build.py
+    --deployment writes) whose source can be read without a token. A build of another folder of
+    descriptions (--extensions-dir) has only those of SlicerWeb that it can be told apart by."""
+    ours = os.path.join(ROOT, "extensions", f"{name}.json")
+    built = os.path.join(dist, "extension-descriptions", f"{name}.json")
+    if not os.path.isfile(built):
+        return os.path.isfile(ours)
+    with open(built, encoding="utf-8") as handle:
+        description = handle.read()
+    if os.path.isfile(ours):
+        with open(ours, encoding="utf-8") as handle:
+            if handle.read() == description:
+                return True
+    url = json.loads(description).get("scm_url", "")
+    if not url.startswith("https://"):
+        return False
+    # without the credentials of this computer: what anyone can read
+    environment = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="", GCM_INTERACTIVE="never")
+    result = subprocess.run(["git", "-c", "credential.helper=", "ls-remote", "--exit-code", url, "HEAD"],
+                            capture_output=True, env=environment)
+    return result.returncode == 0
+
+
 def main():
     # each line as soon as it is written, also into a file or a pipe (in order with what gh, docker or
     # cloudflared write)
@@ -120,11 +146,10 @@ def main():
     if visibility == "PUBLIC":
         with open(os.path.join(args.dist, "extensions", "index.json"), encoding="utf-8") as handle:
             built = [e["name"] for e in json.load(handle).get("extensions", [])]
-        ours = {os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(ROOT, "extensions", "*.json"))}
-        others = [name for name in built if name not in ours]
-        if others:
-            sys.exit(f"{args.repository} is public, and the build has extensions that extensions/ of SlicerWeb has not: "
-                     f"{', '.join(others)}. Upload it to a private repository (--repository).")
+        private = [name for name in built if not public_extension(name, args.dist)]
+        if private:
+            sys.exit(f"{args.repository} is public, and the build has extensions whose source cannot be read without a "
+                     f"token: {', '.join(private)}. Upload it to a private repository (--repository).")
 
     # What the build is made of (build.py writes it), and the web application built around it: of the
     # same commit of SlicerWeb, where the workflow can be told which (an input slicerwebRef)

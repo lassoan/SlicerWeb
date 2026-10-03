@@ -1,25 +1,24 @@
-# Publish the application at https://lassoan.github.io/slicerweb-app/
+# Publish a SlicerWeb application. Deployments call this workflow (docs/extensions.md): the
+# published application, https://lassoan.github.io/slicerweb-app/ (lassoan/slicerweb-app), and
+# others such as the SlicerHeart web viewer. Each says which extensions its build has, and its
+# "Publish app" workflow calls this one: the runtime then comes from a release of that repository,
+# and the site goes where it says - a branch of that repository itself, deploy/<channel>.
 #
-# The site is a few hundred megabytes of WebAssembly, wheels and sample data, and it is rebuilt
-# whenever the web application changes. Keeping it in a branch of this repository would mean
-# carrying every one of those builds in its history for ever, so the site is pushed to a repository
-# of its own (lassoan/slicerweb-app), as a single commit that replaces what was there before. That
-# repository holds one build and no history; this one stays small.
+# A change of the web application here (a push to web/) publishes lassoan/slicerweb-app again
+# straight away, with the runtime of its runtime-latest release, to its branch deploy/latest (where
+# GitHub Pages serves it from). That needs a way to write to it: the secret SLICERWEB_APP_KEY, the
+# private half of a deploy key of that repository, or else SLICERWEB_APP_TOKEN, a token that may
+# write to it.
 #
-# What the site is made of:
+# The site is a few hundred megabytes of WebAssembly, wheels and sample data, rebuilt whenever the
+# web application changes: it is pushed as a single commit that replaces what was there before, so
+# the branch holds one build and no history. What it is made of:
 #  - the web application, built here from web/
 #  - the WebAssembly runtime (VTK, ITK, Slicer libraries and modules, extensions), which takes hours
-#    to compile and cannot be built by a runner: it is downloaded from the "runtime" release of this
-#    repository, uploaded from a local build with scripts/publish_runtime.py
+#    to compile and cannot be built by a runner: it is downloaded from a release of the deployment,
+#    uploaded from a local build with scripts/publish_runtime.py
 #  - the sample data, copied into the site because a site of static files cannot fetch files from
 #    servers that refuse cross-origin requests (web/scripts/mirror-sample-data.mjs)
-#
-# Needs a way to write to lassoan/slicerweb-app: the secret SLICERWEB_APP_KEY, the private half of
-# a deploy key of that repository, or else SLICERWEB_APP_TOKEN, a token that may write to it.
-#
-# Another repository - a private one, with extensions of its own - publishes its own build by calling
-# this workflow (docs/extensions.md): the runtime then comes from a release of that repository, and
-# the site goes where it says, which may be a branch of that repository itself.
 
 name: Publish app
 
@@ -74,8 +73,8 @@ on:
   workflow_dispatch:
     inputs:
       runtime:
-        description: Release holding the runtime wheels
-        default: runtime
+        description: Release of lassoan/slicerweb-app holding the runtime wheels
+        default: runtime-latest
       slicerwebRef:
         description: Commit of SlicerWeb whose web application is built (the one the runtime was built from; publish_runtime.py gives it)
         default: ""
@@ -87,14 +86,16 @@ on:
 # A newer build of a site replaces one still being published to the same place; builds of other
 # places - another channel of a deployment (deploy/latest, deploy/stable) - go on side by side.
 concurrency:
-  group: publish-app-${{ inputs.appRepository || 'lassoan/slicerweb-app' }}-${{ inputs.appBranch || 'main' }}
+  group: publish-app-${{ inputs.appRepository || 'lassoan/slicerweb-app' }}-${{ inputs.appBranch || 'deploy/latest' }}
   cancel-in-progress: true
 
 env:
+  # Called by a deployment: where it says (its own repository unless it names another). Run here (a
+  # push to web/): lassoan/slicerweb-app, its latest channel.
   APP_REPOSITORY: ${{ inputs.appRepository || 'lassoan/slicerweb-app' }}
-  APP_BRANCH: ${{ inputs.appBranch || 'main' }}
-  RUNTIME_REPOSITORY: ${{ inputs.runtimeRepository || github.repository }}
-  RUNTIME_RELEASE: ${{ inputs.runtime || 'runtime' }}
+  APP_BRANCH: ${{ inputs.appBranch || 'deploy/latest' }}
+  RUNTIME_REPOSITORY: ${{ inputs.runtimeRepository || (inputs.appRepository && github.repository) || 'lassoan/slicerweb-app' }}
+  RUNTIME_RELEASE: ${{ inputs.runtime || 'runtime-latest' }}
   SLICERWEB_WHEELS: ${{ github.workspace }}/runtime/wheels
   SLICERWEB_EXTENSIONS: ${{ github.workspace }}/runtime/extensions
   SLICERWEB_SAMPLE_DATA: ${{ github.workspace }}/runtime/sample-data

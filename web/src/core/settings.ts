@@ -46,6 +46,17 @@ export interface AppSettings {
    */
   "Rendering/SharedWebGLContext": boolean;
   /**
+   * Draw the views at no more than this many device pixels per CSS pixel (0: as many as the screen
+   * has). A phone has three or more, and drawing at that density costs over twice the pixels of two
+   * for a picture that looks hardly sharper (see core/pixelRatio.ts).
+   */
+  "Rendering/MaximumPixelRatio": number;
+  /**
+   * While the camera of a 3D view is moving, ambient shadows take a tenth of the samples per pixel:
+   * noisier, and many times faster (slicerweb.volume_quality).
+   */
+  "Rendering/FastShadowsWhileMoving": boolean;
+  /**
    * The representation that new segmentations show in 3D views: "Binary labelmap" (smooth surfaces
    * that the GPU computes from the labelmap; experimental), "Closed surface" (a surface mesh made
    * from the labelmap), or "" for the default. The default is binary labelmap in the web viewer (desktop
@@ -53,6 +64,12 @@ export interface AppSettings {
    * at once and update while edited.
    */
   "Segmentations/DefaultRepresentation3D": string;
+  /**
+   * While the camera of a 3D view is moving, segmentations shown as binary labelmap are drawn with
+   * rays cast for every n-th pixel across and down (1: every pixel), and in full when it stops
+   * (slicerweb.volume_quality).
+   */
+  "Segmentations/ImageSampleDistanceWhileMoving": number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -63,7 +80,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,
   "Rendering/SharedWebGLContext": false,
+  "Rendering/MaximumPixelRatio": 2,
+  "Rendering/FastShadowsWhileMoving": true,
   "Segmentations/DefaultRepresentation3D": "",
+  "Segmentations/ImageSampleDistanceWhileMoving": 2,
 };
 
 /** The settings kept in the browser, with the defaults for whatever is not kept. */

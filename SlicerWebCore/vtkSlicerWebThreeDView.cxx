@@ -35,6 +35,7 @@
 #include <vtkTextureObject.h>
 #include <vtkWeakPointer.h>
 
+#include <algorithm>
 #include <cmath>
 
 #include <string>
@@ -53,6 +54,7 @@ public:
   vtkNew<vtkCallbackCommand> ViewNodeCallback;
   vtkWeakPointer<vtkMRMLViewNode> ObservedViewNode;
   unsigned long ViewNodeObserverTag{ 0 };
+  int ShadowsKernelSize{ 320 };
 };
 
 vtkStandardNewMacro(vtkSlicerWebThreeDView);
@@ -202,7 +204,7 @@ void vtkSlicerWebThreeDView::UpdateShadowsFromViewNode()
   ssao->SetBias(0.001 * sceneSize); // how much distance difference will be made visible
   ssao->SetRadius(0.1 * sceneSize); // determines the spread of shadows cast by ambient occlusion
   ssao->SetBlur(true);              // reduce noise
-  ssao->SetKernelSize(320);         // larger kernel size reduces noise pattern in the darkened region
+  ssao->SetKernelSize(d->ShadowsKernelSize); // larger kernel size reduces noise pattern in the darkened region
   ssao->SetVolumeOpacityThreshold(viewNode->GetAmbientShadowsVolumeOpacityThreshold());
   ssao->SetIntensityScale(viewNode->GetAmbientShadowsIntensityScale());
   ssao->SetIntensityShift(viewNode->GetAmbientShadowsIntensityShift());
@@ -210,6 +212,26 @@ void vtkSlicerWebThreeDView::UpdateShadowsFromViewNode()
   {
     this->ScheduleRender();
   }
+}
+
+//----------------------------------------------------------------------------
+void vtkSlicerWebThreeDView::SetShadowsKernelSize(int kernelSize)
+{
+  vtkThreeDInternal* d = this->ThreeDInternal;
+  kernelSize = std::max(1, kernelSize);
+  if (d->ShadowsKernelSize == kernelSize)
+  {
+    return;
+  }
+  d->ShadowsKernelSize = kernelSize;
+  d->ShadowsRenderPass->SetKernelSize(kernelSize);
+  this->ScheduleRender();
+}
+
+//----------------------------------------------------------------------------
+int vtkSlicerWebThreeDView::GetShadowsKernelSize()
+{
+  return this->ThreeDInternal->ShadowsKernelSize;
 }
 
 //----------------------------------------------------------------------------

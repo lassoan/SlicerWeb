@@ -6,10 +6,15 @@ import { store } from "./app/store";
 import { SlicerRuntime } from "./core/runtime";
 import { registerSlicerWidgets } from "./widgets/custom-elements";
 import { installGLDiagnostics } from "./core/glDiagnostics";
+import { limitPixelRatio } from "./core/pixelRatio";
 
 // Watch for shaders that will not build, from the first frame on (drivers differ, and VTK does not
 // always pass on what the driver said)
 installGLDiagnostics();
+
+// The density the views are drawn at, before anything sizes a view (and whenever the setting changes)
+limitPixelRatio(store.settings["Rendering/MaximumPixelRatio"]);
+watch(() => store.settings["Rendering/MaximumPixelRatio"], (ratio) => limitPixelRatio(ratio));
 
 // Slicer web widgets as custom elements, used by Python scripted module GUIs (slicerweb.qtcompat)
 registerSlicerWidgets();

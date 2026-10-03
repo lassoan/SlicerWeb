@@ -12,6 +12,12 @@ So the coarsening is done here instead, on what the interactor says rather than 
 camera drag is going on, the volumes in that view are rendered with fewer rays and bigger steps
 along them, and when the drag ends they go back to what they were and the view is drawn again in
 full. Which is what Slicer's "Adaptive" quality means; only the decision is made differently.
+
+Segmentations shown as binary labelmap (vtkSegmentationLabelmapSurfaceMapper casts rays too) are
+drawn the same way while the camera moves: rays for every n-th pixel across and down, n being the
+application setting Segmentations/ImageSampleDistanceWhileMoving. And ambient shadows take fewer
+samples per pixel (noisier, many times faster) unless the setting Rendering/FastShadowsWhileMoving
+is off.
 """
 
 import logging
@@ -28,6 +34,10 @@ def _raysWhileMoving(expectedFPS):
     if expectedFPS >= 15:
         return 3.0
     return 2.0
+
+
+#: Samples per pixel of ambient shadows while moving (320 when still, as in desktop Slicer)
+SHADOWS_KERNEL_SIZE_WHILE_MOVING = 32
 
 
 #: And how big a step to take along each ray, as a multiple of the largest voxel side. One step per
@@ -72,6 +82,40 @@ class AdaptiveVolumeQuality:
                     mappers.append(mapper)
         return mappers
 
+    def _segmentationMappers(self):
+        """The mappers of segmentations shown as binary labelmap in this view. They are looked up
+        when a drag starts: the displayable manager makes a new one when the opacity changes."""
+        window = self._view.GetRenderWindow()
+        renderers = window.GetRenderers() if window else None
+        mappers = []
+        for i in range(renderers.GetNumberOfItems() if renderers else 0):
+            actors = renderers.GetItemAsObject(i).GetActors()
+            for a in range(actors.GetNumberOfItems()):
+                actor = actors.GetItemAsObject(a)
+                mapper = actor.GetMapper()
+                if actor.GetVisibility() and mapper is not None and mapper.IsA("vtkSegmentationLabelmapSurfaceMapper"):
+                    mappers.append(mapper)
+        return mappers
+
+    @staticmethod
+    def _segmentationImageSampleDistance():
+        """Rays for every n-th pixel while moving (application setting; 1 draws them in full)."""
+        import slicer
+
+        value = slicer.app.userSettings().value("Segmentations/ImageSampleDistanceWhileMoving", 2)
+        try:
+            return min(max(float(value), 1.0), 8.0)
+        except (TypeError, ValueError):
+            return 2.0
+
+    @staticmethod
+    def _fastShadows():
+        """Whether ambient shadows take fewer samples while moving (application setting)."""
+        import slicer
+
+        value = slicer.app.userSettings().value("Rendering/FastShadowsWhileMoving", True)
+        return str(value).lower() not in ("false", "0", "")
+
     def _expectedFPS(self):
         node = self._view.GetMRMLViewNode() if hasattr(self._view, "GetMRMLViewNode") else None
         return float(node.GetExpectedFPS()) if node is not None else 8.0
@@ -85,7 +129,17 @@ class AdaptiveVolumeQuality:
 
     # ------------------------------------------------------------------ the drag
     def _startMoving(self, caller, event):
-        if self._saved or not self._adaptive():
+        if self._saved:
+            return
+        if self._fastShadows() and hasattr(self._view, "SetShadowsKernelSize"):
+            self._saved[self._view] = {"shadowsKernelSize": self._view.GetShadowsKernelSize()}
+            self._view.SetShadowsKernelSize(SHADOWS_KERNEL_SIZE_WHILE_MOVING)
+        distance = self._segmentationImageSampleDistance()
+        if distance > 1.0:
+            for mapper in self._segmentationMappers():
+                self._saved[mapper] = {"imageSampleDistance": mapper.GetImageSampleDistance()}
+                mapper.SetImageSampleDistance(distance)
+        if not self._adaptive():
             return
         fps = self._expectedFPS()
         rays = _raysWhileMoving(fps)
@@ -106,12 +160,20 @@ class AdaptiveVolumeQuality:
     def _stopMoving(self, caller, event):
         for mapper, before in self._saved.items():
             try:
+                if "shadowsKernelSize" in before:
+                    # the view (ambient shadows)
+                    mapper.SetShadowsKernelSize(before["shadowsKernelSize"])
+                    continue
+                if "autoAdjust" not in before:
+                    # a segmentation
+                    mapper.SetImageSampleDistance(before["imageSampleDistance"])
+                    continue
                 mapper.SetAutoAdjustSampleDistances(before["autoAdjust"])
                 mapper.SetLockSampleDistanceToInputSpacing(before["lockToSpacing"])
                 mapper.SetImageSampleDistance(before["imageSampleDistance"])
                 mapper.SetSampleDistance(before["sampleDistance"])
             except Exception:
-                logger.debug("A volume mapper went away while the camera was moving", exc_info=True)
+                logger.debug("A mapper went away while the camera was moving", exc_info=True)
         self._saved = {}
         self._view.ScheduleRender()
 

@@ -7,6 +7,7 @@ import type { SlicerBridge } from "@/core/bridge";
 import { SwCheckBox } from "@/widgets";
 import { setSetting, store } from "../store";
 import { moduleList } from "../modules/list";
+import { devicePixelRatio } from "@/core/pixelRatio";
 
 const emit = defineEmits<{ close: [] }>();
 // Whether this browser has JavaScript Promise Integration (the Developer section says so if not)
@@ -38,6 +39,8 @@ function addFavourite(event: Event) {
 }
 // An embedding page may name the favorites for itself (?favoriteModules=): the toolbar follows that
 const favouritesFromAddress = new URLSearchParams(window.location.search).has("favoriteModules");
+// The screen's own density, whatever the views are drawn at
+const deviceRatio = `${Math.round(devicePixelRatio() * 100) / 100} pixels per point`;
 </script>
 
 <template>
@@ -109,6 +112,29 @@ const favouritesFromAddress = new URLSearchParams(window.location.search).has("f
               contexts at a time - about eight on a phone - so a layout of nine views cannot give each of them one;
               a context also costs a few megabytes of graphics memory. The views are rebuilt when this is changed.
             </div>
+            <label class="mt-3 block text-[13px]" for="maximumPixelRatio">Resolution of the views</label>
+            <select id="maximumPixelRatio" data-name="maximumPixelRatio"
+              class="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground"
+              :value="String(store.settings['Rendering/MaximumPixelRatio'])"
+              @change="setSetting('Rendering/MaximumPixelRatio', Number(($event.target as HTMLSelectElement).value))">
+              <option value="0">As sharp as the screen</option>
+              <option value="2">At most 2 pixels per point</option>
+              <option value="1.5">At most 1.5 pixels per point</option>
+              <option value="1">1 pixel per point</option>
+            </select>
+            <div class="mt-1 text-[12px] text-muted-foreground">
+              How many pixels the views are drawn with for each point of the page. A phone's screen has three or more,
+              and drawing at that density makes the 3D views slow - for a picture that looks hardly sharper than at two.
+              Lower it if rendering is slow. This screen has {{ deviceRatio }}. The views are rebuilt when this is changed.
+            </div>
+            <SwCheckBox text="Fast shadows while rotating" class="mt-3" data-name="fastShadowsWhileMoving"
+              :checked="store.settings['Rendering/FastShadowsWhileMoving']"
+              @toggled="setSetting('Rendering/FastShadowsWhileMoving', $event)" />
+            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+              While a 3D view is rotated, panned or zoomed, ambient shadows are computed from a tenth of the samples:
+              noisier, and many times faster - on a phone, shadows can take most of the time of drawing a view. They are
+              drawn in full when the movement stops. (Slicer setting <code>Rendering/FastShadowsWhileMoving</code>.)
+            </div>
           </template>
           <template v-if="section === 'segmentations'">
             <label class="block text-[13px]" for="defaultRepresentation3D">Representation in 3D views</label>
@@ -124,6 +150,21 @@ const favouritesFromAddress = new URLSearchParams(window.location.search).has("f
               The representation that new segmentations show in 3D views. Binary labelmap is shown as smooth surfaces
               that the GPU computes from the labelmap (experimental); closed surface is a surface mesh made from it.
               (Slicer setting <code>Segmentations/DefaultRepresentation3D</code>.)
+            </div>
+            <label class="mt-3 block text-[13px]" for="imageSampleDistanceWhileMoving">Resolution while rotating</label>
+            <select id="imageSampleDistanceWhileMoving" data-name="imageSampleDistanceWhileMoving"
+              class="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-[13px] text-foreground"
+              :value="String(store.settings['Segmentations/ImageSampleDistanceWhileMoving'])"
+              @change="setSetting('Segmentations/ImageSampleDistanceWhileMoving', Number(($event.target as HTMLSelectElement).value))">
+              <option value="1">Full</option>
+              <option value="2">Half</option>
+              <option value="3">Third</option>
+              <option value="4">Quarter</option>
+            </select>
+            <div class="mt-1 text-[12px] text-muted-foreground">
+              While a 3D view is rotated, panned or zoomed, segmentations shown as binary labelmap are drawn with fewer
+              pixels, which is several times faster, and in full when the movement stops - as volume rendering does.
+              (Slicer setting <code>Segmentations/ImageSampleDistanceWhileMoving</code>.)
             </div>
           </template>
           <template v-if="section === 'developer'">

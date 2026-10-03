@@ -43,6 +43,12 @@ public:
   /// (ShadowsVisibility, AmbientShadows*), as qMRMLThreeDView does. Called when the view node changes.
   void UpdateShadowsFromViewNode();
 
+  /// Number of samples per pixel of the ambient shadows (320, as in qMRMLThreeDView). Fewer samples are much faster
+  /// (most of the time of a frame with shadows goes to them on a phone) but make the shadows noisier, which is
+  /// acceptable while the camera is moving (slicerweb.volume_quality).
+  void SetShadowsKernelSize(int kernelSize);
+  int GetShadowsKernelSize();
+
 protected:
   vtkSlicerWebThreeDView();
   ~vtkSlicerWebThreeDView() override;

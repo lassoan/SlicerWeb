@@ -282,6 +282,9 @@ window.addEventListener("resize", () => (windowSize.value = { width: window.inne
 watchEffect(() => {
   store.panelButtons = windowSize.value.width < 600 && windowSize.value.height > windowSize.value.width;
 });
+// The log window covers the views on a small screen (a phone, upright or sideways): a strip below
+// them would show a few words of a message, with its buttons in the way
+const logWindowFills = computed(() => windowSize.value.width < 768 || windowSize.value.height < 600);
 const panelsOverlay = computed(() => {
   // a phone held upright: always over the views, whose width is little enough already
   if (store.panelButtons) return true;
@@ -372,7 +375,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
         <ViewportGrid :key="`${store.settings['Rendering/SharedWebGLContext'] ? 'shared' : 'own'}-${store.settings['Rendering/MaximumPixelRatio']}`" v-if="store.status === 'ready'" :node="store.layout.description" class="min-h-0 flex-1" />
         <LoadingScreen v-else />
         <ActivityIndicator />
-        <LogWindow v-if="store.logWindowOpen" />
+        <LogWindow v-if="store.logWindowOpen" :fill="logWindowFills" />
         <PythonConsole v-if="store.pythonConsoleOpen" />
       </main>
       <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.rightPanelOpen = !store.rightPanelOpen" :disabled="store.status !== 'ready'"

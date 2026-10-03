@@ -16,6 +16,14 @@ const LEVELS = [
   { name: "DEBUG", label: "Debug", match: ["DEBUG", "NOTSET", "TRACE"], color: "text-muted-foreground" },
 ];
 
+const props = defineProps<{
+  /** Cover the views instead of a strip below them: on a phone, a strip would leave room for a few words only */
+  fill?: boolean;
+}>();
+// Buttons a finger can hit where the window fills the views (a phone)
+const buttonClass = computed(() => (props.fill ? "rounded p-2" : "rounded p-1") + " text-muted-foreground hover:text-highlight");
+const iconSize = computed(() => (props.fill ? 18 : 14));
+
 const bridge = inject<SlicerBridge>("bridge")!;
 const runtime = inject<SlicerRuntime>("runtime")!;
 const entries = ref<LogEntry[]>([]);
@@ -114,8 +122,10 @@ watch(visible, scrollToEnd);
 </script>
 
 <template>
-  <section class="flex h-64 shrink-0 flex-col border-t border-input bg-background" data-name="logWindow" aria-label="Application log">
-    <div class="flex h-8 shrink-0 flex-wrap items-center gap-1 border-b border-input/60 px-2">
+  <section class="flex flex-col border-input bg-background" data-name="logWindow" aria-label="Application log"
+    :class="fill ? 'absolute inset-0 z-40 shadow-2xl' : 'h-64 shrink-0 border-t'" :data-fill="fill ? 'true' : undefined">
+    <!-- (the bar grows a row when its buttons do not fit in one, rather than lying over the messages) -->
+    <div class="flex min-h-8 shrink-0 flex-wrap items-center gap-1 border-b border-input/60 px-2 py-0.5">
       <span class="mr-1 text-[12px] font-semibold">Log</span>
       <button v-for="l in LEVELS" :key="l.name" type="button" :data-name="'level:' + l.name" :aria-pressed="shown[l.name]"
         class="rounded px-1.5 py-0.5 text-[11px]"
@@ -126,22 +136,24 @@ watch(visible, scrollToEnd);
       <input v-model="search" placeholder="Search"
         class="ml-1 h-6 min-w-24 flex-1 rounded border border-input bg-background px-2 text-[12px] outline-none focus:border-primary" />
       <button type="button" :title="copied ? 'Copied' : 'Copy the messages shown'" data-name="copyLog"
-        class="rounded p-1 text-muted-foreground hover:text-highlight" @click="copy">
-        <Check v-if="copied" :size="14" class="text-emerald-400" /><Copy v-else :size="14" />
+        :class="buttonClass" @click="copy">
+        <Check v-if="copied" :size="iconSize" class="text-emerald-400" /><Copy v-else :size="iconSize" />
       </button>
       <button type="button" title="Save the messages shown to a file" data-name="downloadLog"
-        class="rounded p-1 text-muted-foreground hover:text-highlight" @click="download"><Download :size="14" /></button>
+        :class="buttonClass" @click="download"><Download :size="iconSize" /></button>
       <button type="button" title="Clear the log" data-name="clearLog"
-        class="rounded p-1 text-muted-foreground hover:text-highlight" @click="clear"><Trash2 :size="14" /></button>
-      <button type="button" title="Close" class="rounded p-1 text-muted-foreground hover:text-highlight"
-        @click="store.logWindowOpen = false"><X :size="14" /></button>
+        :class="buttonClass" @click="clear"><Trash2 :size="iconSize" /></button>
+      <button type="button" title="Close" data-name="closeLog" :class="buttonClass"
+        @click="store.logWindowOpen = false"><X :size="iconSize" /></button>
     </div>
     <div ref="list" class="min-h-0 flex-1 overflow-y-auto px-2 py-1 font-mono text-[12px] leading-5 select-text" @scroll="onScroll">
-      <div v-for="(e, i) in visible" :key="i" class="flex gap-2 whitespace-pre-wrap" :data-level="levelOf(e).name">
+      <!-- where the window is narrow, the message goes below its time, level and origin -->
+      <div v-for="(e, i) in visible" :key="i" class="flex gap-x-2 whitespace-pre-wrap" :class="{ 'flex-wrap border-b border-input/30 py-0.5': fill }"
+        :data-level="levelOf(e).name">
         <span class="shrink-0 text-muted-foreground tabular-nums">{{ time(e) }}</span>
         <span class="w-16 shrink-0" :class="levelOf(e).color">{{ e.level }}</span>
         <span class="w-14 shrink-0 truncate text-muted-foreground">{{ e.origin }}</span>
-        <span :class="levelOf(e).color">{{ e.message }}</span>
+        <span class="min-w-0 [overflow-wrap:anywhere]" :class="[levelOf(e).color, { 'w-full': fill }]">{{ e.message }}</span>
       </div>
       <div v-if="!visible.length" class="py-2 text-muted-foreground">
         {{ entries.length ? "No message matches the filter." : "Nothing has been logged yet." }}

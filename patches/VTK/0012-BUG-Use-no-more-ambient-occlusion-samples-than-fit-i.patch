@@ -1,0 +1,135 @@
+From 75b4d38bc210e736a7ac6048d729971bad511354 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Sat, 3 Oct 2026 07:58:33 -0400
+Subject: [PATCH] BUG: Use no more ambient occlusion samples than fit in
+ fragment shader uniforms
+
+The samples of vtkSSAOPass are an array of uniforms of its fragment shader.
+With more samples than the graphics card has uniform vectors, the shader
+cannot be built and the image is combined with an occlusion texture that
+was never written: on a phone (many mobile GPUs have 256 uniform vectors,
+OpenGL ES guarantees 224) a view with Slicer's 320 samples was black until
+a frame with fewer samples had written the texture.
+
+Fewer samples are used if needed, with a warning (once).
+---
+ Rendering/OpenGL2/vtkSSAOPass.cxx | 37 ++++++++++++++++++++++++++-----
+ Rendering/OpenGL2/vtkSSAOPass.h   |  4 ++++
+ 2 files changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/Rendering/OpenGL2/vtkSSAOPass.cxx b/Rendering/OpenGL2/vtkSSAOPass.cxx
+index 7f785be8dd..ea13720027 100644
+--- a/Rendering/OpenGL2/vtkSSAOPass.cxx
++++ b/Rendering/OpenGL2/vtkSSAOPass.cxx
+@@ -24,6 +24,7 @@
+ #include "vtkVolume.h"
+ #include "vtkVolumeProperty.h"
+ 
++#include <algorithm>
+ #include <random>
+ #include <sstream>
+ 
+@@ -165,9 +166,9 @@ void vtkSSAOPass::ComputeKernel()
+   std::uniform_real_distribution<float> randomFloats(0.0, 1.0);
+   std::default_random_engine generator;
+ 
+-  this->Kernel.resize(3 * this->KernelSize);
++  this->Kernel.resize(3 * this->EffectiveKernelSize);
+ 
+-  for (unsigned int i = 0; i < this->KernelSize; ++i)
++  for (unsigned int i = 0; i < this->EffectiveKernelSize; ++i)
+   {
+     float sample[3] = { randomFloats(generator) * 2.f - 1.f, randomFloats(generator) * 2.f - 1.f,
+       randomFloats(generator) };
+@@ -180,7 +181,7 @@ void vtkSSAOPass::ComputeKernel()
+     }
+ 
+     // more samples closer to the point
+-    float scale = i / static_cast<float>(this->KernelSize);
++    float scale = i / static_cast<float>(this->EffectiveKernelSize);
+     scale = 0.1f + 0.9f * scale * scale; // lerp
+     vtkMath::MultiplyScalar(sample, scale);
+ 
+@@ -301,6 +302,29 @@ void vtkSSAOPass::RenderSSAO(vtkOpenGLRenderWindow* renWin, vtkMatrix4x4* projec
+ 
+   if (!this->SSAOQuadHelper)
+   {
++    // The samples are an array of uniforms: a shader with more than the graphics card supports
++    // cannot be built (many mobile GPUs have 256 vectors, OpenGL ES guarantees 224), and the
++    // ambient occlusion would be missing. The other uniforms of the shader take a few vectors.
++    GLint maximumComponents = 0;
++    glGetIntegerv(GL_MAX_FRAGMENT_UNIFORM_COMPONENTS, &maximumComponents);
++    const unsigned int otherUniformVectors = 16;
++    unsigned int supportedKernelSize = this->KernelSize;
++    if (maximumComponents > 0)
++    {
++      supportedKernelSize = static_cast<unsigned int>(
++        std::max(1, static_cast<int>(maximumComponents / 4 - otherUniformVectors)));
++    }
++    unsigned int effectiveKernelSize = std::min(this->KernelSize, supportedKernelSize);
++    // (said once: it is the same for every view)
++    static bool reported = false;
++    if (effectiveKernelSize < this->KernelSize && !reported)
++    {
++      reported = true;
++      vtkWarningMacro("Ambient occlusion uses " << effectiveKernelSize << " samples instead of "
++                                                << this->KernelSize
++                                                << ": the graphics card does not support more.");
++    }
++    this->EffectiveKernelSize = effectiveKernelSize;
+     this->ComputeKernel();
+ 
+     std::string FSSource = vtkOpenGLRenderUtilities::GetFullScreenQuadFragmentShaderTemplate();
+@@ -313,7 +337,7 @@ void vtkSSAOPass::RenderSSAO(vtkOpenGLRenderWindow* renWin, vtkMatrix4x4* projec
+               "uniform float kernelRadius;\n"
+               "uniform float kernelBias;\n"
+               "uniform vec3 samples["
+-           << this->KernelSize
++           << this->EffectiveKernelSize
+            << "];\n"
+               "uniform mat4 matProjection;\n"
+               "uniform ivec2 size;\n";
+@@ -342,7 +366,7 @@ void vtkSSAOPass::RenderSSAO(vtkOpenGLRenderWindow* renWin, vtkMatrix4x4* projec
+          "      vec3 bitangent = cross(normal, tangent);\n"
+          "      mat3 TBN = mat3(tangent, bitangent, normal);\n"
+          "      const int kernelSize = "
+-      << this->KernelSize
++      << this->EffectiveKernelSize
+       << ";\n"
+          "      for (int i = 0; i < kernelSize; i++)\n"
+          "      {\n"
+@@ -387,7 +411,8 @@ void vtkSSAOPass::RenderSSAO(vtkOpenGLRenderWindow* renWin, vtkMatrix4x4* projec
+   this->SSAOQuadHelper->Program->SetUniformi(
+     "texPosition", this->PositionTexture->GetTextureUnit());
+   this->SSAOQuadHelper->Program->SetUniformi("texNormal", this->NormalTexture->GetTextureUnit());
+-  this->SSAOQuadHelper->Program->SetUniform3fv("samples", this->KernelSize, this->Kernel.data());
++  this->SSAOQuadHelper->Program->SetUniform3fv(
++    "samples", this->EffectiveKernelSize, this->Kernel.data());
+   this->SSAOQuadHelper->Program->SetUniformi("texNoise", renWin->GetNoiseTextureUnit());
+   this->SSAOQuadHelper->Program->SetUniformi("texDepth", this->DepthTexture->GetTextureUnit());
+   this->SSAOQuadHelper->Program->SetUniformf("kernelRadius", this->Radius);
+diff --git a/Rendering/OpenGL2/vtkSSAOPass.h b/Rendering/OpenGL2/vtkSSAOPass.h
+index 9dcd37de66..764c9c6219 100644
+--- a/Rendering/OpenGL2/vtkSSAOPass.h
++++ b/Rendering/OpenGL2/vtkSSAOPass.h
+@@ -78,6 +78,8 @@ public:
+   /**
+    * Get/Set the number of samples.
+    * Default is 32
++   * The samples are uniforms of the fragment shader: if the graphics card does not have enough
++   * of them (OpenGL ES guarantees only 224 vectors), fewer samples are used.
+    */
+   vtkGetMacro(KernelSize, unsigned int);
+   vtkSetClampMacro(KernelSize, unsigned int, 1, 1000);
+@@ -177,6 +179,8 @@ protected:
+ 
+   std::vector<float> Kernel;
+   unsigned int KernelSize = 32;
++  // Number of samples used: KernelSize, or fewer if they do not fit in the uniforms of a fragment shader
++  unsigned int EffectiveKernelSize = 0;
+   double Radius = 0.5;
+   double Bias = 0.01;
+   bool Blur = false;
+-- 
+2.44.0.windows.1
+

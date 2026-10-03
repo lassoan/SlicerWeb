@@ -4,6 +4,7 @@ import { FolderOpen, FolderPlus, FileUp, Link, Database, MoreHorizontal, Save, T
 import type { SlicerBridge } from "@/core/bridge";
 import { formatBytes, type SlicerRuntime } from "@/core/runtime";
 import { store } from "../store";
+import { clearActivity, downloadProgress, loadFilesShowingProgress, showActivity } from "../activity";
 import ShTree from "../components/ShTree.vue";
 import PopupMenu from "../components/PopupMenu.vue";
 import { SAMPLE_DATA } from "../sampleData";
@@ -13,7 +14,6 @@ const bridge = inject<SlicerBridge>("bridge")!;
 const runtime = inject<SlicerRuntime>("runtime")!;
 const fileInput = ref<HTMLInputElement>();
 const folderInput = ref<HTMLInputElement>();
-const busy = ref("");
 const dragOver = ref(false);
 const sampleOpen = ref(false);
 
@@ -40,15 +40,8 @@ const moduleSamples = ref<SampleDataSource[]>([]);
 /** How a download reports itself: "Downloading X — 240 MB of 1.2 GB (19%)". */
 function downloadOptions(what: string) {
   return {
-    onProgress(received: number, total: number) {
-      // The size a server announces may be that of the compressed transfer, which what arrives
-      // outgrows: never more than all of it
-      if (total) received = Math.min(received, total);
-      const done = formatBytes(received);
-      busy.value = total
-        ? `Downloading ${what} — ${done} of ${formatBytes(total)} (${Math.min(100, Math.round((received / total) * 100))}%)`
-        : `Downloading ${what} — ${done}`;
-    },
+    // how far along the download is, over the views (activity.ts)
+    onProgress: downloadProgress(what),
     // A data set of this size needs about as much again to be read into the scene, which is more
     // than a phone, and often a computer, can give a single page.
     tooLarge(total: number, name: string) {
@@ -100,7 +93,7 @@ watch(sampleOpen, (open) => open && refreshModuleSamples(), { immediate: true })
 /** Download the files of a registered sample data set and load them with the SampleData module. */
 async function loadModuleSample(source: SampleDataSource) {
   sampleOpen.value = false;
-  busy.value = `Downloading ${source.name}`;
+  showActivity(`Downloading ${source.name}`);
   try {
     const files = [];
     for (let i = 0; i < source.uris.length; i++) {
@@ -108,9 +101,8 @@ async function loadModuleSample(source: SampleDataSource) {
       const path = await runtime.downloadFile(source.uris[i], fileName, undefined, downloadOptions(source.name));
       files.push({ path, nodeName: source.nodeNames[i], fileType: source.loadFileTypes[i], load: source.loadFiles[i] !== false });
     }
-    busy.value = `Loading ${source.name}`;
-    const result = await bridge.call<{ loaded: string[]; messages: string[]; unpacked: UnpackedFile[] }>(
-      "loadSampleDataFiles", [files, source]);
+    const result = await loadFilesShowingProgress<{ loaded: string[]; messages: string[]; unpacked: UnpackedFile[] }>(
+      bridge, "loadSampleDataFiles", [files, source], source.name);
     // A data set that puts nothing in the scene - an archive of files a module reads itself - says
     // so, rather than leaving the window looking as though nothing happened, and offers what of it
     // can be read here (its tables, most often), because nothing else in the window would reach it.
@@ -118,7 +110,7 @@ async function loadModuleSample(source: SampleDataSource) {
   } catch (e: any) {
     alert(`${source.name}: ${e.message ?? e}`);
   } finally {
-    busy.value = "";
+    clearActivity();
   }
 }
 
@@ -143,20 +135,20 @@ async function offerUnpacked(name: string, result: { messages?: string[]; unpack
   const size = bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(0)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
   if (!window.confirm(`${name}\n\n${said}\n\nLoad ${files.length === 1 ? "it" : "them"} into the scene now`
                       + ` (${files.length} file${files.length === 1 ? "" : "s"}, ${size})?`)) return;
-  busy.value = `Loading ${name}`;
-  await bridge.call("loadFiles", [files.map((f) => f.path)]);
+  await loadFilesShowingProgress(bridge, "loadFiles", [files.map((f) => f.path)], name);
 }
 
 async function loadBrowserFiles(files: File[]) {
   if (!files.length) return;
-  busy.value = `Loading ${files.length === 1 ? files[0].name : files.length + " files"}`;
+  const name = files.length === 1 ? files[0].name : files.length + " files";
+  showActivity(`Reading ${name}`);
   try {
     const paths = await runtime.writeFiles(files);
-    await bridge.call("loadFiles", [paths]);
+    await loadFilesShowingProgress(bridge, "loadFiles", [paths], name);
   } catch (e: any) {
     alert(`Loading failed: ${e.message ?? e}`);
   } finally {
-    busy.value = "";
+    clearActivity();
   }
 }
 
@@ -201,30 +193,31 @@ async function onDrop(e: DragEvent) {
 async function loadUrl() {
   const url = window.prompt("URL or path of a file to load (NRRD, NIfTI, VTK, STL, MRB, ...)");
   if (!url) return;
-  busy.value = "Downloading";
+  const name = url.split("/").pop()?.split("?")[0] || "file";
+  showActivity(`Downloading ${name}`);
   try {
     // A path is a file that is already here - unpacked from an archive, written by a module - and
     // is loaded as it is; anything else is fetched first.
     const path = url.startsWith("/") ? url
-      : await runtime.downloadFile(url, undefined, undefined, downloadOptions(url.split("/").pop() || "file"));
-    await bridge.call("loadFiles", [[path]]);
+      : await runtime.downloadFile(url, undefined, undefined, downloadOptions(name));
+    await loadFilesShowingProgress(bridge, "loadFiles", [[path]], name);
   } catch (e: any) {
     alert(e.message ?? e);
   } finally {
-    busy.value = "";
+    clearActivity();
   }
 }
 
 async function loadSample(sample: (typeof SAMPLE_DATA)[number]) {
   sampleOpen.value = false;
-  busy.value = `Downloading ${sample.name}`;
+  showActivity(`Downloading ${sample.name}`);
   try {
     const path = await runtime.downloadFile(sample.url, sample.fileName, undefined, downloadOptions(sample.name));
-    await bridge.call("loadFiles", [[path], sample.properties ?? {}]);
+    await loadFilesShowingProgress(bridge, "loadFiles", [[path], sample.properties ?? {}], sample.name);
   } catch (e: any) {
     alert(e.message ?? e);
   } finally {
-    busy.value = "";
+    clearActivity();
   }
 }
 
@@ -267,7 +260,6 @@ async function createFolder() {
       <input ref="fileInput" type="file" multiple class="hidden" @change="onFiles" />
       <input ref="folderInput" type="file" webkitdirectory multiple class="hidden" @change="onFiles" />
     </div>
-    <div v-if="busy" class="mx-2 mb-2 rounded bg-accent px-2 py-1 text-[12px] text-accent-foreground">{{ busy }}…</div>
     <div class="flex items-center justify-between px-2 pb-1">
       <div class="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">Subject hierarchy</div>
       <PopupMenu align="right">

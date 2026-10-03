@@ -8,6 +8,8 @@ import ViewerHeader from "./components/ViewerHeader.vue";
 import SidePanel from "./components/SidePanel.vue";
 import ViewportGrid from "./components/ViewportGrid.vue";
 import LoadingScreen from "./components/LoadingScreen.vue";
+import ActivityIndicator from "./components/ActivityIndicator.vue";
+import { downloadProgress, loadFilesShowingProgress, showActivity, clearActivity } from "./activity";
 import PythonConsole from "./components/PythonConsole.vue";
 import LogWindow from "./components/LogWindow.vue";
 import ModuleTitleBar from "./components/ModuleTitleBar.vue";
@@ -229,11 +231,21 @@ async function loadStartupSample() {
     console.warn(`Unknown sample data set: ${name}`);
     return;
   }
+  // The data is downloaded and loaded showing how far along it is (activity.ts)
+  const displayName = (url: string) => {
+    try {
+      return decodeURIComponent(new URL(url, document.baseURI).pathname.split("/").pop() || "data");
+    } catch {
+      return "data";
+    }
+  };
+  const what = sample ? sample.name : urls.length === 1 ? displayName(urls[0]) : `${urls.length} files`;
   try {
+    showActivity(`Downloading ${what}`);
     const paths = sample
-      ? [await runtime.downloadFile(sample.url, sample.fileName)]
-      : await Promise.all(urls.map((url) => runtime.downloadFile(url)));
-    const loaded = await runtime.bridge.call<string[]>("loadFiles", [paths, sample?.properties ?? {}]);
+      ? [await runtime.downloadFile(sample.url, sample.fileName, undefined, { onProgress: downloadProgress(sample.name) })]
+      : await Promise.all(urls.map((url) => runtime.downloadFile(url, undefined, undefined, { onProgress: downloadProgress(displayName(url)) })));
+    const loaded = await loadFilesShowingProgress<string[]>(runtime.bridge, "loadFiles", [paths, sample?.properties ?? {}], what);
     const rendering = params.get("volumeRendering");
     if (rendering && !/^(0|false|no)$/i.test(rendering)) {
       const volumeID = (loaded ?? []).find((id) => /^vtkMRML\w*VolumeNode\d+$/.test(id) && !/LabelMap/.test(id));
@@ -246,6 +258,8 @@ async function loadStartupSample() {
     }
   } catch (e) {
     console.error(`Loading ${urls.length ? urls.join(", ") : "sample data " + name} failed`, e);
+  } finally {
+    clearActivity();
   }
 }
 
@@ -357,6 +371,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
       <main class="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-background">
         <ViewportGrid :key="store.settings['Rendering/SharedWebGLContext'] ? 'shared' : 'own'" v-if="store.status === 'ready'" :node="store.layout.description" class="min-h-0 flex-1" />
         <LoadingScreen v-else />
+        <ActivityIndicator />
         <LogWindow v-if="store.logWindowOpen" />
         <PythonConsole v-if="store.pythonConsoleOpen" />
       </main>

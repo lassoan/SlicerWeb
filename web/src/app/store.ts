@@ -52,6 +52,8 @@ export interface LogEntry {
 export const store = reactive({
   status: "loading" as "loading" | "ready" | "error",
   progress: { stage: "", message: "Starting", fraction: 0 } as LoadingProgress,
+  /** What the application is busy with once it runs - downloading or loading data (activity.ts) */
+  activity: null as { message: string; fraction: number | null; detail: string } | null,
   error: "" as string,
   modules: [] as ModuleSummary[],
   activeModule: "Data",

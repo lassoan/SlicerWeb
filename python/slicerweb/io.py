@@ -20,6 +20,7 @@ import os
 import vtk
 
 from . import host, io_scripted
+from .loading_progress import FileLoadingProgress
 
 logger = logging.getLogger("slicerweb.io")
 
@@ -222,13 +223,15 @@ class IOManager:
             props = dict(properties, fileName=dicom[0], fileNames=dicom, singleFile=False)
             self.loadNodes("VolumeFile", props, nodes, userMessages)
             loadedIDs += [nodes.GetItemAsObject(i).GetID() for i in range(nodes.GetNumberOfItems())]
-        for fileName in others:
+        for index, fileName in enumerate(others):
             fileType = self.fileType(fileName)
             if fileType == "NoFile":
                 self._addMessage(userMessages, f"No reader is available for {os.path.basename(fileName)}.")
                 continue
             nodes = vtk.vtkCollection()
-            self.loadNodes(fileType, dict(properties, fileName=fileName), nodes, userMessages)
+            # the page shows how far along the loading is (loading_progress.py)
+            with FileLoadingProgress(self._scene(), fileName, index, len(others)):
+                self.loadNodes(fileType, dict(properties, fileName=fileName), nodes, userMessages)
             loadedIDs += [nodes.GetItemAsObject(i).GetID() for i in range(nodes.GetNumberOfItems())]
         return loadedIDs
 

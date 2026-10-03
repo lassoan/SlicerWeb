@@ -1,4 +1,4 @@
-From a82131c512921cc932cbe5d1986be44e1ccee09f Mon Sep 17 00:00:00 2001
+From 4cd903773253bc63a47e178c18c113e9a06b8059 Mon Sep 17 00:00:00 2001
 From: Andras Lasso <lasso@queensu.ca>
 Date: Sat, 3 Oct 2026 07:10:13 -0400
 Subject: [PATCH] ENH: Render binary labelmap segmentations faster in 3D views
@@ -16,12 +16,12 @@ moving, for example on mobile devices.
 The previous render window is kept by weak pointer, and its context is
 made current when its resources are released.
 ---
- .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 655 ++++++++++++++----
+ .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 687 ++++++++++++++----
  .../vtkSegmentationLabelmapSurfaceMapper.h    |   7 +
- 2 files changed, 525 insertions(+), 137 deletions(-)
+ 2 files changed, 557 insertions(+), 137 deletions(-)
 
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
-index c58a1a42c0..c6ae15aba2 100644
+index c58a1a42c0..c7c5015122 100644
 --- a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
 @@ -358,79 +358,9 @@ void main()
@@ -248,7 +248,7 @@ index c58a1a42c0..c6ae15aba2 100644
      if (opaqueDepth < 1.0)
      {
        vec4 opaquePositionMC = DCMCMatrix * vec4(2.0 * pixel / viewportSize - 1.0, 2.0 * opaqueDepth - 1.0, 1.0);
-@@ -834,14 +862,96 @@ void main()
+@@ -834,14 +862,122 @@ void main()
    {
      discard;
    }
@@ -270,8 +270,10 @@ index c58a1a42c0..c6ae15aba2 100644
 +  gl_FragData[1] = vec4(firstPositionVC, firstDepth);
 +  gl_FragData[2] = vec4(0.5 * firstNormalVC + vec3(0.5), 1.0);)";
 +
-+// Scales the image of a lower resolution up to the viewport: color is interpolated, depth, position and normal are those
-+// of the frontmost of the nearest image pixels that have a surface. The output is the same as that of the ray casting
++// Scales the image of a lower resolution up to the viewport: color is interpolated, the normal is that of the frontmost
++// of the nearest image pixels that have a surface, and the position (and depth) is where the ray of the viewport pixel
++// meets the plane of the surface there. Positions of the image pixels themselves would make every block of viewport
++// pixels a flat step, which ambient occlusion takes for occluders. The output is the same as that of the ray casting
 +// shader, for the render passes.
 +const char* CompositeFS = R"(//VTK::System::Dec
 +//VTK::Output::Dec
@@ -282,6 +284,8 @@ index c58a1a42c0..c6ae15aba2 100644
 +uniform vec2 viewportOrigin;
 +uniform vec2 viewportSize;
 +uniform vec2 lowResolutionSize;
++uniform mat4 projectionMatrix;
++uniform mat4 inverseProjectionMatrix;
 +//VTK::DepthPeeling::Dec
 +void main()
 +{
@@ -309,6 +313,28 @@ index c58a1a42c0..c6ae15aba2 100644
 +      firstDepth = positionAndDepth.w;
 +      firstPositionVC = positionAndDepth.xyz;
 +      firstNormalVC = 2.0 * texelFetch(lowResolutionNormalTexture, texel, 0).xyz - vec3(1.0);
++    }
++  }
++  // The ray of this pixel (view coordinates), and where it meets the plane of the surface; not at grazing angles,
++  // where the plane says little about where the surface is
++  if (firstDepth < 1.0 && length(firstNormalVC) > 0.5)
++  {
++    firstNormalVC = normalize(firstNormalVC);
++    vec2 pixelDC = 2.0 * (gl_FragCoord.xy - viewportOrigin) / viewportSize - vec2(1.0);
++    vec4 nearVC = inverseProjectionMatrix * vec4(pixelDC, -1.0, 1.0);
++    vec4 farVC = inverseProjectionMatrix * vec4(pixelDC, 1.0, 1.0);
++    vec3 rayStart = nearVC.xyz / nearVC.w;
++    vec3 rayDirection = farVC.xyz / farVC.w - rayStart;
++    float rate = dot(firstNormalVC, rayDirection);
++    if (abs(rate) > 0.2 * length(rayDirection))
++    {
++      float t = dot(firstNormalVC, firstPositionVC - rayStart) / rate;
++      if (t > 0.0 && t < 1.0)
++      {
++        firstPositionVC = rayStart + t * rayDirection;
++        vec4 positionDC = projectionMatrix * vec4(firstPositionVC, 1.0);
++        firstDepth = clamp(0.5 * positionDC.z / positionDC.w + 0.5, 0.0, 1.0);
++      }
 +    }
 +  }
 +  gl_FragDepth = firstDepth;
@@ -346,7 +372,7 @@ index c58a1a42c0..c6ae15aba2 100644
  //----------------------------------------------------------------------------
  // Upload a matrix so that "matrix * vector" in GLSL is the same as in VTK
  void SetUniformMatrix4x4(vtkShaderProgram* program, const char* name, vtkMatrix4x4* matrix)
-@@ -1014,6 +1124,19 @@ public:
+@@ -1014,6 +1150,19 @@ public:
    void SetGridUniforms(vtkShaderProgram* program);
    void SetInsideUniforms(vtkShaderProgram* program);
    bool DrawSlices(vtkOpenGLQuadHelper* quad, vtkTextureObject* target, const int region[6]);
@@ -366,7 +392,7 @@ index c58a1a42c0..c6ae15aba2 100644
    vtkSmartPointer<vtkTextureObject> CreateTexture(vtkOpenGLRenderWindow* renWin, unsigned int internalFormat, int components, int vtkType, bool linear);
  
    vtkSegmentationLabelmapSurfaceMapper* External;
-@@ -1048,7 +1171,7 @@ public:
+@@ -1048,7 +1197,7 @@ public:
    std::vector<float> PreviousLabelsFloat;
  
    // Graphics resources
@@ -375,7 +401,7 @@ index c58a1a42c0..c6ae15aba2 100644
    vtkSmartPointer<vtkTextureObject> LabelTexture;
    vtkSmartPointer<vtkTextureObject> PaletteTexture;
    vtkSmartPointer<vtkTextureObject> DistanceTexture;
-@@ -1077,9 +1200,21 @@ public:
+@@ -1077,9 +1226,21 @@ public:
    vtkOpenGLQuadHelper* CombineQuad{ nullptr };
    vtkOpenGLQuadHelper* MaskQuad{ nullptr };
  
@@ -397,7 +423,7 @@ index c58a1a42c0..c6ae15aba2 100644
  };
  
  //----------------------------------------------------------------------------
-@@ -1434,6 +1569,7 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::UploadTextures(vtkOpenGL
+@@ -1434,6 +1595,7 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::UploadTextures(vtkOpenGL
      }
      this->PaletteSize = paletteWidth * paletteHeight;
      this->UploadedLabelColors = this->LabelColors;
@@ -405,7 +431,7 @@ index c58a1a42c0..c6ae15aba2 100644
    }
    return true;
  }
-@@ -1781,6 +1917,10 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ComputeDistanceField(vtk
+@@ -1781,6 +1943,10 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ComputeDistanceField(vtk
    }
    this->DistanceTexture = resultTexture;
  
@@ -416,7 +442,7 @@ index c58a1a42c0..c6ae15aba2 100644
    if (success)
    {
      this->ComputedSmoothingFactor = this->External->SmoothingFactor;
-@@ -1790,6 +1930,116 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ComputeDistanceField(vtk
+@@ -1790,6 +1956,116 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ComputeDistanceField(vtk
    return success;
  }
  
@@ -533,7 +559,7 @@ index c58a1a42c0..c6ae15aba2 100644
  //----------------------------------------------------------------------------
  bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::CaptureOpaqueDepth(vtkOpenGLRenderer* ren)
  {
-@@ -1856,27 +2106,14 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::CaptureOpaqueDepth(vtkOp
+@@ -1856,27 +2132,14 @@ bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::CaptureOpaqueDepth(vtkOp
  }
  
  //----------------------------------------------------------------------------
@@ -567,7 +593,7 @@ index c58a1a42c0..c6ae15aba2 100644
    // Lighting code depends on the lights of the renderer
    std::ostringstream lightingImplementation;
    int lightingComplexity = ren->GetLightingComplexity();
-@@ -1909,44 +2146,79 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLR
+@@ -1909,44 +2172,79 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLR
    }
    std::ostringstream programKey;
    programKey << lightingImplementation.str();
@@ -643,14 +669,14 @@ index c58a1a42c0..c6ae15aba2 100644
 +  for (int i = 0; i < 2; ++i)
 +  {
 +    lowResolutionSize[i] = std::max(1, static_cast<int>(std::ceil(viewport[2 + i] / this->External->ImageSampleDistance)));
-   }
--  vtkShaderProgram* program = this->SurfaceProgram;
--  if (!program || !program->GetCompiled())
++  }
 +  bool lowResolution = (lowResolutionSize[0] < viewport[2] || lowResolutionSize[1] < viewport[3]);
 +  if (lowResolution && !this->ReadyLowResolutionFramebuffer(renWin, lowResolutionSize))
 +  {
 +    lowResolution = false;
-+  }
+   }
+-  vtkShaderProgram* program = this->SurfaceProgram;
+-  if (!program || !program->GetCompiled())
 +
 +  vtkShaderProgram*& cachedProgram = lowResolution ? this->LowResolutionProgram : this->SurfaceProgram;
 +  std::string& cachedKey = lowResolution ? this->LowResolutionProgramKey : this->SurfaceProgramKey;
@@ -665,7 +691,7 @@ index c58a1a42c0..c6ae15aba2 100644
  
    // Matrices
    vtkCamera* camera = ren->GetActiveCamera();
-@@ -2072,22 +2344,23 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLR
+@@ -2072,22 +2370,23 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLR
    program->SetUniformf("outlineWidth", static_cast<float>(this->External->OutlineWidth));
  
    distanceTexture->Activate();
@@ -697,7 +723,7 @@ index c58a1a42c0..c6ae15aba2 100644
    if (stopAtOpaqueDepth)
    {
      this->OpaqueDepthTexture->Activate();
-@@ -2099,32 +2372,111 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLR
+@@ -2099,32 +2398,117 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLR
      program->SetUniformi("opaqueDepthTexture", this->PaletteTexture->GetTextureUnit());
    }
  
@@ -796,6 +822,12 @@ index c58a1a42c0..c6ae15aba2 100644
 +  composite->SetUniform2f("viewportOrigin", viewportOrigin);
 +  composite->SetUniform2f("viewportSize", viewportSize);
 +  composite->SetUniform2f("lowResolutionSize", rayImageSize);
++  vtkNew<vtkMatrix4x4> projection;
++  projection->DeepCopy(camera->GetProjectionTransformMatrix(ren->GetTiledAspectRatio(), -1, 1));
++  vtkNew<vtkMatrix4x4> inverseProjection;
++  vtkMatrix4x4::Invert(projection, inverseProjection);
++  SetUniformMatrix4x4(composite, "projectionMatrix", projection);
++  SetUniformMatrix4x4(composite, "inverseProjectionMatrix", inverseProjection);
 +  for (vtkOpenGLRenderPass* renderPass : renderPasses)
 +  {
 +    renderPass->SetShaderParameters(composite, this->External, actor, this->SurfaceVAO);
@@ -819,7 +851,7 @@ index c58a1a42c0..c6ae15aba2 100644
    };
    for (vtkOpenGLQuadHelper** quad : quads)
    {
-@@ -2134,6 +2486,10 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources
+@@ -2134,6 +2518,10 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources
    for (vtkTextureObject* texture : { this->LabelTexture.GetPointer(),
                                       this->PaletteTexture.GetPointer(),
                                       this->DistanceTexture.GetPointer(),
@@ -830,7 +862,7 @@ index c58a1a42c0..c6ae15aba2 100644
                                       this->OpaqueDepthTexture.GetPointer(),
                                       this->OpaqueDepthCopyColorTexture.GetPointer() })
    {
-@@ -2146,9 +2502,20 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources
+@@ -2146,9 +2534,20 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources
    {
      this->OpaqueDepthFramebuffer->ReleaseGraphicsResources(window);
    }
@@ -851,7 +883,7 @@ index c58a1a42c0..c6ae15aba2 100644
    this->LabelTexture = nullptr;
    this->PaletteTexture = nullptr;
    this->DistanceTexture = nullptr;
-@@ -2157,6 +2524,10 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources
+@@ -2157,6 +2556,10 @@ void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources
    this->SurfaceVAO->ReleaseGraphicsResources();
    this->SurfaceProgram = nullptr;
    this->SurfaceProgramKey.clear();
@@ -862,7 +894,7 @@ index c58a1a42c0..c6ae15aba2 100644
    this->DistanceFieldNeedsUpdate = true;
    this->Context = nullptr;
  }
-@@ -2186,7 +2557,7 @@ vtkSegmentationLabelmapSurfaceMapper::~vtkSegmentationLabelmapSurfaceMapper()
+@@ -2186,7 +2589,7 @@ vtkSegmentationLabelmapSurfaceMapper::~vtkSegmentationLabelmapSurfaceMapper()
  {
    // Graphics resources are released by ReleaseGraphicsResources (called when the actor is removed from the renderer)
    vtkInternal* d = this->Internal;
@@ -871,7 +903,7 @@ index c58a1a42c0..c6ae15aba2 100644
    for (vtkOpenGLQuadHelper* quad : quads)
    {
      delete quad;
-@@ -2199,6 +2570,7 @@ void vtkSegmentationLabelmapSurfaceMapper::PrintSelf(ostream& os, vtkIndent inde
+@@ -2199,6 +2602,7 @@ void vtkSegmentationLabelmapSurfaceMapper::PrintSelf(ostream& os, vtkIndent inde
  {
    this->Superclass::PrintSelf(os, indent);
    os << indent << "SmoothingFactor: " << this->SmoothingFactor << "\n";
@@ -879,7 +911,7 @@ index c58a1a42c0..c6ae15aba2 100644
    os << indent << "CapClippedSurface: " << (this->CapClippedSurface ? "true" : "false") << "\n";
    os << indent << "CapOpacity: " << this->CapOpacity << "\n";
    os << indent << "KeepWhereAnyClippingPlaneKeeps: " << (this->KeepWhereAnyClippingPlaneKeeps ? "true" : "false") << "\n";
-@@ -2430,9 +2802,13 @@ void vtkSegmentationLabelmapSurfaceMapper::Render(vtkRenderer* renderer, vtkActo
+@@ -2430,9 +2834,13 @@ void vtkSegmentationLabelmapSurfaceMapper::Render(vtkRenderer* renderer, vtkActo
    }
    if (this->Internal->Context != renWin)
    {
@@ -895,7 +927,7 @@ index c58a1a42c0..c6ae15aba2 100644
      }
      this->Internal->Context = renWin;
      this->Internal->Failed = false;
-@@ -2457,6 +2833,11 @@ void vtkSegmentationLabelmapSurfaceMapper::Render(vtkRenderer* renderer, vtkActo
+@@ -2457,6 +2865,11 @@ void vtkSegmentationLabelmapSurfaceMapper::Render(vtkRenderer* renderer, vtkActo
      this->Internal->DistanceFieldNeedsUpdate = false;
      this->Internal->ChangedRegionValid = false;
    }

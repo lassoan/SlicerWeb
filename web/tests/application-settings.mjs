@@ -60,7 +60,11 @@ check("and the dialog shows it off", await developerMode().isChecked(), false);
 await page.evaluate(() => window.slicerWeb.bridge.evalPython('slicer.app.userSettings().setValue("Developer/DeveloperMode", True)', "exec"));
 await page.waitForTimeout(500);
 check("a change from Python shows in the dialog", await developerMode().isChecked(), true);
-check("and is kept in the browser", await page.evaluate(() => JSON.parse(localStorage.getItem("slicerweb.settings") ?? "{}")["Developer/DeveloperMode"]), true);
+// (only settings that differ from the defaults are kept: back on, as by default, it is not kept at all)
+check("and is kept in the browser, as the default it now is", await page.evaluate(() => {
+  const kept = JSON.parse(localStorage.getItem("slicerweb.settings") ?? "{}")["Developer/DeveloperMode"];
+  return kept === undefined || kept === true;
+}), true);
 await page.getByLabel("Close").click();
 check("and the section is back", await reloadAndTest().isVisible(), true);
 

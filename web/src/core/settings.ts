@@ -5,6 +5,8 @@
  * browser as it keeps the installed extensions - they survive a reload - hands them to Python at
  * startup and passes on a change made from either side (see slicerweb.settings).
  */
+import { appConfig } from "./appConfig";
+
 export const SETTINGS_KEY = "slicerweb.settings";
 
 export interface AppSettings {
@@ -76,7 +78,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "General/SaveWrittenFilesToDownloads": true,
   "General/AutoSave": true,
   "Modules/FavoriteModules": ["SegmentEditor", "VolumeRendering", "Transforms", "SceneViews"],
-  "Developer/DeveloperMode": true,
+  // as the deployment says (application.json, features.developerMode)
+  "Developer/DeveloperMode": appConfig.features.developerMode === "enabledByDefault",
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,
   "Rendering/SharedWebGLContext": false,
@@ -86,19 +89,29 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "Segmentations/ImageSampleDistanceWhileMoving": 2,
 };
 
+/** What the deployment does not let a user change (application.json): such a setting has its value
+ *  whatever the browser kept. */
+export function fixedSettings(): Partial<AppSettings> {
+  return appConfig.features.developerMode === "unavailable" ? { "Developer/DeveloperMode": false } : {};
+}
+
 /** The settings kept in the browser, with the defaults for whatever is not kept. */
 export function loadSettings(): AppSettings {
   try {
     const kept = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}");
-    return { ...DEFAULT_SETTINGS, ...(kept && typeof kept === "object" ? kept : {}) };
+    return { ...DEFAULT_SETTINGS, ...(kept && typeof kept === "object" ? kept : {}), ...fixedSettings() };
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, ...fixedSettings() };
   }
 }
 
+/** Keep the settings that differ from the defaults: one the user has not changed follows the
+ *  default, also when the deployment changes it. */
 export function saveSettings(settings: AppSettings) {
+  const changed = Object.fromEntries(Object.entries(settings).filter(
+    ([key, value]) => JSON.stringify(value) !== JSON.stringify((DEFAULT_SETTINGS as unknown as Record<string, unknown>)[key])));
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(changed));
   } catch {
     // a private window, say: the settings hold for this page
   }

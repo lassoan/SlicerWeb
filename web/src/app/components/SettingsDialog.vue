@@ -8,6 +8,7 @@ import { SwCheckBox } from "@/widgets";
 import { setSetting, store } from "../store";
 import { moduleList } from "../modules/list";
 import { devicePixelRatio } from "@/core/pixelRatio";
+import { appConfig } from "@/core/appConfig";
 
 const emit = defineEmits<{ close: [] }>();
 // Whether this browser has JavaScript Promise Integration (the Developer section says so if not)
@@ -168,13 +169,16 @@ const deviceRatio = `${Math.round(devicePixelRatio() * 100) / 100} pixels per po
             </div>
           </template>
           <template v-if="section === 'developer'">
-            <SwCheckBox text="Developer mode" :checked="store.settings['Developer/DeveloperMode']"
-              @toggled="setSetting('Developer/DeveloperMode', $event)" />
-            <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
-              Show what a module developer needs: the Reload and Test section at the bottom of a scripted module's panel.
-              (Slicer setting <code>Developer/DeveloperMode</code>.)
-            </div>
-            <SwCheckBox text="Show rendering FPS" class="mt-3" data-name="showRenderingFPS"
+            <!-- (not offered where the deployment makes it unavailable: application.json, features.developerMode) -->
+            <template v-if="appConfig.features.developerMode !== 'unavailable'">
+              <SwCheckBox text="Developer mode" data-name="developerMode" :checked="store.settings['Developer/DeveloperMode']"
+                @toggled="setSetting('Developer/DeveloperMode', $event)" />
+              <div class="mt-1 pl-6 text-[12px] text-muted-foreground">
+                Show what a module developer needs: the Reload and Test section at the bottom of a scripted module's panel.
+                (Slicer setting <code>Developer/DeveloperMode</code>.)
+              </div>
+            </template>
+            <SwCheckBox text="Show rendering FPS" :class="{ 'mt-3': appConfig.features.developerMode !== 'unavailable' }" data-name="showRenderingFPS"
               :checked="store.settings['Developer/ShowRenderingFPS']"
               @toggled="setSetting('Developer/ShowRenderingFPS', $event)" />
             <div class="mt-1 pl-6 text-[12px] text-muted-foreground">

@@ -18,9 +18,9 @@ npm installs: the web application is built, served and tested in a copy of web/ 
 SW_DIST/web-workspace, which follows the checkout (dev copies each change while it runs).
 
     SW_SLICERWEB    the SlicerWeb checkout (default: the one this script is in)
-    SW_DEPLOYMENT   a deployment checkout (docs/extensions.md): the extensions of SlicerWeb its
-                    extensions.json names and those of its extensions/, and the repository the build
-                    is published to. Without one: the extensions of SlicerWeb, and no deploy
+    SW_DEPLOYMENT   a deployment checkout (docs/extensions.md): its application.json configures the
+                    application and says which extensions it has, and the build is published to its
+                    repository. Without one: the extensions of SlicerWeb, defaults, and no deploy
     SW_DIST         where everything built goes: wheels, extensions, the web application, sample data
     SW_SECRETS      a folder of secrets: github-token, read access to private extensions (optional)
     SW_PORT         the port of serve (default 4175)
@@ -100,9 +100,7 @@ def extension_names(settings):
     if settings.get("SW_DEPLOYMENT"):
         localsettings.use_deployment(settings["SW_DEPLOYMENT"])
         names.update(localsettings.deployment_extension_names())
-        own = os.path.join(settings["SW_DEPLOYMENT"], "extensions")
-        if os.path.isdir(own):
-            names.update(os.path.splitext(f)[0] for f in os.listdir(own) if f.endswith(".json"))
+        names.update(localsettings.deployment_extension_files())
     else:
         folder = os.path.join(settings["SW_SLICERWEB"], "extensions")
         names.update(os.path.splitext(f)[0] for f in os.listdir(folder) if f.endswith(".json"))
@@ -205,6 +203,12 @@ def web_workspace(settings):
     workspace = os.path.join(settings["SW_DIST"], "web-workspace")
     sync_tree(source, workspace)
     dist = settings["SW_DIST"]
+    # the configuration of the application as the deployment has it now (wheels/application.json)
+    sys.path.insert(0, os.path.join(settings["SW_SLICERWEB"], "scripts"))
+    import localsettings
+    if settings.get("SW_DEPLOYMENT"):
+        localsettings.use_deployment(settings["SW_DEPLOYMENT"])
+    localsettings.write_application_config(dist)
     env = dict(environment(settings),
                SLICERWEB_WHEELS=os.path.join(dist, "wheels"),
                SLICERWEB_EXTENSIONS=os.path.join(dist, "extensions"),

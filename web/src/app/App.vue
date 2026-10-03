@@ -12,6 +12,7 @@ import ActivityIndicator from "./components/ActivityIndicator.vue";
 import { downloadProgress, loadFilesShowingProgress, showActivity, clearActivity } from "./activity";
 import PythonConsole from "./components/PythonConsole.vue";
 import LogWindow from "./components/LogWindow.vue";
+import { appConfig } from "@/core/appConfig";
 import ModuleTitleBar from "./components/ModuleTitleBar.vue";
 import ExtensionsManager from "./components/ExtensionsManager.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
@@ -329,10 +330,11 @@ onMounted(async () => {
 // application log (the error log there), Ctrl+4 the Extensions Manager - each shows or hides it
 // (Cmd on a Mac). Taken before a text field gets the key, so that they work while typing in the
 // console too.
+// (not those of what the deployment leaves out: application.json, features)
 const windowShortcuts: Record<string, () => void> = {
-  "3": () => { store.pythonConsoleOpen = !store.pythonConsoleOpen; },
+  ...(appConfig.features.pythonConsole ? { "3": () => { store.pythonConsoleOpen = !store.pythonConsoleOpen; } } : {}),
   "0": () => { store.logWindowOpen = !store.logWindowOpen; },
-  "4": () => { store.extensionsManagerOpen = !store.extensionsManagerOpen; },
+  ...(appConfig.features.extensionsManager ? { "4": () => { store.extensionsManagerOpen = !store.extensionsManagerOpen; } } : {}),
 };
 function onWindowShortcut(event: KeyboardEvent) {
   if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
@@ -376,7 +378,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
         <LoadingScreen v-else />
         <ActivityIndicator />
         <LogWindow v-if="store.logWindowOpen && !logWindowFills" />
-        <PythonConsole v-if="store.pythonConsoleOpen" />
+        <PythonConsole v-if="appConfig.features.pythonConsole && store.pythonConsoleOpen" />
       </main>
       <SidePanel side="right" :open="store.rightPanelOpen" :overlay="panelsOverlay" :no-strip="store.panelButtons" @toggle="store.rightPanelOpen = !store.rightPanelOpen" :disabled="store.status !== 'ready'"
         :tabs="[{ id: 'modules', label: 'Modules' }]">
@@ -387,7 +389,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onWindowShortcut, { 
            room for a few words only -->
       <LogWindow v-if="store.logWindowOpen && logWindowFills" fill />
     </div>
-    <ExtensionsManager v-if="store.extensionsManagerOpen" @close="store.extensionsManagerOpen = false" />
+    <ExtensionsManager v-if="appConfig.features.extensionsManager && store.extensionsManagerOpen" @close="store.extensionsManagerOpen = false" />
     <SettingsDialog v-if="store.settingsDialogOpen" @close="store.settingsDialogOpen = false" />
     <!-- auto-save, in muted colors: unsaved changes (close to the background), saving (red), all
          changes saved (green) -->

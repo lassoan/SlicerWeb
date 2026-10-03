@@ -10,7 +10,7 @@
  * A wheel keeps its name from build to build, so the cache is named after the build (the stamp is
  * put in by the build, see vite.assets.ts) and a new build starts an empty one; the old caches go
  * when it takes over. The page reloads itself once when a new worker takes over mid-start, so that
- * nothing of the old build is used with the new one (see main.ts).
+ * nothing of the old build is used with the new one (see start.ts).
  */
 const BUILD = "__BUILD__";
 const CACHE = `slicerweb-${BUILD}`;

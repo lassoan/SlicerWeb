@@ -28,6 +28,7 @@ import type { SlicerBridge } from "@/core/bridge";
 import type { BuildInfo, GitVersion, SlicerRuntime } from "@/core/runtime";
 import { openModule as openModuleInPanel, store } from "../store";
 import { moduleList } from "../modules/list";
+import { appConfig } from "@/core/appConfig";
 import ToolButton from "./ToolButton.vue";
 import ToolMenu from "./ToolMenu.vue";
 import { markupsIcons } from "@/widgets/markupsIcons";
@@ -340,14 +341,14 @@ const currentMarkupTool = computed(() =>
         <template #button><Menu :size="20" /></template>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           data-name="menu:fullscreen" @click="fullScreen"><Maximize :size="16" />Full screen</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+        <button v-if="appConfig.features.extensionsManager" type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           data-name="menu:extensions" @click="store.extensionsManagerOpen = true"><Puzzle :size="16" />Extensions manager</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           data-name="menu:settings" @click="store.settingsDialogOpen = true"><SlidersHorizontal :size="16" />Application settings</button>
         <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.logWindowOpen ? 'text-highlight' : ''" data-name="menu:log"
           @click="store.logWindowOpen = !store.logWindowOpen"><ScrollText :size="16" />Application log</button>
-        <button type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
+        <button v-if="appConfig.features.pythonConsole" type="button" role="menuitem" class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[13px] hover:bg-accent/60"
           :class="store.pythonConsoleOpen ? 'text-highlight' : ''" data-name="menu:python"
           @click="store.pythonConsoleOpen = !store.pythonConsoleOpen"><Terminal :size="16" />Python console</button>
         <!-- What this is: the build of the runtime and the commits it was made from (selectable, to be quoted) -->

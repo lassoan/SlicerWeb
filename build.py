@@ -17,9 +17,10 @@ wheels and web bundles are copied to (--dist, or SW_DIST in local.env or the env
 extension folder (--extensions-dir, or SW_EXTENSIONS_DIR) mounted.
 
 A deployment (--deployment, docs/extensions.md) is a checkout of a repository of its own: its
-extensions are those of extensions/ here that its extensions.json names, and the description files
-of its own extensions/ (put together in <dist>/extension-descriptions, which is the extension
-folder of the build), its local.env has its settings (SW_DIST, by default
+extensions are those of extensions/ here that its application.json names, and the description
+files of its own extensions folder (put together in <dist>/extension-descriptions, which is the
+extension folder of the build), and the configuration of its application goes to
+<dist>/wheels/application.json, its local.env has its settings (SW_DIST, by default
 ~/SlicerWeb-build/dist-<name of the folder>), and its .secrets/ its secrets.
 
 A GitHub token for private repositories is taken from the SW_GIT_TOKEN environment variable, or
@@ -107,6 +108,7 @@ def main():
     result = subprocess.run(command, env=env).returncode
     if result == 0 and "shell" not in args.stages:
         write_build_info(dist)
+        localsettings.write_application_config(dist)
     return result
 
 

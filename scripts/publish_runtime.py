@@ -142,6 +142,9 @@ def main():
     for name in ("wheels", "extensions"):
         if not os.path.isdir(os.path.join(args.dist, name)):
             sys.exit(f"Not found: {os.path.join(args.dist, name)} (run: python build.py 60-wheels 80-extensions)")
+    # The configuration of the application as the deployment has it now: a change of it needs no build
+    if args.deployment:
+        localsettings.write_application_config(args.dist)
 
     visibility = gh("repo", "view", args.repository, "--json", "visibility", "--jq", ".visibility", capture=True)
     if visibility is None:

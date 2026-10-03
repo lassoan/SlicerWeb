@@ -9,7 +9,7 @@ overrides them. A setting that neither gives has the default the script passes.
 
 This repository holds no secrets. A deployment - a checkout of a repository that says which
 extensions its build has (docs/extensions.md): those of this repository it names in its
-extensions.json, and description files of its own in its extensions/, private extensions among them -
+application.json, and description files of its own in a folder it names, private extensions among them -
 is a folder of its own (--deployment), with its own local.env, which is then read instead of this
 repository's, and its secrets in .secrets/ (both kept out of that repository by its .gitignore):
 
@@ -44,14 +44,12 @@ _deployment = None
 
 def use_deployment(path, extensions=True):
     """Take the settings of a deployment folder, over those of this repository. Returns its absolute
-    path, or exits with a message if it is not a deployment (a folder with extensions.json or
-    extensions/, unless extensions is False: a folder only of settings and secrets, as that of the
-    test site)."""
+    path, or exits with a message if it is not a deployment (a folder with application.json, unless
+    extensions is False: a folder only of settings and secrets, as that of the test site)."""
     global _deployment, _local
     path = os.path.abspath(path)
-    has_extensions = os.path.isfile(os.path.join(path, "extensions.json")) or os.path.isdir(os.path.join(path, "extensions"))
-    if not os.path.isdir(path) or (extensions and not has_extensions):
-        raise SystemExit(f"Not a deployment (a folder with extensions.json or extensions/): {path}")
+    if not os.path.isdir(path) or (extensions and not os.path.isfile(os.path.join(path, "application.json"))):
+        raise SystemExit(f"Not a deployment (a folder with application.json): {path}")
     _deployment = path
     # its own settings only: SW_DIST of this repository would have the build of the deployment replace its own
     _local = _read_env_file(os.path.join(path, "local.env"))
@@ -62,32 +60,89 @@ def deployment():
     return _deployment
 
 
-def deployment_extension_names():
-    """The extensions of this repository that the deployment names in its extensions.json:
-    {"slicerweb": ["SlicerHeart", ...]} (docs/extensions.md). Exits with a message on a name that
-    extensions/ of this repository has no description of."""
-    path = os.path.join(_deployment, "extensions.json")
-    if not os.path.isfile(path):
-        return []
+#: The configuration of a deployment's application, at the root of the deployment (docs/extensions.md)
+APPLICATION_CONFIG = "application.json"
+#: The features an application.json may set, and the values each may have (the first is the default)
+FEATURES = {
+    "developerMode": ("enabledByDefault", "disabledByDefault", "unavailable"),
+    "pythonConsole": (True, False),
+    "extensionsManager": (True, False),
+}
+
+
+def application_config():
+    """The application.json of the deployment ({} without a deployment), checked: exits with a
+    message on what it cannot have."""
+    if not _deployment:
+        return {}
+    path = os.path.join(_deployment, APPLICATION_CONFIG)
     try:
         with open(path, encoding="utf-8") as handle:
-            names = json.load(handle).get("slicerweb", [])
-    except (OSError, ValueError, AttributeError) as e:
+            config = json.load(handle)
+    except (OSError, ValueError) as e:
         raise SystemExit(f"{path}: {e}")
+    if not isinstance(config, dict):
+        raise SystemExit(f"{path}: an object of sections (extensions, features)")
+    unknown = sorted(set(config) - {"extensions", "features"})
+    if unknown:
+        raise SystemExit(f"{path}: unknown sections {', '.join(unknown)} (it may have: extensions, features)")
+    extensions = config.get("extensions", {})
+    if not isinstance(extensions, dict) or set(extensions) - {"slicerweb", "folder"}:
+        raise SystemExit(f'{path}: "extensions" has "slicerweb" (names of extensions of SlicerWeb) and "folder" '
+                         "(a folder of description files of its own)")
+    names = extensions.get("slicerweb", [])
     if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-        raise SystemExit(f'{path}: "slicerweb" is a list of extension names')
+        raise SystemExit(f'{path}: "extensions.slicerweb" is a list of extension names')
+    if "folder" in extensions and not isinstance(extensions["folder"], str):
+        raise SystemExit(f'{path}: "extensions.folder" is the path of a folder, relative to {APPLICATION_CONFIG}')
+    features = config.get("features", {})
+    if not isinstance(features, dict):
+        raise SystemExit(f'{path}: "features" is an object')
+    for name, value in features.items():
+        if name not in FEATURES:
+            raise SystemExit(f"{path}: unknown feature {name} (features: {', '.join(FEATURES)})")
+        if value not in FEATURES[name] or type(value) is not type(FEATURES[name][0]):
+            raise SystemExit(f"{path}: features.{name} is one of {', '.join(json.dumps(v) for v in FEATURES[name])}, not {json.dumps(value)}")
+    return config
+
+
+def deployment_extension_names():
+    """The extensions of this repository that the deployment names in the extensions section of its
+    application.json ({"extensions": {"slicerweb": ["SlicerHeart", ...]}}, docs/extensions.md). Exits
+    with a message on a name that extensions/ of this repository has no description of."""
+    names = application_config().get("extensions", {}).get("slicerweb", [])
     unknown = [n for n in names if not os.path.isfile(os.path.join(ROOT, "extensions", f"{n}.json"))]
     if unknown:
         available = sorted(os.path.splitext(f)[0] for f in os.listdir(os.path.join(ROOT, "extensions")) if f.endswith(".json"))
-        raise SystemExit(f"{path} names extensions that SlicerWeb has no description of: {', '.join(unknown)}"
-                         f" (it has: {', '.join(available)})")
+        raise SystemExit(f"{os.path.join(_deployment, APPLICATION_CONFIG)} names extensions that SlicerWeb has no description of: "
+                         f"{', '.join(unknown)} (it has: {', '.join(available)})")
     return names
+
+
+def deployment_extensions_folder():
+    """The folder of the deployment's own extension description files (extensions.folder of its
+    application.json, relative to it), or None."""
+    folder = application_config().get("extensions", {}).get("folder")
+    if not folder:
+        return None
+    path = os.path.normpath(os.path.join(_deployment, folder))
+    if not os.path.isdir(path):
+        raise SystemExit(f"{os.path.join(_deployment, APPLICATION_CONFIG)}: extensions.folder is not a folder: {path}")
+    return path
+
+
+def deployment_extension_files():
+    """{name: path} of the deployment's own extension description files."""
+    folder = deployment_extensions_folder()
+    if not folder:
+        return {}
+    return {os.path.splitext(f)[0]: os.path.join(folder, f) for f in sorted(os.listdir(folder)) if f.endswith(".json")}
 
 
 def assemble_deployment_extensions(folder):
     """Write the description files of the deployment's extensions into folder (emptied first): those
-    of this repository that its extensions.json names, and its own extensions/*.json, which take
-    the place of one of the same name (to build another revision of it, say). Returns
+    of this repository that its application.json names, and those of its own extensions folder, which
+    take the place of one of the same name (to build another revision of it, say). Returns
     {name: "slicerweb" or "deployment"}, where each came from."""
     if os.path.isdir(folder):
         shutil.rmtree(folder)
@@ -96,15 +151,29 @@ def assemble_deployment_extensions(folder):
     for name in deployment_extension_names():
         shutil.copyfile(os.path.join(ROOT, "extensions", f"{name}.json"), os.path.join(folder, f"{name}.json"))
         origins[name] = "slicerweb"
-    own = os.path.join(_deployment, "extensions")
-    for file in sorted(os.listdir(own)) if os.path.isdir(own) else []:
-        if file.endswith(".json"):
-            name = os.path.splitext(file)[0]
-            if origins.get(name) == "slicerweb":
-                print(f"{name}: the description of the deployment (extensions/{file}) is used, not that of SlicerWeb")
-            shutil.copyfile(os.path.join(own, file), os.path.join(folder, file))
-            origins[name] = "deployment"
+    for name, path in deployment_extension_files().items():
+        if origins.get(name) == "slicerweb":
+            print(f"{name}: the description of the deployment ({path}) is used, not that of SlicerWeb")
+        shutil.copyfile(path, os.path.join(folder, f"{name}.json"))
+        origins[name] = "deployment"
     return origins
+
+
+def write_application_config(dist):
+    """The configuration of the application - application.json of the deployment, but for the
+    extensions - into <dist>/wheels/application.json, where the application reads it at startup
+    (web/src/core/appConfig.ts) and which goes with the runtime to the site. Without a deployment,
+    there is none: the application has its defaults."""
+    wheels = os.path.join(dist, "wheels")
+    path = os.path.join(wheels, APPLICATION_CONFIG)
+    config = {name: section for name, section in application_config().items() if name != "extensions"}
+    if not _deployment:
+        if os.path.exists(path):
+            os.remove(path)
+        return
+    os.makedirs(wheels, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=1)
 
 
 def default_dist():

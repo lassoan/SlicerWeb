@@ -115,13 +115,13 @@ scripts of the Python packages. Use a
 
 ### Deployment
 
-A site is published from a repository of its own, a *deployment*: it says which extensions its
-build has, and holds the workflow that publishes the site. It holds nothing else - no settings of a
-computer, no secrets, nothing built:
+A site is published from a repository of its own, a *deployment*: it configures the application -
+which extensions its build has, which features it offers - and holds the workflow that publishes
+the site. It holds nothing else - no settings of a computer, no secrets, nothing built:
 
 ```
 slicerweb-deploy/
-├── extensions.json                    the extensions of SlicerWeb it has, by name
+├── application.json                   the configuration of the application, its extensions among it
 ├── extensions/*.json                  description files of its own: other extensions, private ones among them
 ├── .github/workflows/publish-app.yml  builds and publishes the site
 └── README.md
@@ -152,19 +152,39 @@ Without `SW_DEPLOYMENT`, the settings file builds SlicerWeb with its own extensi
 deploy). `slicerweb.py` calls `build.py --deployment` and `scripts/publish_runtime.py --deployment`,
 which may also be run themselves.
 
-`extensions.json` names extensions described in `extensions/` of this repository, so that they are
-not copied and kept up to date in every deployment:
+`application.json`:
 
 ```json
 {
-  "slicerweb": ["SlicerHeart", "SlicerVMTK", "SurfaceMarkup"]
+  "extensions": {
+    "slicerweb": ["SlicerHeart", "SlicerVMTK", "SurfaceMarkup"],
+    "folder": "extensions"
+  },
+  "features": {
+    "developerMode": "enabledByDefault",
+    "pythonConsole": true,
+    "extensionsManager": true
+  }
 }
 ```
 
-A description file of the deployment's own `extensions/` adds an extension, or takes the place of
-the one of this repository of the same name (to build it at another revision, say). The build puts
-them together in `<dist>/extension-descriptions`, and stops at a name that `extensions/` here has no
-description of.
+- `extensions.slicerweb` names extensions described in `extensions/` of this repository, so that
+  they are not copied and kept up to date in every deployment.
+- `extensions.folder` is a folder of description files of the deployment's own (relative to
+  `application.json`): each adds an extension, or takes the place of the one of this repository of
+  the same name (to build it at another revision, say).
+- `features` (each optional, the first value the default):
+  - `developerMode`: `enabledByDefault` - on, and the Application settings can turn it off;
+    `disabledByDefault` - off, and they can turn it on; `unavailable` - off, and not offered;
+  - `pythonConsole`: `true` or `false` - the Python console in the application menu and Ctrl+3;
+  - `extensionsManager`: `true` or `false` - the Extensions Manager in the menu and Ctrl+4.
+
+The build puts the descriptions together in `<dist>/extension-descriptions` and stops at a name that
+`extensions/` here has no description of, or at a feature or value that `application.json` cannot
+have. The rest of the configuration goes to `<dist>/wheels/application.json`, with the runtime to the
+site, where the application reads it at startup (`web/src/core/appConfig.ts`); `deploy` writes it
+again from the deployment, so a change of `features` needs no build. A setting a user has not changed
+follows its default, also when the deployment changes it.
 
 Its build goes to a dist folder of its own (`SW_DIST`), since a build of a deployment has only its
 extensions.
@@ -202,7 +222,7 @@ python scripts/publish_runtime.py --deployment ../slicerweb-deploy --publish    
 
 The published application, <https://lassoan.github.io/slicerweb-app/>, is a deployment too:
 [lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app) (public), whose `main` branch has
-its `extensions.json` and workflow, and whose site is on its branch `deploy/latest`. A change of the
+its `application.json` and workflow, and whose site is on its branch `deploy/latest`. A change of the
 web application here publishes it again on its own, with the runtime it has (`.github/workflows/publish-app.yml`).
 
 **Channels.** A deployment can publish several versions side by side - `latest`, `stable`, `1.0.0` - each

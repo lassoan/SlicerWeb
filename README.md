@@ -124,7 +124,7 @@ taken from `SW_DIST`. Pyodide itself is served from the application, not from a 
 The application is published at <https://lassoan.github.io/slicerweb-app/> from
 [lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), a deployment
 ([docs/extensions.md](docs/extensions.md)): its `main` branch says which extensions the build has
-(`extensions.json`, by name) and holds the workflow that publishes the site, which calls the
+(`application.json`, which configures the application too) and holds the workflow that publishes the site, which calls the
 [Publish app](.github/workflows/publish-app.yml) workflow of this repository. That workflow also runs
 here when anything under `web/` changes on `main`, and publishes the site again with the runtime it
 has.

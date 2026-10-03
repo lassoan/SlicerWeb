@@ -83,11 +83,19 @@ python build.py all                   # every stage, a few hours from cold
 python build.py 50-slicer 60-wheels   # or just the stages that matter after a change
 ```
 
-What differs from one computer to another - where the wheels are copied (`SW_DIST`, by default
-`~/SlicerWeb-build/dist`), the extension folder - goes in `local.env`, which is not committed (see
-`local.env.example`); an environment variable of the same name overrides it. This repository holds
-no secrets: a build with private extensions takes its token from the folder of that deployment
-(`--deployment`, see [docs/extensions.md](docs/extensions.md)).
+What differs from one computer to another - where everything built goes, where the checkouts are,
+the secrets - goes in a settings file outside the checkouts, which `slicerweb.py` takes
+(`slicerweb.bat` on Windows; see `deployment.env.example`):
+
+```sh
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env build                      # everything
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env build SlicerHeart SlicerRT # these extensions
+python slicerweb.py D:/SlicerWeb-build/slicerweb.env serve                      # try the build in the browser
+```
+
+A settings file without `SW_DEPLOYMENT` builds SlicerWeb with the extensions of `extensions/`; one
+with it builds and deploys that deployment ([docs/extensions.md](docs/extensions.md)). This
+repository holds no secrets.
 
 The stages are in `scripts/stages/`: the sources and patches (`00`), VTK's compile tools for the
 host (`10`) and VTK itself (`20`), ITK (`30`), teem, libarchive and the rest (`40`),
@@ -140,14 +148,15 @@ history for ever, so the site is pushed to the branch `deploy/latest` of lassoan
 single commit with no parent: it holds one build and no history.
 
 The wheels take hours to compile and no runner could build them, so they travel through a release
-(`runtime-latest` of lassoan/slicerweb-app), from a checkout of it next to this one:
+(`runtime-latest` of lassoan/slicerweb-app), with a settings file whose `SW_DEPLOYMENT` is a
+checkout of it:
 
 ```sh
-python build.py --deployment ../slicerweb-app all                                   # build them here
-python scripts/publish_runtime.py --deployment ../slicerweb-app --channel latest --publish   # upload them, and rebuild the site
+python slicerweb.py D:/SlicerWeb-build/slicerweb-app.env build    # build them here
+python slicerweb.py D:/SlicerWeb-build/slicerweb-app.env deploy   # upload them, and rebuild the site
 ```
 
-(`build.bat` and `deploy.bat` there do the same.) The site repository's Pages source is its branch
+The site repository's Pages source is its branch
 `deploy/latest`. The workflow of this repository writes to it with a deploy key of that repository,
 whose private half is the secret `SLICERWEB_APP_KEY` here (a token in `SLICERWEB_APP_TOKEN` is used
 instead where there is one); its own workflow writes with its own token.

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Run SlicerWeb build stages inside the toolchain container (on Windows, Linux or macOS).
 
+slicerweb.py runs this as a settings file says (python slicerweb.py <settings file> build); this is
+what it calls.
+
     python build.py 00-sources 10-vtk-compiletools 20-vtk
     python build.py all
     python build.py --deployment ../SlicerHeartWebViewer-deploy 60-wheels 80-extensions

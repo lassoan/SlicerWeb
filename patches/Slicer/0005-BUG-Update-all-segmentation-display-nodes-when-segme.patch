@@ -1,4 +1,4 @@
-From d38f7b5d44533e696480b0bd90b150824eda3559 Mon Sep 17 00:00:00 2001
+From 8337f37eed465cf64df70eb43bbff0df0329dcd9 Mon Sep 17 00:00:00 2001
 From: Andras Lasso <lasso@queensu.ca>
 Date: Wed, 30 Sep 2026 00:28:57 -0400
 Subject: [PATCH] BUG: Update all segmentation display nodes when segments are
@@ -12,14 +12,20 @@ with the same ID, the other display nodes applied the display properties of
 the removed segment (for example, visibility) to the new segment.
 
 Now all the display nodes of the segmentation update their segment list
-when a segment is added or removed.
+when a segment is added or removed. A display node that is added to a
+segmentation also updates its segment list right away (as volume nodes
+update their display nodes when one is added), so for example segments
+without a color get their generated color at once.
 
-Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+vtkMRMLSegmentationDisplayNode::UpdateSegmentList() is now public, instead
+of vtkMRMLSegmentationNode being a friend class of the display node.
 ---
- Libs/MRML/Core/Testing/CMakeLists.txt         |  2 +
- .../Testing/vtkMRMLSegmentationNodeTest1.cxx  | 83 +++++++++++++++++++
- Libs/MRML/Core/vtkMRMLSegmentationNode.cxx    | 28 ++++---
- 3 files changed, 102 insertions(+), 11 deletions(-)
+ Libs/MRML/Core/Testing/CMakeLists.txt         |   2 +
+ .../Testing/vtkMRMLSegmentationNodeTest1.cxx  | 134 ++++++++++++++++++
+ .../Core/vtkMRMLSegmentationDisplayNode.h     |  22 +--
+ Libs/MRML/Core/vtkMRMLSegmentationNode.cxx    |  50 +++++--
+ Libs/MRML/Core/vtkMRMLSegmentationNode.h      |   4 +-
+ 5 files changed, 189 insertions(+), 23 deletions(-)
  create mode 100644 Libs/MRML/Core/Testing/vtkMRMLSegmentationNodeTest1.cxx
 
 diff --git a/Libs/MRML/Core/Testing/CMakeLists.txt b/Libs/MRML/Core/Testing/CMakeLists.txt
@@ -44,10 +50,10 @@ index f1dca9b2ab..d5695c38fa 100644
    DATA{${INPUT}/OldSlicerSegmentation.seg.nrrd}
 diff --git a/Libs/MRML/Core/Testing/vtkMRMLSegmentationNodeTest1.cxx b/Libs/MRML/Core/Testing/vtkMRMLSegmentationNodeTest1.cxx
 new file mode 100644
-index 0000000000..87252df115
+index 0000000000..5a7e6a0fd4
 --- /dev/null
 +++ b/Libs/MRML/Core/Testing/vtkMRMLSegmentationNodeTest1.cxx
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,134 @@
 +/*==============================================================================
 +
 +  Program: 3D Slicer
@@ -70,8 +76,11 @@ index 0000000000..87252df115
 +#include "vtkMRMLScene.h"
 +#include "vtkMRMLSegmentationDisplayNode.h"
 +#include "vtkMRMLSegmentationNode.h"
++#include "vtkSegmentationConverterFactory.h"
 +
 +// Segmentation core includes
++#include <vtkBinaryLabelmapToClosedSurfaceConversionRule.h>
++#include <vtkClosedSurfaceToBinaryLabelmapConversionRule.h>
 +#include <vtkSegment.h>
 +#include <vtkSegmentation.h>
 +
@@ -103,7 +112,7 @@ index 0000000000..87252df115
 +  // The added segment gets a generated color
 +  double color[3] = { 0.0, 0.0, 0.0 };
 +  segmentation->GetSegment(segmentId)->GetColor(color);
-+  CHECK_BOOL(color[0] != vtkSegment::SEGMENT_COLOR_INVALID[0]     //
++  CHECK_BOOL(color[0] != vtkSegment::SEGMENT_COLOR_INVALID[0]      //
 +               || color[1] != vtkSegment::SEGMENT_COLOR_INVALID[1] //
 +               || color[2] != vtkSegment::SEGMENT_COLOR_INVALID[2],
 +             true);
@@ -123,16 +132,110 @@ index 0000000000..87252df115
 +
 +  return EXIT_SUCCESS;
 +}
++
++//----------------------------------------------------------------------------
++int TestSegmentDisplayPropertiesInAddedDisplayNode()
++{
++  vtkNew<vtkMRMLScene> scene;
++  vtkNew<vtkMRMLSegmentationNode> segmentationNode;
++  scene->AddNode(segmentationNode);
++
++  // A segment that is added without a display node keeps the invalid color
++  vtkSegmentation* segmentation = segmentationNode->GetSegmentation();
++  const std::string segmentId = "segment";
++  segmentation->AddEmptySegment(segmentId);
++  double color[3] = { 0.0, 0.0, 0.0 };
++  segmentation->GetSegment(segmentId)->GetColor(color);
++  CHECK_DOUBLE(color[0], vtkSegment::SEGMENT_COLOR_INVALID[0]);
++  CHECK_DOUBLE(color[1], vtkSegment::SEGMENT_COLOR_INVALID[1]);
++  CHECK_DOUBLE(color[2], vtkSegment::SEGMENT_COLOR_INVALID[2]);
++
++  // The display node has display properties for a segment that is not in the segmentation yet
++  // (as when display properties are read from a scene file before the segments are read)
++  vtkNew<vtkMRMLSegmentationDisplayNode> displayNode;
++  scene->AddNode(displayNode);
++  const std::string notYetAddedSegmentId = "notYetAddedSegment";
++  vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties hiddenSegmentProperties;
++  hiddenSegmentProperties.Visible = false;
++  displayNode->SetSegmentDisplayProperties(notYetAddedSegmentId, hiddenSegmentProperties);
++
++  // The segment list of the display node is updated as soon as it is added:
++  // the segment gets a generated color without any display property being requested
++  segmentationNode->SetAndObserveDisplayNodeID(displayNode->GetID());
++  segmentation->GetSegment(segmentId)->GetColor(color);
++  CHECK_BOOL(color[0] != vtkSegment::SEGMENT_COLOR_INVALID[0]      //
++               || color[1] != vtkSegment::SEGMENT_COLOR_INVALID[1] //
++               || color[2] != vtkSegment::SEGMENT_COLOR_INVALID[2],
++             true);
++
++  // Display properties of the segment that was not in the segmentation are kept
++  segmentation->AddEmptySegment(notYetAddedSegmentId);
++  CHECK_BOOL(displayNode->GetSegmentVisibility(notYetAddedSegmentId), false);
++  CHECK_BOOL(displayNode->GetSegmentVisibility(segmentId), true);
++
++  return EXIT_SUCCESS;
++}
 +} // namespace
 +
 +//----------------------------------------------------------------------------
 +int vtkMRMLSegmentationNodeTest1(int, char*[])
 +{
++  vtkSegmentationConverterFactory* converterFactory = vtkSegmentationConverterFactory::GetInstance();
++  converterFactory->RegisterConverterRule(vtkSmartPointer<vtkBinaryLabelmapToClosedSurfaceConversionRule>::New());
++  converterFactory->RegisterConverterRule(vtkSmartPointer<vtkClosedSurfaceToBinaryLabelmapConversionRule>::New());
++
 +  CHECK_EXIT_SUCCESS(TestSegmentDisplayPropertiesInAllDisplayNodes());
++  CHECK_EXIT_SUCCESS(TestSegmentDisplayPropertiesInAddedDisplayNode());
 +  return EXIT_SUCCESS;
 +}
+diff --git a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
+index d1efb07bed..fddaa170d1 100644
+--- a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
++++ b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
+@@ -164,6 +164,18 @@ public:
+   /// Clear segment display properties
+   void ClearSegmentDisplayProperties();
+ 
++  //@{
++  /// Update the list of segment display properties: add default properties (and generate a color
++  /// if the segment has none) for segments that have no properties yet, and remove properties of
++  /// segments that are no longer in the segmentation. Does nothing if the segmentation has not changed.
++  /// The segmentation node calls it when a display node or a segment is added, or a segment is removed.
++  /// \param removeUnusedDisplayProperties Remove properties of segments that are not in the segmentation.
++  ///   False when segments are added, to keep properties read from a scene file before the segments.
++  ///   Default: the RemoveUnusedDisplayProperties setting.
++  void UpdateSegmentList();
++  void UpdateSegmentList(bool removeUnusedDisplayProperties);
++  //@}
++
+   /// Determine and set automatic opacities for segments using topological hierarchies.
+   /// Stores value in opacity component of \sa SegmentDisplayProperties.
+   /// \return Success flag
+@@ -331,22 +343,12 @@ protected:
+   /// Convenience function for getting all segment IDs.
+   void GetSegmentIDs(std::vector<std::string>& segmentIDs, bool visibleSegmentsOnly);
+ 
+-  //@{
+-  /// Update list of segment display properties.
+-  /// Remove entries for missing segments (if removeUnusedDisplayProperties is enabled)
+-  /// and add missing entries for existing segments.
+-  void UpdateSegmentList();
+-  void UpdateSegmentList(bool removeUnusedDisplayProperties);
+-  //@}
+-
+ protected:
+   vtkMRMLSegmentationDisplayNode();
+   ~vtkMRMLSegmentationDisplayNode() override;
+   vtkMRMLSegmentationDisplayNode(const vtkMRMLSegmentationDisplayNode&);
+   void operator=(const vtkMRMLSegmentationDisplayNode&);
+ 
+-  friend class vtkMRMLSegmentationNode; // Access to UpdateSegmentList();
+-
+ protected:
+   /// Name of representation that is displayed in 2D views as outline or filled area
+   /// if exists. If does not exist, then source representation is displayed.
 diff --git a/Libs/MRML/Core/vtkMRMLSegmentationNode.cxx b/Libs/MRML/Core/vtkMRMLSegmentationNode.cxx
-index 792d735bdd..e7a282b599 100644
+index 792d735bdd..7f0e870d09 100644
 --- a/Libs/MRML/Core/vtkMRMLSegmentationNode.cxx
 +++ b/Libs/MRML/Core/vtkMRMLSegmentationNode.cxx
 @@ -297,25 +297,31 @@ void vtkMRMLSegmentationNode::OnSourceRepresentationModified()
@@ -178,6 +281,59 @@ index 792d735bdd..e7a282b599 100644
    }
  }
  
+@@ -1191,6 +1197,17 @@ void vtkMRMLSegmentationNode::OnNodeReferenceAdded(vtkMRMLNodeReference* referen
+   {
+     this->InvokeCustomModifiedEvent(vtkMRMLSegmentationNode::ReferenceImageGeometryChangedEvent, reference->GetReferencedNode());
+   }
++  else if (std::string(reference->GetReferenceRole()) == this->GetDisplayNodeReferenceRole())
++  {
++    vtkMRMLSegmentationDisplayNode* displayNode = vtkMRMLSegmentationDisplayNode::SafeDownCast(reference->GetReferencedNode());
++    if (displayNode)
++    {
++      // Make sure the display properties of the segments are as expected as soon as the display node is added.
++      // removeUnusedDisplayProperties is set to false to prevent removing of display properties of segments
++      // that are not added to the segmentation node yet (this occurs during scene loading).
++      displayNode->UpdateSegmentList(false);
++    }
++  }
+ }
+ 
+ //----------------------------------------------------------------------------
+@@ -1201,6 +1218,17 @@ void vtkMRMLSegmentationNode::OnNodeReferenceModified(vtkMRMLNodeReference* refe
+   {
+     this->InvokeCustomModifiedEvent(vtkMRMLSegmentationNode::ReferenceImageGeometryChangedEvent, reference->GetReferencedNode());
+   }
++  else if (std::string(reference->GetReferenceRole()) == this->GetDisplayNodeReferenceRole())
++  {
++    vtkMRMLSegmentationDisplayNode* displayNode = vtkMRMLSegmentationDisplayNode::SafeDownCast(reference->GetReferencedNode());
++    if (displayNode)
++    {
++      // Make sure the display properties of the segments are as expected as soon as the display node is added.
++      // removeUnusedDisplayProperties is set to false to prevent removing of display properties of segments
++      // that are not added to the segmentation node yet (this occurs during scene loading).
++      displayNode->UpdateSegmentList(false);
++    }
++  }
+ }
+ 
+ //----------------------------------------------------------------------------
+diff --git a/Libs/MRML/Core/vtkMRMLSegmentationNode.h b/Libs/MRML/Core/vtkMRMLSegmentationNode.h
+index 10b262962f..3a946a99f2 100644
+--- a/Libs/MRML/Core/vtkMRMLSegmentationNode.h
++++ b/Libs/MRML/Core/vtkMRMLSegmentationNode.h
+@@ -360,10 +360,10 @@ protected:
+   static const char* GetLabelmapConversionColorTableNodeReferenceRole() { return "labelmapConversionColorTableNode"; };
+   static const char* GetLabelmapConversionColorTableNodeReferenceMRMLAttributeName() { return "labelmapConversionColorTableNodeRef"; };
+ 
+-  /// Reimplemented to invoke ReferenceImageGeometryChangedEvent
++  /// Reimplemented to invoke ReferenceImageGeometryChangedEvent and to update the segment list of a display node that is added
+   void OnNodeReferenceAdded(vtkMRMLNodeReference* reference) override;
+ 
+-  /// Reimplemented to invoke ReferenceImageGeometryChangedEvent
++  /// Reimplemented to invoke ReferenceImageGeometryChangedEvent and to update the segment list of a display node that is added
+   void OnNodeReferenceModified(vtkMRMLNodeReference* reference) override;
+ 
+   /// Reimplemented to invoke ReferenceImageGeometryChangedEvent
 -- 
 2.44.0.windows.1
 

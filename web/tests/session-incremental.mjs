@@ -47,6 +47,10 @@ line.AddControlPoint(10, 0, 0)
 computed = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "Computed")
 slicer.util.updateVolumeFromArray(computed, np.zeros((20, 64, 64), dtype=np.int16))
 segmentation = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Segmentation")
+# Fully specified, as the Segmentations module makes one: the display node gives the segment its color
+# when it is added. A segment saved without a color gets one when it is first displayed after loading,
+# which is a change that is saved.
+segmentation.CreateDefaultDisplayNodes()
 segmentation.GetSegmentation().AddEmptySegment("tissue")
 `);
 

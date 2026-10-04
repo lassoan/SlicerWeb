@@ -24,7 +24,7 @@ Needs the GitHub CLI, signed in with a token that may write to the repository (g
 
 A deployment's build goes to a release of the deployment's repository, whose "Publish app" workflow
 calls this repository's (docs/extensions.md). With --deployment, a checkout of that repository, the
-dist folder and the repository are those of the deployment (its local.env, else the dist folder
+dist folder and the repository are those of the deployment (its .env, else the dist folder
 build.py --deployment used, and the repository it is a checkout of). A build is not uploaded to a
 public repository if it has an extension whose source cannot be read without a token: private
 extensions go to a private repository.

@@ -1,0 +1,10 @@
+{
+  "extensions": {
+    "slicerweb": "all"
+  },
+  "features": {
+    "developerMode": "enabledByDefault",
+    "pythonConsole": true,
+    "extensionsManager": true
+  }
+}

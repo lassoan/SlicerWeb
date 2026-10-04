@@ -4,7 +4,7 @@ Cloudflare Access to the email addresses of one domain.
 
     python scripts/publish_test_site.py --deployment ../SlicerWeb-test-site
 
-What it needs, in local.env of that folder (or the environment) - a folder of its own, outside this
+What it needs, in .env of that folder (or the environment) - a folder of its own, outside this
 repository, which holds no secrets:
 
     TEST_SITE_HOSTNAME=slicerweb.example.org     the hostname of the tunnel
@@ -15,8 +15,9 @@ repository, which holds no secrets:
     TEST_SITE_LOCAL_URL=http://localhost:4173/   where the site is served here (default)
 
 and an API token with the "Access: Apps and Policies - Edit" account permission, in the file
-.secrets/cloudflare-api-token of that folder or in CLOUDFLARE_API_TOKEN. The tunnel and its DNS
-record are made once with cloudflared. The site is served here with: cd web; npx vite preview --port 4173
+cloudflare-api-token of the folder that SW_SECRETS in that .env names, or in CLOUDFLARE_API_TOKEN.
+The tunnel and its DNS record are made once with cloudflared. The site is served here with:
+cd web; npx vite preview --port 4173
 
 The tunnel is started only after Access protection of the hostname has been verified.
 """
@@ -76,11 +77,11 @@ def main():
     missing = [name for name in ("TEST_SITE_HOSTNAME", "TEST_SITE_EMAIL_DOMAIN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARED_CONFIG")
                if not setting(name)]
     if missing:
-        sys.exit(f"Set {', '.join(missing)} in local.env (see: python scripts/publish_test_site.py --help)")
+        sys.exit(f"Set {', '.join(missing)} in .env (see: python scripts/publish_test_site.py --help)")
     hostname, emailDomain = setting("TEST_SITE_HOSTNAME"), setting("TEST_SITE_EMAIL_DOMAIN")
     token = secret("CLOUDFLARE_API_TOKEN", "cloudflare-api-token")
     if not token:
-        sys.exit("Save the API token (Access: Apps and Policies - Edit) in .secrets/cloudflare-api-token of the --deployment folder")
+        sys.exit("Save the API token (Access: Apps and Policies - Edit) in cloudflare-api-token of the folder SW_SECRETS names (.env of the --deployment folder)")
     apps = f"https://api.cloudflare.com/client/v4/accounts/{setting('CLOUDFLARE_ACCOUNT_ID')}/access/apps"
 
     app = {

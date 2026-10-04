@@ -103,8 +103,8 @@ fetched source; they are for the libraries SlicerWeb builds itself (Slicer, VTK,
 ### Sources
 
 The build fetches private repositories with a GitHub token: the environment variable `SW_GIT_TOKEN`,
-or the file `.secrets/github-token` of the deployment folder (`build.py --deployment`, below). This
-repository holds no secrets. Git and pip get it from a credential helper, so it is not
+or the file `github-token` of the folder that `SW_SECRETS` in `.env` names (below), outside the
+checkouts: no checkout holds secrets. Git and pip get it from a credential helper, so it is not
 part of any URL or log. SSH URLs of GitHub (`git@github.com:org/repo.git`) are fetched over HTTPS
 with it.
 
@@ -117,40 +117,44 @@ scripts of the Python packages. Use a
 
 A site is published from a repository of its own, a *deployment*: it configures the application -
 which extensions its build has, which features it offers - and holds the workflow that publishes
-the site. It holds nothing else - no settings of a computer, no secrets, nothing built:
+the site. It holds nothing else - no secrets, nothing built - but for the env file of this computer,
+`.env`, which its `.gitignore` keeps out of the repository:
 
 ```
 slicerweb-deploy/
 ├── application.json                   the configuration of the application, its extensions among it
 ├── extensions/*.json                  description files of its own: other extensions, private ones among them
 ├── .github/workflows/publish-app.yml  builds and publishes the site
+├── .gitignore                         keeps .env out
+├── .env                               where everything is on this computer (not committed)
 └── README.md
 ```
 
-It is built, published and tried with `slicerweb.py` of this repository (`slicerweb.bat` on
-Windows), given a settings file that says where everything is on this computer - kept outside the
-checkouts, which hold sources only (see `deployment.env.example`):
+It is built, published and tried with `slicerweb.py` of this repository, run in the deployment
+checkout (or given it with `-C <folder>`). Its `.env` (copied from
+`examples/minimal/.env.example` of this repository) says where everything is on this computer:
 
 ```
-SW_SLICERWEB=C:/D/SlicerWeb                           # this checkout
-SW_DEPLOYMENT=C:/D/slicerweb-deploy                   # the deployment checkout
-SW_DIST=D:/SlicerWeb-build/dist-slicerweb-deploy      # everything built: wheels, extensions, the web application, sample data
+SW_SLICERWEB=C:/D/SlicerWeb                             # the SlicerWeb checkout that builds it
+SW_DIST=D:/SlicerWeb-build/dist-slicerweb-deploy        # everything built: wheels, extensions, the web application, sample data
 SW_SECRETS=D:/SlicerWeb-build/secrets/slicerweb-deploy  # github-token: read access to the private repositories (optional)
-SW_PORT=4175                                          # the port of serve
+SW_PORT=4175                                            # the port of serve
 ```
 
 ```sh
-python slicerweb.py D:/SlicerWeb-build/slicerweb-deploy.env build                       # everything
-python slicerweb.py D:/SlicerWeb-build/slicerweb-deploy.env build extensions            # all extensions
-python slicerweb.py D:/SlicerWeb-build/slicerweb-deploy.env build SlicerHeart SlicerRT  # these extensions
-python slicerweb.py D:/SlicerWeb-build/slicerweb-deploy.env deploy [channel]            # publish (latest by default)
-python slicerweb.py D:/SlicerWeb-build/slicerweb-deploy.env serve                       # try it in the browser
-python slicerweb.py D:/SlicerWeb-build/slicerweb-deploy.env stop                        # stop that server
+cd C:/D/slicerweb-deploy
+python C:/D/SlicerWeb/slicerweb.py build                                  # everything
+python C:/D/SlicerWeb/slicerweb.py build extensions                       # all extensions
+python C:/D/SlicerWeb/slicerweb.py build extensions SlicerHeart SlicerRT  # these extensions
+python C:/D/SlicerWeb/slicerweb.py deploy [channel]                       # publish (latest by default)
+python C:/D/SlicerWeb/slicerweb.py serve                                  # try it in the browser
+python C:/D/SlicerWeb/slicerweb.py stop                                   # stop that server
 ```
 
-Without `SW_DEPLOYMENT`, the settings file builds SlicerWeb with its own extensions (and cannot
-deploy). `slicerweb.py` calls `build.py --deployment` and `scripts/publish_runtime.py --deployment`,
-which may also be run themselves.
+The [examples](../examples/README.md) of this repository are folders of the same kind, built the
+same way, but not published: to publish one, copy it to a repository of its own. `slicerweb.py`
+calls `build.py --deployment` and `scripts/publish_runtime.py --deployment`, which may also be run
+themselves.
 
 `application.json`:
 
@@ -169,7 +173,8 @@ which may also be run themselves.
 ```
 
 - `extensions.slicerweb` names extensions described in `extensions/` of this repository, so that
-  they are not copied and kept up to date in every deployment.
+  they are not copied and kept up to date in every deployment - or is `"all"`, for every one of them
+  (also those added later).
 - `extensions.folder` is a folder of description files of the deployment's own (relative to
   `application.json`): each adds an extension, or takes the place of the one of this repository of
   the same name (to build it at another revision, say).

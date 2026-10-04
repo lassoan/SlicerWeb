@@ -4,7 +4,7 @@ application published as static files can read files of servers that refuse cros
 
     python scripts/publish_download_proxy.py --deployment ../SlicerWeb-test-site
 
-What it needs, in local.env of that folder (or the environment) - a folder of its own, outside this
+What it needs, in .env of that folder (or the environment) - a folder of its own, outside this
 repository, which holds no secrets:
 
     CLOUDFLARE_ACCOUNT_ID=...
@@ -15,7 +15,7 @@ repository, which holds no secrets:
     DOWNLOAD_PROXY_MAX_BYTES=4294967296             largest file it passes on (default: 4 GB)
 
 and an API token with the "Workers Scripts - Edit" account permission, in the file
-.secrets/cloudflare-api-token of that folder or in CLOUDFLARE_API_TOKEN.
+cloudflare-api-token of the folder that SW_SECRETS in that .env names, or in CLOUDFLARE_API_TOKEN.
 
 The Worker is published at https://<name>.<account subdomain>.workers.dev/, and that address is
 checked before it is printed. The application is then built with it (.github/workflows/publish-app.yml
@@ -110,10 +110,10 @@ def main():
 
     account = setting("CLOUDFLARE_ACCOUNT_ID")
     if not account:
-        sys.exit("CLOUDFLARE_ACCOUNT_ID is not set (local.env of the --deployment folder, or the environment)")
+        sys.exit("CLOUDFLARE_ACCOUNT_ID is not set (.env of the --deployment folder, or the environment)")
     token = secret("CLOUDFLARE_API_TOKEN", "cloudflare-api-token")
     if not token:
-        sys.exit("Save the API token (Workers Scripts - Edit) in .secrets/cloudflare-api-token of the --deployment folder")
+        sys.exit("Save the API token (Workers Scripts - Edit) in cloudflare-api-token of the folder SW_SECRETS names (.env of the --deployment folder)")
     name = setting("DOWNLOAD_PROXY_NAME", "slicerweb-download")
     origins = setting("DOWNLOAD_PROXY_ORIGINS", "https://lassoan.github.io")
     maxBytes = setting("DOWNLOAD_PROXY_MAX_BYTES", str(4 * 1024 ** 3))

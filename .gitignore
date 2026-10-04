@@ -7,9 +7,10 @@ __pycache__/
 web/**/dist/
 .vite/
 
-# Local credentials and settings of this computer (never committed)
+# Local credentials and settings of this computer (never committed): the env files of the
+# applications (examples/*/.env)
 /.secrets/
-/local.env
+.env
 
 # Screenshots the browser tests write when they are given a bare file name. They can hold whatever
 # was on the screen - patient data, among other things - so none of them belong in the repository.

@@ -1,33 +1,38 @@
 #!/usr/bin/env python3
-"""Build, publish and try a SlicerWeb application, as a settings file says.
+"""Build, publish and try a SlicerWeb application, as the env file of its folder says.
 
-    python slicerweb.py <settings file> build                       everything (each stage redoes only what changed)
-    python slicerweb.py <settings file> build extensions            all extensions
-    python slicerweb.py <settings file> build SlicerHeart SlicerRT  these extensions (or stages: build 60-wheels)
-    python slicerweb.py <settings file> deploy [channel]            publish the build (channel latest by default)
-    python slicerweb.py <settings file> serve                       try the build in the browser (Ctrl+C stops it)
-    python slicerweb.py <settings file> stop [port]                 stop a server started by serve or dev (one without a window, say)
-    python slicerweb.py <settings file> dev                         the development server of the web application (Ctrl+C stops it)
-    python slicerweb.py <settings file> test tests/x.mjs [args]     run a test of the web application (web/tests)
+    python slicerweb.py build                       everything (each stage redoes only what changed)
+    python slicerweb.py build extensions            all extensions
+    python slicerweb.py build extensions SlicerRT   these extensions (names of the application's extensions)
+    python slicerweb.py build 50-slicer 60-wheels   these stages of the build (scripts/stages)
+    python slicerweb.py deploy [channel]            publish the build (channel latest by default)
+    python slicerweb.py serve                       try the build in the browser (Ctrl+C stops it)
+    python slicerweb.py stop [port]                 stop a server started by serve or dev (one without a window, say)
+    python slicerweb.py dev                         the development server of the web application (Ctrl+C stops it)
+    python slicerweb.py test tests/x.mjs [args]     run a test of the web application (web/tests)
 
-On Windows, slicerweb.bat <settings file> <command> does the same.
+    python slicerweb.py -C <folder> <command> ...   the same, for the application of that folder
 
-The settings file says where everything is, as NAME=value lines (deployment.env.example). It is
-kept outside the checkouts: they hold sources only, and everything built goes to SW_DIST - also what
-npm installs: the web application is built, served and tested in a copy of web/ in
+The folder - the current folder, or the one -C (--folder) gives; parent folders are not searched -
+is that of the application: its application.json configures the application and says which
+extensions it has. It is a deployment (docs/extensions.md), the checkout of a repository of its
+own, which the build is published to; or an example of SlicerWeb (examples/full: all of its
+extensions, examples/minimal), which is not published. Its env file, .env, says where everything is
+on this computer, as NAME=value lines (copied from .env.example of an example); .gitignore keeps it
+out of the repository. Nothing built goes in a checkout: everything goes to SW_DIST - also what npm
+installs: the web application is built, served and tested in a copy of web/ in
 SW_DIST/web-workspace, which follows the checkout (dev copies each change while it runs).
 
     SW_SLICERWEB    the SlicerWeb checkout (default: the one this script is in)
-    SW_DEPLOYMENT   a deployment checkout (docs/extensions.md): its application.json configures the
-                    application and says which extensions it has, and the build is published to its
-                    repository. Without one: the extensions of SlicerWeb, defaults, and no deploy
     SW_DIST         where everything built goes: wheels, extensions, the web application, sample data
     SW_SECRETS      a folder of secrets: github-token, read access to private extensions (optional)
+    SW_BUILD_VOLUME the Docker volume of the build trees of SW_SLICERWEB (default slicerweb-build):
+                    one for each SlicerWeb checkout, shared by the applications it builds
     SW_PORT         the port of serve (default 4175)
     SW_DEV_PORT     the port of dev (default 5173)
 
-A relative path is relative to the settings file. An environment variable of the same name
-overrides a line.
+A relative path is relative to the folder. An environment variable of the same name overrides a
+line.
 """
 import sys
 
@@ -46,10 +51,28 @@ GENERATED = {"node_modules", "dist", ".vite"}
 WORKSPACE_FILES = {"package-lock.sha256"}
 
 
-def read_settings(path):
+def is_slicerweb(folder):
+    return os.path.isfile(os.path.join(folder, "build.py")) and os.path.isfile(os.path.join(folder, "slicerweb.py"))
+
+
+def is_inside(folder, parent):
+    folder, parent = os.path.normcase(os.path.abspath(folder)), os.path.normcase(os.path.abspath(parent))
+    return folder == parent or folder.startswith(parent.rstrip(os.sep) + os.sep)
+
+
+def read_settings(folder):
+    """The settings of the application of a folder (one with application.json): its .env, and
+    "application", the folder."""
+    folder = os.path.abspath(folder)
+    if not os.path.isdir(folder):
+        sys.exit(f"Not a folder: {folder}")
+    if not os.path.isfile(os.path.join(folder, "application.json")):
+        sys.exit(f"{folder} is not the folder of an application (it has no application.json): run this in a "
+                 "deployment checkout or an example of SlicerWeb (examples/full), or give one with -C <folder>")
+    path = os.path.join(folder, ".env")
     if not os.path.isfile(path):
-        sys.exit(f"Settings file not found: {path}")
-    folder = os.path.dirname(os.path.abspath(path))
+        sys.exit(f"{path} not found: copy .env.example of an example of SlicerWeb (examples/) there and set the "
+                 "paths of this computer")
     values = {}
     with open(path, encoding="utf-8") as handle:
         for line in handle:
@@ -59,17 +82,15 @@ def read_settings(path):
                 values[name.strip()] = value.split(" #", 1)[0].strip()
     for name in list(values):
         values[name] = os.environ.get(name) or values[name]
-    for name in ("SW_SLICERWEB", "SW_DEPLOYMENT", "SW_DIST", "SW_SECRETS"):
+    for name in ("SW_SLICERWEB", "SW_DIST", "SW_SECRETS"):
         if values.get(name):
             values[name] = os.path.normpath(os.path.join(folder, os.path.expanduser(values[name])))
     values.setdefault("SW_SLICERWEB", os.path.dirname(os.path.abspath(__file__)))
     if not values.get("SW_DIST"):
         sys.exit(f"{path}: SW_DIST is not set (where everything built goes, outside the checkouts)")
-    for name in ("SW_SLICERWEB", "SW_DEPLOYMENT"):
-        if values.get(name) and not os.path.isdir(values[name]):
-            sys.exit(f"{path}: {name} is not a folder: {values[name]}")
-    if not os.path.isfile(os.path.join(values["SW_SLICERWEB"], "build.py")):
+    if not is_slicerweb(values["SW_SLICERWEB"]):
         sys.exit(f"{path}: SW_SLICERWEB is not a SlicerWeb checkout: {values['SW_SLICERWEB']}")
+    values["application"] = folder
     return values
 
 
@@ -92,52 +113,44 @@ def run(command, settings, cwd=None):
 
 
 def extension_names(settings):
-    """The extensions of the build: those of SlicerWeb that the deployment names and its own, or all of
-    SlicerWeb's."""
+    """The extensions of the build: those of SlicerWeb that the application names (or all), and its own."""
     sys.path.insert(0, os.path.join(settings["SW_SLICERWEB"], "scripts"))
     import localsettings
-    names = set()
-    if settings.get("SW_DEPLOYMENT"):
-        localsettings.use_deployment(settings["SW_DEPLOYMENT"])
-        names.update(localsettings.deployment_extension_names())
-        names.update(localsettings.deployment_extension_files())
-    else:
-        folder = os.path.join(settings["SW_SLICERWEB"], "extensions")
-        names.update(os.path.splitext(f)[0] for f in os.listdir(folder) if f.endswith(".json"))
-    return names
+    localsettings.use_deployment(settings["application"])
+    return set(localsettings.deployment_extension_names()) | set(localsettings.deployment_extension_files())
 
 
 def build(settings, args):
-    command = [sys.executable, "build.py", "--dist", settings["SW_DIST"]]
-    if settings.get("SW_DEPLOYMENT"):
-        command += ["--deployment", settings["SW_DEPLOYMENT"]]
+    command = [sys.executable, "build.py", "--dist", settings["SW_DIST"], "--deployment", settings["application"]]
     stages_folder = os.path.join(settings["SW_SLICERWEB"], "scripts", "stages")
     stages = sorted(os.path.splitext(f)[0] for f in os.listdir(stages_folder) if f.endswith(".sh"))
     if not args:
         return run(command + ["all"], settings)
-    if args == ["extensions"]:
+    if args[0] == "extensions":
+        names = args[1:]
+        if names:
+            known = extension_names(settings)
+            unknown = [n for n in names if n not in known]
+            if unknown:
+                sys.exit(f"Not an extension of this application: {', '.join(unknown)}\n"
+                         f"  its extensions: {', '.join(sorted(known))}")
+            command += ["--extensions", " ".join(names)]
         return run(command + ["80-extensions"], settings)
-    known = extension_names(settings)
-    chosen_stages = [a for a in args if a in stages]
-    extensions = [a for a in args if a not in stages]
-    unknown = [a for a in extensions if a not in known]
+    unknown = [a for a in args if a not in stages]
     if unknown:
-        sys.exit(f"Not an extension of this build nor a stage: {', '.join(unknown)}\n"
-                 f"  extensions: {', '.join(sorted(known))}\n  stages: {', '.join(stages)}")
-    if extensions:
-        command += ["--extensions", " ".join(extensions)]
-        if "80-extensions" not in chosen_stages:
-            chosen_stages.append("80-extensions")
-    return run(command + chosen_stages, settings)
+        sys.exit(f"Not a stage of the build: {', '.join(unknown)} (extensions are built with: build extensions "
+                 f"[names])\n  stages: {', '.join(stages)}")
+    return run(command + args, settings)
 
 
 def deploy(settings, args):
-    if not settings.get("SW_DEPLOYMENT"):
-        sys.exit("deploy publishes a deployment: set SW_DEPLOYMENT in the settings file")
+    if is_inside(settings["application"], settings["SW_SLICERWEB"]):
+        sys.exit("deploy publishes a deployment, the checkout of a repository of its own: an example of SlicerWeb is not "
+                 "published (copy it to a repository of its own)")
     if len(args) > 1:
         sys.exit("deploy [channel]")
     channel = args[0] if args else "latest"
-    return run([sys.executable, os.path.join("scripts", "publish_runtime.py"), "--deployment", settings["SW_DEPLOYMENT"],
+    return run([sys.executable, os.path.join("scripts", "publish_runtime.py"), "--deployment", settings["application"],
                 "--dist", settings["SW_DIST"], "--channel", channel, "--publish"], settings)
 
 
@@ -206,8 +219,7 @@ def web_workspace(settings):
     # the configuration of the application as the deployment has it now (wheels/application.json)
     sys.path.insert(0, os.path.join(settings["SW_SLICERWEB"], "scripts"))
     import localsettings
-    if settings.get("SW_DEPLOYMENT"):
-        localsettings.use_deployment(settings["SW_DEPLOYMENT"])
+    localsettings.use_deployment(settings["application"])
     localsettings.write_application_config(dist)
     env = dict(environment(settings),
                SLICERWEB_WHEELS=os.path.join(dist, "wheels"),
@@ -235,7 +247,7 @@ def web_workspace(settings):
 
 def serve(settings, args):
     if args:
-        sys.exit("serve (the port is SW_PORT of the settings file)")
+        sys.exit("serve (the port is SW_PORT of .env)")
     port = int(settings.get("SW_PORT") or 4175)
     dist = settings["SW_DIST"]
     if not os.path.isdir(os.path.join(dist, "wheels")):
@@ -263,7 +275,7 @@ def dev(settings, args):
     """The development server of the web application, in the copy of web/: a change of the checkout is
     copied there as it is saved, and Vite reloads it."""
     if args:
-        sys.exit("dev (the port is SW_DEV_PORT of the settings file)")
+        sys.exit("dev (the port is SW_DEV_PORT of .env)")
     port = int(settings.get("SW_DEV_PORT") or 5173)
     if port_in_use(port):
         sys.exit(f"Port {port} is already in use: a server is running there. Stop it (stop {port}), or open http://localhost:{port}/")
@@ -302,7 +314,7 @@ def test(settings, args):
 
 def stop(settings, args):
     if len(args) > 1:
-        sys.exit("stop [port] (default: SW_PORT of the settings file)")
+        sys.exit("stop [port] (default: SW_PORT of .env)")
     port = int(args[0]) if args else int(settings.get("SW_PORT") or 4175)
     if not port_in_use(port):
         print(f"Nothing is serving on port {port}")
@@ -322,12 +334,18 @@ def stop(settings, args):
 
 def main():
     sys.stdout.reconfigure(line_buffering=True)
-    if len(sys.argv) < 3 or sys.argv[2] not in COMMANDS:
+    argv = sys.argv[1:]
+    folder = os.getcwd()
+    if argv and argv[0] in ("-C", "--folder"):
+        if len(argv) < 2:
+            sys.exit(f"{argv[0]} <folder>: the folder of the application (with application.json)")
+        folder, argv = argv[1], argv[2:]
+    if not argv or argv[0] not in COMMANDS:
         print(__doc__)
         return 2
-    settings = read_settings(sys.argv[1])
-    command, args = sys.argv[2], sys.argv[3:]
-    where = f"{settings.get('SW_DEPLOYMENT') or 'SlicerWeb extensions'} -> {settings['SW_DIST']}"
+    settings = read_settings(folder)
+    command, args = argv[0], argv[1:]
+    where = f"{os.path.join(settings['application'], '.env')} -> {settings['SW_DIST']}"
     print(f"{command} {' '.join(args)}: {where}".replace("  ", " "), flush=True)
     return {"build": build, "deploy": deploy, "serve": serve, "stop": stop, "dev": dev, "test": test}[command](settings, args)
 

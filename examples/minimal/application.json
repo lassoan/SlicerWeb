@@ -1,0 +1,11 @@
+{
+  "extensions": {
+    "slicerweb": ["SegmentEditorExtraEffects"],
+    "folder": "extensions"
+  },
+  "features": {
+    "developerMode": "disabledByDefault",
+    "pythonConsole": false,
+    "extensionsManager": false
+  }
+}

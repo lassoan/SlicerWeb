@@ -83,25 +83,29 @@ python build.py all                   # every stage, a few hours from cold
 python build.py 50-slicer 60-wheels   # or just the stages that matter after a change
 ```
 
-What differs from one computer to another - where everything built goes, where the checkouts are,
-the secrets - goes in a settings file outside the checkouts, which `slicerweb.py` takes
-(`slicerweb.bat` on Windows; see `deployment.env.example`):
+`slicerweb.py` builds an application: the folder it is run in, or the one `-C <folder>` names. Its
+`application.json` says which extensions the application has and which features it offers.
+[examples/](examples/README.md) has two: `full`, with every extension of `extensions/` - the
+application SlicerWeb is developed with - and `minimal`. A deployment is such a folder in a
+repository of its own, which the build is published to
+([docs/extensions.md](docs/extensions.md)).
+
+What differs from one computer to another - where everything built goes, where the SlicerWeb
+checkout is, where the secrets are - goes in the env file of the application, `.env` in its folder
+(copied from its `.env.example`; `.gitignore` keeps it out of the repository). No checkout holds
+secrets: `SW_SECRETS` of `.env` names a folder outside them.
 
 ```sh
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env build                      # everything
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env build SlicerHeart SlicerRT # these extensions
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env serve                      # try the build in the browser
+python slicerweb.py -C examples/full build                                  # everything
+python slicerweb.py -C examples/full build extensions SlicerHeart SlicerRT  # these extensions
+python slicerweb.py -C examples/full serve                                  # try the build in the browser
 ```
-
-A settings file without `SW_DEPLOYMENT` builds SlicerWeb with the extensions of `extensions/`; one
-with it builds and deploys that deployment ([docs/extensions.md](docs/extensions.md)). This
-repository holds no secrets.
 
 The stages are in `scripts/stages/`: the sources and patches (`00`), VTK's compile tools for the
 host (`10`) and VTK itself (`20`), ITK (`30`), teem, libarchive and the rest (`40`),
 SlicerExecutionModel (`45`), the Slicer libraries and modules (`50`), the wheels (`60`), a smoke
 test (`70`) and the extensions (`80`, which packages their wheels too). The wheels land in
-`D:\SlicerWeb-build\dist`.
+`SW_DIST/wheels`.
 
 Patches to the upstream projects are in `patches/`, applied by stage `00` and kept small enough to
 be sent upstream — the interesting ones are the WebGL fixes in `patches/VTK/` and the one that lets
@@ -110,8 +114,8 @@ Slicer's application logic work without threads.
 ## Running it
 
 ```bash
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env dev     # the development server (SW_DEV_PORT, default http://localhost:5173)
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env serve   # the built application (SW_PORT, default http://localhost:4175)
+python slicerweb.py -C examples/full dev     # the development server (SW_DEV_PORT, default http://localhost:5173)
+python slicerweb.py -C examples/full serve   # the built application (SW_PORT, default http://localhost:4175)
 ```
 
 Nothing is generated in the checkout: the web application runs in a copy of `web/` in
@@ -147,12 +151,12 @@ history for ever, so the site is pushed to the branch `deploy/latest` of lassoan
 single commit with no parent: it holds one build and no history.
 
 The wheels take hours to compile and no runner could build them, so they travel through a release
-(`runtime-latest` of lassoan/slicerweb-app), with a settings file whose `SW_DEPLOYMENT` is a
-checkout of it:
+(`runtime-latest` of lassoan/slicerweb-app), from a checkout of it:
 
 ```sh
-python slicerweb.py D:/SlicerWeb-build/slicerweb-app.env build    # build them here
-python slicerweb.py D:/SlicerWeb-build/slicerweb-app.env deploy   # upload them, and rebuild the site
+cd C:/D/slicerweb-app
+python C:/D/SlicerWeb/slicerweb.py build    # build them here
+python C:/D/SlicerWeb/slicerweb.py deploy   # upload them, and rebuild the site
 ```
 
 The site repository's Pages source is its branch
@@ -166,9 +170,9 @@ The tests drive a real browser (Playwright, `channel: "chrome"`) against a runni
 check what the page and the scene actually did:
 
 ```bash
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env test tests/browser-smoke.mjs "http://localhost:5173/?sample=CTChest"
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env test tests/segment-editor-effects.mjs
-python slicerweb.py D:/SlicerWeb-build/slicerweb.env test tests/volume-rendering.mjs
+python slicerweb.py -C examples/full test tests/browser-smoke.mjs "http://localhost:5173/?sample=CTChest"
+python slicerweb.py -C examples/full test tests/segment-editor-effects.mjs
+python slicerweb.py -C examples/full test tests/volume-rendering.mjs
 ```
 
 (They run in the copy of `web/`, where their npm packages are. A screenshot a test is told to save

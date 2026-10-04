@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run SlicerWeb build stages inside the toolchain container (on Windows, Linux or macOS).
 
-slicerweb.py runs this as a settings file says (python slicerweb.py <settings file> build); this is
-what it calls.
+slicerweb.py runs this as the env file of an application says (python slicerweb.py build, in
+the folder of the application: a deployment, or examples/full); this is what it calls.
 
     python build.py 00-sources 10-vtk-compiletools 20-vtk
     python build.py all
@@ -13,20 +13,24 @@ what it calls.
 
 Needs Docker and Python 3.8 or later. The stages themselves run in the container
 (scripts/build.sh); this only starts it, with the build volume, this repository, the folder the
-wheels and web bundles are copied to (--dist, or SW_DIST in local.env or the environment), and the
+wheels and web bundles are copied to (--dist, or SW_DIST in .env or the environment), and the
 extension folder (--extensions-dir, or SW_EXTENSIONS_DIR) mounted.
+
+The build volume (SW_BUILD_VOLUME, default slicerweb-build) is a Docker volume with the build trees
+of VTK, ITK, Slicer and the extensions, built from the sources this checkout pins. It belongs to one
+checkout: the first build records which, and a build of another checkout is refused - give each
+SlicerWeb checkout a volume of its own (the applications built with one checkout share it).
 
 A deployment (--deployment, docs/extensions.md) is a checkout of a repository of its own: its
 extensions are those of extensions/ here that its application.json names, and the description
 files of its own extensions folder (put together in <dist>/extension-descriptions, which is the
 extension folder of the build), and the configuration of its application goes to
-<dist>/wheels/application.json, its local.env has its settings (SW_DIST, by default
-~/SlicerWeb-build/dist-<name of the folder>), and its .secrets/ its secrets.
+<dist>/wheels/application.json, and its .env has its settings (SW_DIST, by default
+~/SlicerWeb-build/dist-<name of the folder>).
 
 A GitHub token for private repositories is taken from the SW_GIT_TOKEN environment variable, or
-from the file .secrets/github-token of the deployment - this repository holds no secrets; without
-one, only public repositories can be fetched. It is
-passed by name, so that its value is not on the command line. Everything the build runs can read
+from the file github-token of the folder SW_SECRETS names - no checkout holds secrets; without one,
+only public repositories can be fetched. It is passed by name, so that its value is not on the command line. Everything the build runs can read
 it - the extensions' own code included - so the token to use is a fine-grained one that can only
 read the repositories it is needed for.
 """
@@ -45,7 +49,7 @@ import localsettings  # noqa: E402
 from localsettings import ROOT, secret, setting  # noqa: E402
 
 IMAGE = "slicerweb-toolchain:emsdk5.0.3"
-VOLUME = "slicerweb-build"   # Docker volume with the build trees (lives in Docker's data disk)
+DEFAULT_VOLUME = "slicerweb-build"   # Docker volume with the build trees (lives in Docker's data disk)
 
 
 def main():
@@ -56,7 +60,7 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
     parser.add_argument("stages", nargs="*", default=["all"], help="stages to run (default: all), or shell")
     parser.add_argument("--deployment", default=None,
-                        help="a deployment folder: its extensions/, local.env and .secrets/ (see above)")
+                        help="a deployment folder: its application.json and .env (see above)")
     parser.add_argument("--extensions-dir", default=None,
                         help="folder of extension description files for 80-extensions (default: extensions/ of this repository); "
                              "the build then has those extensions only - the others are removed from it and from --dist, so "
@@ -83,10 +87,13 @@ def main():
         if subprocess.run(["docker", "build", "-t", IMAGE, os.path.join(ROOT, "docker")]).returncode != 0:
             return 1
 
+    # The build volume of this checkout (scripts/build.sh refuses one that another checkout built in)
+    volume = setting("SW_BUILD_VOLUME", DEFAULT_VOLUME)
     # This checkout is read-only in the container: everything built goes to the build volume and to
     # the dist folder, nothing into the sources (Python writes no bytecode next to them either)
     command = ["docker", "run", "--rm", "-i",
-               "-v", f"{VOLUME}:/build", "-v", f"{ROOT}:/work:ro", "-v", f"{dist}:/dist",
+               "-v", f"{volume}:/build", "-v", f"{ROOT}:/work:ro", "-v", f"{dist}:/dist",
+               "-e", f"SW_CHECKOUT={os.path.normcase(ROOT)}", "-e", f"SW_BUILD_VOLUME={volume}",
                "-e", "PYTHONDONTWRITEBYTECODE=1",
                "-e", f"SW_PROFILE={os.environ.get('SW_PROFILE', '')}",
                "-e", f"SW_CONFIGURE_ONLY={os.environ.get('SW_CONFIGURE_ONLY', '')}",

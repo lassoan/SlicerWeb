@@ -1,22 +1,26 @@
 """Settings of this computer for the build and deploy scripts (build.py, scripts/publish_*.py).
 
-Settings are read from local.env at the root of this repository - NAME=value lines, as in
-sources.env, kept out of the repository (.gitignore) - and an environment variable of the same name
-overrides them. A setting that neither gives has the default the script passes.
+Settings are read from the env file of the application (--deployment), .env in its folder -
+NAME=value lines, as in sources.env, kept out of its repository by .gitignore (examples/*/.env.example
+of this repository) - and an environment variable of the same name overrides them. A setting that
+neither gives has the default the script passes.
 
     SW_DIST=D:/SlicerWeb-build/dist        where the wheels and web bundles are copied
     SW_EXTENSIONS_DIR=C:/D/SlicerWebExtensions
+    SW_BUILD_VOLUME=slicerweb-build        the Docker volume of the build trees of this checkout
+    SW_SECRETS=D:/SlicerWeb-build/secrets/slicerweb   a folder of secrets, outside the checkouts
 
-This repository holds no secrets. A deployment - a checkout of a repository that says which
-extensions its build has (docs/extensions.md): those of this repository it names in its
-application.json, and description files of its own in a folder it names, private extensions among them -
-is a folder of its own (--deployment), with its own local.env, which is then read instead of this
-repository's, and its secrets in .secrets/ (both kept out of that repository by its .gitignore):
+A deployment - a checkout of a repository that says which extensions its build has
+(docs/extensions.md): those of this repository it names in its application.json (or all of them),
+and description files of its own in a folder it names, private extensions among them - is a folder
+of its own (--deployment), or one of examples/ of this repository:
 
-    <deployment>/local.env                 SW_DIST=... (default: ~/SlicerWeb-build/dist-<name>)
-    <deployment>/.secrets/github-token     read access to its private repositories
+    <deployment>/application.json          what the application is
+    <deployment>/.env                      SW_DIST=... (default: ~/SlicerWeb-build/dist-<name>)
 
-A secret is taken from its environment variable, else from <deployment>/.secrets/.
+No checkout holds secrets. A secret is taken from its environment variable, else from a file of the
+folder that SW_SECRETS names (github-token: read access to private repositories). A relative path
+of .env is relative to the folder of the .env.
 """
 import json
 import os
@@ -34,25 +38,26 @@ def _read_env_file(path):
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     name, value = line.split("=", 1)
-                    values[name.strip()] = value.strip()
+                    values[name.strip()] = value.split(" #", 1)[0].strip()
     return values
 
 
-_local = _read_env_file(os.path.join(ROOT, "local.env"))
+_local = {}            # the .env of the deployment (none without one: the environment only)
+_local_folder = ROOT   # the folder of that .env
 _deployment = None
 
 
 def use_deployment(path, extensions=True):
-    """Take the settings of a deployment folder, over those of this repository. Returns its absolute
+    """Take the settings of a deployment folder (its .env). Returns its absolute
     path, or exits with a message if it is not a deployment (a folder with application.json, unless
     extensions is False: a folder only of settings and secrets, as that of the test site)."""
-    global _deployment, _local
+    global _deployment, _local, _local_folder
     path = os.path.abspath(path)
     if not os.path.isdir(path) or (extensions and not os.path.isfile(os.path.join(path, "application.json"))):
         raise SystemExit(f"Not a deployment (a folder with application.json): {path}")
     _deployment = path
-    # its own settings only: SW_DIST of this repository would have the build of the deployment replace its own
-    _local = _read_env_file(os.path.join(path, "local.env"))
+    _local = _read_env_file(os.path.join(path, ".env"))
+    _local_folder = path
     return path
 
 
@@ -88,11 +93,11 @@ def application_config():
         raise SystemExit(f"{path}: unknown sections {', '.join(unknown)} (it may have: extensions, features)")
     extensions = config.get("extensions", {})
     if not isinstance(extensions, dict) or set(extensions) - {"slicerweb", "folder"}:
-        raise SystemExit(f'{path}: "extensions" has "slicerweb" (names of extensions of SlicerWeb) and "folder" '
-                         "(a folder of description files of its own)")
+        raise SystemExit(f'{path}: "extensions" has "slicerweb" (names of extensions of SlicerWeb, or "all") and '
+                         '"folder" (a folder of description files of its own)')
     names = extensions.get("slicerweb", [])
-    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
-        raise SystemExit(f'{path}: "extensions.slicerweb" is a list of extension names')
+    if names != "all" and (not isinstance(names, list) or not all(isinstance(n, str) for n in names)):
+        raise SystemExit(f'{path}: "extensions.slicerweb" is a list of extension names, or "all"')
     if "folder" in extensions and not isinstance(extensions["folder"], str):
         raise SystemExit(f'{path}: "extensions.folder" is the path of a folder, relative to {APPLICATION_CONFIG}')
     features = config.get("features", {})
@@ -108,9 +113,12 @@ def application_config():
 
 def deployment_extension_names():
     """The extensions of this repository that the deployment names in the extensions section of its
-    application.json ({"extensions": {"slicerweb": ["SlicerHeart", ...]}}, docs/extensions.md). Exits
-    with a message on a name that extensions/ of this repository has no description of."""
+    application.json ({"extensions": {"slicerweb": ["SlicerHeart", ...]}}, docs/extensions.md), or
+    all of them ("slicerweb": "all"). Exits with a message on a name that extensions/ of this
+    repository has no description of."""
     names = application_config().get("extensions", {}).get("slicerweb", [])
+    if names == "all":
+        return sorted(os.path.splitext(f)[0] for f in os.listdir(os.path.join(ROOT, "extensions")) if f.endswith(".json"))
     unknown = [n for n in names if not os.path.isfile(os.path.join(ROOT, "extensions", f"{n}.json"))]
     if unknown:
         available = sorted(os.path.splitext(f)[0] for f in os.listdir(os.path.join(ROOT, "extensions")) if f.endswith(".json"))
@@ -181,10 +189,15 @@ def default_dist():
 
 
 def deployment_repository():
-    """owner/name of the GitHub repository a deployment folder is a checkout of (its origin)."""
+    """owner/name of the GitHub repository a deployment folder is a checkout of (its origin), or None.
+    Only of a folder that is the root of its repository: an example of SlicerWeb (examples/) is not
+    published with SlicerWeb's repository."""
     if not _deployment:
         return None
-    url = subprocess.run(["git", "-C", _deployment, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
+    top = subprocess.run(["git", "-C", _deployment, "rev-parse", "--show-toplevel"], capture_output=True, text=True).stdout.strip()
+    if not top or os.path.normcase(os.path.abspath(top)) != os.path.normcase(_deployment):
+        return None
+    url =subprocess.run(["git", "-C", _deployment, "remote", "get-url", "origin"], capture_output=True, text=True).stdout.strip()
     for prefix in ("https://github.com/", "git@github.com:", "ssh://git@github.com/"):
         if url.startswith(prefix):
             return url[len(prefix):].removesuffix(".git").strip("/")
@@ -192,20 +205,27 @@ def deployment_repository():
 
 
 def setting(name, default=None):
-    """The value of a setting: the environment variable, else local.env, else the default."""
+    """The value of a setting: the environment variable, else .env, else the default."""
     value = os.environ.get(name)
     if value:
         return value
     return _local.get(name, default)
 
 
+def secrets_folder():
+    """The folder of secrets that SW_SECRETS names (relative to the folder of .env), or None."""
+    folder = setting("SW_SECRETS")
+    return os.path.normpath(os.path.join(_local_folder, os.path.expanduser(folder))) if folder else None
+
+
 def secret(name, fileName):
-    """A secret: the environment variable, else <deployment>/.secrets/<fileName>, else None."""
+    """A secret: the environment variable, else <SW_SECRETS>/<fileName>, else None."""
     value = os.environ.get(name)
     if value:
         return value.strip()
-    if _deployment:
-        path = os.path.join(_deployment, ".secrets", fileName)
+    folder = secrets_folder()
+    if folder:
+        path = os.path.join(folder, fileName)
         if os.path.exists(path):
             with open(path, encoding="utf-8") as handle:
                 return handle.read().strip() or None

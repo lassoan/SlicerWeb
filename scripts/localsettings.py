@@ -163,14 +163,11 @@ def write_application_config(dist):
     """The configuration of the application - application.json of the deployment, but for the
     extensions - into <dist>/wheels/application.json, where the application reads it at startup
     (web/src/core/appConfig.ts) and which goes with the runtime to the site. Without a deployment,
-    there is none: the application has its defaults."""
+    an empty one: the application has its defaults (and the browser asks for no file that is not
+    there)."""
     wheels = os.path.join(dist, "wheels")
     path = os.path.join(wheels, APPLICATION_CONFIG)
     config = {name: section for name, section in application_config().items() if name != "extensions"}
-    if not _deployment:
-        if os.path.exists(path):
-            os.remove(path)
-        return
     os.makedirs(wheels, exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=1)

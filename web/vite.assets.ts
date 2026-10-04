@@ -106,6 +106,11 @@ export function slicerWebAssets(): Plugin {
             fs.createReadStream(file).pipe(res);
             return;
           }
+          // Not there: not found, as on the published site - not the page, which the development
+          // server would answer with (wheels/application.json of a build without a deployment, say)
+          res.statusCode = 404;
+          res.end();
+          return;
         }
     next();
   };

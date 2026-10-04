@@ -1,0 +1,87 @@
+From 2b182b595424bfd0ef96cd027f2f355614aaefcd Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Sun, 4 Oct 2026 08:26:58 -0400
+Subject: [PATCH] BUG: Render volumes at an image sample distance with ambient
+ occlusion
+
+vtkOpenGLGPUVolumeRayCastMapper renders at an image sample distance other
+than 1 into a framebuffer of its own with as many color buffers as the
+render pass says it draws (GetActiveDrawBuffers). vtkSSAOPass did not say
+(only vtkDualDepthPeelingPass does), so the framebuffer had none: it was
+incomplete ("Failed to attach ImageSampleFBO"), and EndImageSample then used
+the framebuffer it had released - in WebAssembly a "null function" error,
+after which the view stayed black. With ambient shadows on, a volume being
+rotated at a lower quality (adaptive volume rendering) hit this.
+
+- vtkSSAOPass says it draws three buffers (color, position, normal).
+- A pass that does not say is taken to draw one.
+- EndImageSample does nothing if BeginImageSample could not make the
+  framebuffer.
+---
+ Rendering/OpenGL2/vtkSSAOPass.cxx                   |  3 +++
+ .../vtkOpenGLGPUVolumeRayCastMapper.cxx             | 13 ++++++++++---
+ 2 files changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/Rendering/OpenGL2/vtkSSAOPass.cxx b/Rendering/OpenGL2/vtkSSAOPass.cxx
+index be0abadde8..69bfca3a26 100644
+--- a/Rendering/OpenGL2/vtkSSAOPass.cxx
++++ b/Rendering/OpenGL2/vtkSSAOPass.cxx
+@@ -248,6 +248,9 @@ void vtkSSAOPass::PostRenderProp(vtkProp* prop)
+ //------------------------------------------------------------------------------
+ void vtkSSAOPass::RenderDelegate(const vtkRenderState* s, int w, int h)
+ {
++  // The delegate draws color, position and normal: what a mapper that renders into a framebuffer of
++  // its own first (vtkOpenGLGPUVolumeRayCastMapper with an image sample distance) makes as many of
++  this->SetActiveDrawBuffers(3);
+   this->PreRender(s);
+ 
+   this->FrameBufferObject->GetContext()->GetState()->PushFramebufferBindings();
+diff --git a/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx b/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
+index 5fc565cf47..dd5571602a 100644
+--- a/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
++++ b/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
+@@ -497,6 +497,8 @@ public:
+   vtkShaderProgram* ImageSampleProg = nullptr;
+   vtkOpenGLVertexArrayObject* ImageSampleVAO = nullptr;
+   size_t NumImageSampleDrawBuffers = 0;
++  // Whether this frame is rendered into ImageSampleFBO (BeginImageSample could make it)
++  bool ImageSampling = false;
+   bool RebuildImageSampleProg = false;
+   bool RenderPassAttached = false;
+ 
+@@ -1685,7 +1687,8 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::BeginImageSample(vtkRenderer*
+   }
+ 
+   float const xySampleDist = this->Parent->ImageSampleDistance;
+-  if (xySampleDist != 1.f && this->InitializeImageSampleFBO(ren))
++  this->ImageSampling = xySampleDist != 1.f && this->InitializeImageSampleFBO(ren);
++  if (this->ImageSampling)
+   {
+     this->ImageSampleFBO->GetContext()->GetState()->PushDrawFramebufferBinding();
+     this->ImageSampleFBO->Bind(GL_DRAW_FRAMEBUFFER);
+@@ -1781,8 +1784,10 @@ bool vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::InitializeImageSampleFBO(vtkR
+ //------------------------------------------------------------------------------
+ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::EndImageSample(vtkRenderer* ren)
+ {
+-  if (this->Parent->ImageSampleDistance != 1.f)
++  // (not if the framebuffer could not be made: the volume was rendered where it was going anyway)
++  if (this->ImageSampling)
+   {
++    this->ImageSampling = false;
+     this->ImageSampleFBO->DeactivateDrawBuffers();
+     if (this->RenderPassAttached)
+     {
+@@ -1869,7 +1874,9 @@ size_t vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::GetNumImageSampleDrawBuffer
+     const int num = info->Length(vtkOpenGLRenderPass::RenderPasses());
+     vtkObjectBase* rpBase = info->Get(vtkOpenGLRenderPass::RenderPasses(), num - 1);
+     vtkOpenGLRenderPass* rp = static_cast<vtkOpenGLRenderPass*>(rpBase);
+-    return static_cast<size_t>(rp->GetActiveDrawBuffers());
++    // (a pass that does not say how many it draws, draws one: a framebuffer without any color
++    // buffer is incomplete)
++    return std::max<size_t>(1, static_cast<size_t>(rp->GetActiveDrawBuffers()));
+   }
+ 
+   return 1;
+-- 
+2.44.0.windows.1
+

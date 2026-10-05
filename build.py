@@ -6,7 +6,7 @@ the folder of the application: a deployment, or examples/full); this is what it 
 
     python build.py 00-sources 10-vtk-compiletools 20-vtk
     python build.py all
-    python build.py --deployment ../SlicerHeartWebViewer-app 60-wheels 80-extensions
+    python build.py --deployment ../slicerweb-app 60-wheels 80-extensions
     python build.py --extensions-dir ../SlicerWebExtensions 80-extensions
     python build.py --extensions SlicerHeart 80-extensions      # only rebuild some of them
     python build.py shell

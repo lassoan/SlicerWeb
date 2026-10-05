@@ -169,7 +169,7 @@ const deviceRatio = `${Math.round(devicePixelRatio() * 100) / 100} pixels per po
             </div>
           </template>
           <template v-if="section === 'developer'">
-            <!-- (not offered where the deployment makes it unavailable: application.json, features.developerMode) -->
+            <!-- (not offered where the application makes it unavailable: application.json, features.developerMode) -->
             <template v-if="appConfig.features.developerMode !== 'unavailable'">
               <SwCheckBox text="Developer mode" data-name="developerMode" :checked="store.settings['Developer/DeveloperMode']"
                 @toggled="setSetting('Developer/DeveloperMode', $event)" />

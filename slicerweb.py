@@ -15,9 +15,9 @@
 
 The folder - the current folder, or the one -C (--folder) gives; parent folders are not searched -
 is that of the application: its application.json configures the application and says which
-extensions it has. It is a deployment (docs/extensions.md), the checkout of a repository of its
-own, which the build is published to; or an example of SlicerWeb (examples/full: all of its
-extensions, examples/minimal), which is not published. Its env file, .env, says where everything is
+extensions it has. It is the checkout of a repository of its own (docs/extensions.md), which the
+build is published to; or an example of SlicerWeb (examples/full: all of its extensions,
+examples/minimal), which is not published. Its env file, .env, says where everything is
 on this computer, as NAME=value lines (copied from .env.example of an example); .gitignore keeps it
 out of the repository. Nothing built goes in a checkout: everything goes to SW_DIST - also what npm
 installs: the web application is built, served and tested in a copy of web/ in
@@ -67,8 +67,8 @@ def read_settings(folder):
     if not os.path.isdir(folder):
         sys.exit(f"Not a folder: {folder}")
     if not os.path.isfile(os.path.join(folder, "application.json")):
-        sys.exit(f"{folder} is not the folder of an application (it has no application.json): run this in a "
-                 "deployment checkout or an example of SlicerWeb (examples/full), or give one with -C <folder>")
+        sys.exit(f"{folder} is not the folder of an application (it has no application.json): run this in the "
+                 "checkout of an application or an example of SlicerWeb (examples/full), or give one with -C <folder>")
     path = os.path.join(folder, ".env")
     if not os.path.isfile(path):
         sys.exit(f"{path} not found: copy .env.example of an example of SlicerWeb (examples/) there and set the "
@@ -116,12 +116,12 @@ def extension_names(settings):
     """The extensions of the build: those of SlicerWeb that the application names (or all), and its own."""
     sys.path.insert(0, os.path.join(settings["SW_SLICERWEB"], "scripts"))
     import localsettings
-    localsettings.use_deployment(settings["application"])
-    return set(localsettings.deployment_extension_names()) | set(localsettings.deployment_extension_files())
+    localsettings.use_application(settings["application"])
+    return set(localsettings.application_extension_names()) | set(localsettings.application_extension_files())
 
 
 def build(settings, args):
-    command = [sys.executable, "build.py", "--dist", settings["SW_DIST"], "--deployment", settings["application"]]
+    command = [sys.executable, "build.py", "--dist", settings["SW_DIST"], "--application", settings["application"]]
     stages_folder = os.path.join(settings["SW_SLICERWEB"], "scripts", "stages")
     stages = sorted(os.path.splitext(f)[0] for f in os.listdir(stages_folder) if f.endswith(".sh"))
     if not args:
@@ -145,12 +145,12 @@ def build(settings, args):
 
 def deploy(settings, args):
     if is_inside(settings["application"], settings["SW_SLICERWEB"]):
-        sys.exit("deploy publishes a deployment, the checkout of a repository of its own: an example of SlicerWeb is not "
-                 "published (copy it to a repository of its own)")
+        sys.exit("deploy publishes an application to the repository its folder is the checkout of: an example of "
+                 "SlicerWeb is not published (copy it to a repository of its own)")
     if len(args) > 1:
         sys.exit("deploy [channel]")
     channel = args[0] if args else "latest"
-    return run([sys.executable, os.path.join("scripts", "publish_runtime.py"), "--deployment", settings["application"],
+    return run([sys.executable, os.path.join("scripts", "publish_runtime.py"), "--application", settings["application"],
                 "--dist", settings["SW_DIST"], "--channel", channel, "--publish"], settings)
 
 
@@ -216,10 +216,10 @@ def web_workspace(settings):
     workspace = os.path.join(settings["SW_DIST"], "web-workspace")
     sync_tree(source, workspace)
     dist = settings["SW_DIST"]
-    # the configuration of the application as the deployment has it now (wheels/application.json)
+    # the configuration of the application as its application.json has it now (wheels/application.json)
     sys.path.insert(0, os.path.join(settings["SW_SLICERWEB"], "scripts"))
     import localsettings
-    localsettings.use_deployment(settings["application"])
+    localsettings.use_application(settings["application"])
     localsettings.write_application_config(dist)
     env = dict(environment(settings),
                SLICERWEB_WHEELS=os.path.join(dist, "wheels"),

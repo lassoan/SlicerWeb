@@ -2,7 +2,7 @@
 """Publish the download proxy (download-proxy/worker.js) as a Cloudflare Worker, so that the
 application published as static files can read files of servers that refuse cross-origin requests.
 
-    python scripts/publish_download_proxy.py --deployment ../SlicerWeb-test-site
+    python scripts/publish_download_proxy.py --settings ../SlicerWeb-test-site
 
 What it needs, in .env of that folder (or the environment) - a folder of its own, outside this
 repository, which holds no secrets:
@@ -103,17 +103,17 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
-    parser.add_argument("--deployment", default=None, help="the folder of the Cloudflare settings and secrets (see above)")
+    parser.add_argument("--settings", default=None, help="the folder of the Cloudflare settings and secrets (see above)")
     args = parser.parse_args()
-    if args.deployment:
-        localsettings.use_deployment(args.deployment, extensions=False)
+    if args.settings:
+        localsettings.use_settings_folder(args.settings)
 
     account = setting("CLOUDFLARE_ACCOUNT_ID")
     if not account:
-        sys.exit("CLOUDFLARE_ACCOUNT_ID is not set (.env of the --deployment folder, or the environment)")
+        sys.exit("CLOUDFLARE_ACCOUNT_ID is not set (.env of the --settings folder, or the environment)")
     token = secret("CLOUDFLARE_API_TOKEN", "cloudflare-api-token")
     if not token:
-        sys.exit("Save the API token (Workers Scripts - Edit) in cloudflare-api-token of the folder SW_SECRETS names (.env of the --deployment folder)")
+        sys.exit("Save the API token (Workers Scripts - Edit) in cloudflare-api-token of the folder SW_SECRETS names (.env of the --settings folder)")
     name = setting("DOWNLOAD_PROXY_NAME", "slicerweb-download")
     origins = setting("DOWNLOAD_PROXY_ORIGINS", "https://lassoan.github.io")
     maxBytes = setting("DOWNLOAD_PROXY_MAX_BYTES", str(4 * 1024 ** 3))

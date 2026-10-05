@@ -113,15 +113,15 @@ scripts of the Python packages. Use a
 [fine-grained token](https://github.com/settings/personal-access-tokens/new) with read-only
 **Contents** access to just the repositories the build needs, rather than `gh auth token`.
 
-### Deployment
+### Application
 
-A site is published from a repository of its own, a *deployment*: it configures the application -
-which extensions its build has, which features it offers - and holds the workflow that publishes
-the site. It holds nothing else - no secrets, nothing built - but for the env file of this computer,
-`.env`, which its `.gitignore` keeps out of the repository:
+An *application* has a repository of its own, which its site is published from: it configures the
+application - which extensions its build has, which features it offers - and holds the workflow that
+publishes the site. It holds nothing else - no secrets, nothing built - but for the env file of this
+computer, `.env`, which its `.gitignore` keeps out of the repository:
 
 ```
-slicerweb-deploy/
+my-app/
 ├── application.json                   the configuration of the application, its extensions among it
 ├── extensions/*.json                  description files of its own: other extensions, private ones among them
 ├── .github/workflows/publish-app.yml  builds and publishes the site
@@ -130,19 +130,19 @@ slicerweb-deploy/
 └── README.md
 ```
 
-It is built, published and tried with `slicerweb.py` of this repository, run in the deployment
-checkout (or given it with `-C <folder>`). Its `.env` (copied from
+It is built, published and tried with `slicerweb.py` of this repository, run in the checkout of
+the application (or given it with `-C <folder>`). Its `.env` (copied from
 `examples/minimal/.env.example` of this repository) says where everything is on this computer:
 
 ```
-SW_SLICERWEB=C:/D/SlicerWeb                             # the SlicerWeb checkout that builds it
-SW_DIST=D:/SlicerWeb-build/dist-slicerweb-deploy        # everything built: wheels, extensions, the web application, sample data
-SW_SECRETS=D:/SlicerWeb-build/secrets/slicerweb-deploy  # github-token: read access to the private repositories (optional)
-SW_PORT=4175                                            # the port of serve
+SW_SLICERWEB=C:/D/SlicerWeb                   # the SlicerWeb checkout that builds it
+SW_DIST=D:/SlicerWeb-build/dist-my-app        # everything built: wheels, extensions, the web application, sample data
+SW_SECRETS=D:/SlicerWeb-build/secrets/my-app  # github-token: read access to the private repositories (optional)
+SW_PORT=4175                                  # the port of serve
 ```
 
 ```sh
-cd C:/D/slicerweb-deploy
+cd C:/D/my-app
 python C:/D/SlicerWeb/slicerweb.py build                                  # everything
 python C:/D/SlicerWeb/slicerweb.py build extensions                       # all extensions
 python C:/D/SlicerWeb/slicerweb.py build extensions SlicerHeart SlicerRT  # these extensions
@@ -153,7 +153,7 @@ python C:/D/SlicerWeb/slicerweb.py stop                                   # stop
 
 The [examples](../examples/README.md) of this repository are folders of the same kind, built the
 same way, but not published: to publish one, copy it to a repository of its own. `slicerweb.py`
-calls `build.py --deployment` and `scripts/publish_runtime.py --deployment`, which may also be run
+calls `build.py --application` and `scripts/publish_runtime.py --application`, which may also be run
 themselves.
 
 `application.json`:
@@ -173,9 +173,9 @@ themselves.
 ```
 
 - `extensions.slicerweb` names extensions described in `extensions/` of this repository, so that
-  they are not copied and kept up to date in every deployment - or is `"all"`, for every one of them
+  they are not copied and kept up to date in every application - or is `"all"`, for every one of them
   (also those added later).
-- `extensions.folder` is a folder of description files of the deployment's own (relative to
+- `extensions.folder` is a folder of description files of the application's own (relative to
   `application.json`): each adds an extension, or takes the place of the one of this repository of
   the same name (to build it at another revision, say).
 - `features` (each optional, the first value the default):
@@ -188,18 +188,18 @@ The build puts the descriptions together in `<dist>/extension-descriptions` and 
 `extensions/` here has no description of, or at a feature or value that `application.json` cannot
 have. The rest of the configuration goes to `<dist>/wheels/application.json`, with the runtime to the
 site, where the application reads it at startup (`web/src/core/appConfig.ts`); `deploy` writes it
-again from the deployment, so a change of `features` needs no build. A setting a user has not changed
-follows its default, also when the deployment changes it.
+again from `application.json`, so a change of `features` needs no build. A setting a user has not
+changed follows its default, also when the application changes it.
 
-Its build goes to a dist folder of its own (`SW_DIST`), since a build of a deployment has only its
-extensions.
+Its build goes to a dist folder of its own (`SW_DIST`), since the build of an application has only
+its extensions.
 
 A build with private extensions must not go to a public repository: `publish_runtime.py` refuses to
-upload a build to one if it has an extension whose source cannot be read without a token. Such a
-deployment is a private repository, for example `myorg/slicerweb-deploy`.
+upload a build to one if it has an extension whose source cannot be read without a token. Such an
+application has a private repository, for example `myorg/my-app`.
 
-The workflow calls the one of this repository, which takes the runtime from the deployment
-repository's `runtime` release and pushes the site - one commit, no history - to its `gh-pages`
+The workflow calls the one of this repository, which takes the runtime from the `runtime` release
+of the application's repository and pushes the site - one commit, no history - to its `gh-pages`
 branch:
 
 ```yaml
@@ -221,16 +221,16 @@ jobs:
 Build and publish:
 
 ```sh
-python build.py --deployment ../slicerweb-deploy 60-wheels 80-extensions
-python scripts/publish_runtime.py --deployment ../slicerweb-deploy --publish     # to the repository it is a checkout of
+python build.py --application ../my-app 60-wheels 80-extensions
+python scripts/publish_runtime.py --application ../my-app --publish     # to the repository it is a checkout of
 ```
 
-The published application, <https://lassoan.github.io/slicerweb-app/>, is a deployment too:
+The published application, <https://lassoan.github.io/slicerweb-app/>, has such a repository too:
 [lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app) (public), whose `main` branch has
 its `application.json` and workflow, and whose site is on its branch `deploy/latest`. A change of the
 web application here publishes it again on its own, with the runtime it has (`.github/workflows/publish-app.yml`).
 
-**Channels.** A deployment can publish several versions side by side - `latest`, `stable`, `1.0.0` - each
+**Channels.** An application can publish several versions side by side - `latest`, `stable`, `1.0.0` - each
 to a branch of its own, `deploy/<channel>`, from a runtime release of its own, `runtime-<channel>`, so
 that a version keeps the build it was published with. The workflow then takes the channel as an
 input (`appBranch: deploy/${{ inputs.channel }}`, `runtime: runtime-${{ inputs.channel }}`), and
@@ -247,4 +247,4 @@ private repository is public unless the organization is on GitHub Enterprise Clo
 be restricted to the organization's members. Without Enterprise Cloud, do not turn on Pages for
 the branch. Serve it from a host that checks who is asking instead, for example Cloudflare Pages or
 a Cloudflare tunnel behind Cloudflare Access, as `scripts/publish_test_site.py` does for the test
-site (its settings and API token in a folder of their own, `--deployment`).
+site (its settings and API token in a folder of their own, `--settings`).

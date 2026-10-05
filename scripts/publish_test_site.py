@@ -2,7 +2,7 @@
 """Publish a local build of SlicerWeb as a test site through a Cloudflare tunnel, restricted by
 Cloudflare Access to the email addresses of one domain.
 
-    python scripts/publish_test_site.py --deployment ../SlicerWeb-test-site
+    python scripts/publish_test_site.py --settings ../SlicerWeb-test-site
 
 What it needs, in .env of that folder (or the environment) - a folder of its own, outside this
 repository, which holds no secrets:
@@ -70,10 +70,10 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
-    parser.add_argument("--deployment", default=None, help="the folder of the settings and secrets of the test site (see above)")
+    parser.add_argument("--settings", default=None, help="the folder of the settings and secrets of the test site (see above)")
     args = parser.parse_args()
-    if args.deployment:
-        localsettings.use_deployment(args.deployment, extensions=False)
+    if args.settings:
+        localsettings.use_settings_folder(args.settings)
     missing = [name for name in ("TEST_SITE_HOSTNAME", "TEST_SITE_EMAIL_DOMAIN", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARED_CONFIG")
                if not setting(name)]
     if missing:
@@ -81,7 +81,7 @@ def main():
     hostname, emailDomain = setting("TEST_SITE_HOSTNAME"), setting("TEST_SITE_EMAIL_DOMAIN")
     token = secret("CLOUDFLARE_API_TOKEN", "cloudflare-api-token")
     if not token:
-        sys.exit("Save the API token (Access: Apps and Policies - Edit) in cloudflare-api-token of the folder SW_SECRETS names (.env of the --deployment folder)")
+        sys.exit("Save the API token (Access: Apps and Policies - Edit) in cloudflare-api-token of the folder SW_SECRETS names (.env of the --settings folder)")
     apps = f"https://api.cloudflare.com/client/v4/accounts/{setting('CLOUDFLARE_ACCOUNT_ID')}/access/apps"
 
     app = {

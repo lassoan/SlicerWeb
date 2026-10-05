@@ -40,8 +40,8 @@ const runtime = inject<SlicerRuntime>("runtime")!;
 const ready = computed(() => store.status === "ready");
 
 // The version, at the end of the application menu: when the runtime was built and from which commits
-// of SlicerWeb and of the deployment (wheels/build-info.json), and the commit of the application
-// where it is not the one the runtime was built from.
+// of SlicerWeb and of the application's repository (wheels/build-info.json), and the commit of the
+// web application where it is not the one the runtime was built from.
 const buildInfo = ref<BuildInfo | null>(null);
 onMounted(async () => { buildInfo.value = await runtime.buildInfo().catch(() => null); });
 const appVersion = typeof __SLICERWEB_APP_VERSION__ === "string" ? __SLICERWEB_APP_VERSION__ : "";
@@ -53,8 +53,8 @@ const versionLines = computed(() => {
     const date = new Date(info.date);
     lines.push({ text: `Built ${Number.isNaN(date.getTime()) ? info.date : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`, title: info.date });
   }
-  if (info?.deployment?.commit) {
-    lines.push({ text: `${info.deployment.name.split("/").pop()} ${version(info.deployment)}`, title: `${info.deployment.name} ${info.deployment.commit}` });
+  if (info?.application?.commit) {
+    lines.push({ text: `${info.application.name.split("/").pop()} ${version(info.application)}`, title: `${info.application.name} ${info.application.commit}` });
   }
   if (info?.slicerweb?.commit) lines.push({ text: `SlicerWeb ${version(info.slicerweb)}`, title: `SlicerWeb ${info.slicerweb.commit}` });
   const app = appVersion.replace(/\+$/, "");

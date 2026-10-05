@@ -2,14 +2,14 @@
 """Upload the WebAssembly runtime of a local build to a release - "runtime", or "runtime-<channel>" -
 where the "Publish app" workflow takes it from (.github/workflows/publish-app.yml).
 
-    python scripts/publish_runtime.py --deployment ../slicerweb-app --channel latest --publish
-    python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --channel stable --publish
+    python scripts/publish_runtime.py --application ../slicerweb-app --channel latest --publish
+    python scripts/publish_runtime.py --repository myorg/my-app --channel stable --publish
     python scripts/publish_runtime.py --publish       # the "runtime" release of this repository
 
-The published application, https://lassoan.github.io/slicerweb-app/, is a deployment like any other
+The published application, https://lassoan.github.io/slicerweb-app/, is published like any other
 (lassoan/slicerweb-app, docs/extensions.md): its build goes to the runtime-latest release there.
 
-A deployment repository can publish several channels - latest, stable, 1.0.0, ... - each to a
+The repository of an application can publish several channels - latest, stable, 1.0.0, ... - each to a
 branch of its own, deploy/<channel>, from a runtime release of its own, runtime-<channel>, so that a
 version keeps the build it was published with (docs/extensions.md). --channel uploads to that
 release and, with --publish, runs the repository's workflow for that channel.
@@ -21,12 +21,12 @@ asset is replaced, not accumulated.
 
 Needs the GitHub CLI, signed in with a token that may write to the repository (gh auth login).
 
-A deployment's build goes to a release of the deployment's repository, whose "Publish app" workflow
-calls this repository's (docs/extensions.md). With --deployment, a checkout of that repository, the
-dist folder and the repository are those of the deployment (its .env, else the dist folder
-build.py --deployment used, and the repository it is a checkout of). A build is not uploaded to a
-public repository if it has an extension whose source cannot be read without a token: private
-extensions go to a private repository.
+An application's build goes to a release of the application's repository, whose "Publish app"
+workflow calls this repository's (docs/extensions.md). With --application, a checkout of that
+repository, the dist folder and the repository are those of the application (its .env, else the dist
+folder build.py --application used, and the repository it is a checkout of). A build is not
+uploaded to a public repository if it has an extension whose source cannot be read without a token:
+private extensions go to a private repository.
 """
 import sys
 
@@ -72,8 +72,8 @@ def describe(info):
     def version(v):
         return f"{v['commit'][:7]}{' with uncommitted changes' if v.get('modified') else ''}" if v and v.get("commit") else "?"
     text = f"Built {info.get('date', '?')} from SlicerWeb {version(info.get('slicerweb'))}"
-    if info.get("deployment"):
-        text += f" and {info['deployment'].get('name', 'the deployment')} {version(info['deployment'])}"
+    if info.get("application"):
+        text += f" and {info['application'].get('name', 'the application')} {version(info['application'])}"
     return text + "."
 
 
@@ -88,8 +88,8 @@ def workflow_has_input(repository, name):
 
 def public_extension(name, dist):
     """Whether an extension of a build may go to a public repository: one described in extensions/ of
-    SlicerWeb, as it is there, or one of a deployment (<dist>/extension-descriptions, which build.py
-    --deployment writes) whose source can be read without a token. A build of another folder of
+    SlicerWeb, as it is there, or one of an application (<dist>/extension-descriptions, which build.py
+    --application writes) whose source can be read without a token. A build of another folder of
     descriptions (--extensions-dir) has only those of SlicerWeb that it can be told apart by."""
     ours = os.path.join(ROOT, "extensions", f"{name}.json")
     built = os.path.join(dist, "extension-descriptions", f"{name}.json")
@@ -117,20 +117,20 @@ def main():
     sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
-    parser.add_argument("--deployment", default=None, help="a deployment folder, a checkout of the repository to publish (see above)")
+    parser.add_argument("--application", default=None, help="the folder of an application, a checkout of the repository to publish (see above)")
     parser.add_argument("--dist", default=None, help="where the build copied the wheels and extensions (SW_DIST)")
     parser.add_argument("--repository", default=None, help="the repository whose release receives them (SW_RUNTIME_REPOSITORY)")
     parser.add_argument("--tag", default=None, help="the release (default: runtime, or runtime-<channel>)")
     parser.add_argument("--channel", default=None,
-                        help="a deployment channel (latest, stable, 1.0.0, ...): release runtime-<channel>, published to branch deploy/<channel>")
+                        help="a channel (latest, stable, 1.0.0, ...): release runtime-<channel>, published to branch deploy/<channel>")
     parser.add_argument("--publish", action="store_true", help="then start the workflow that rebuilds the site")
     parser.add_argument("--dry-run", action="store_true", help="check and package, but upload nothing")
     args = parser.parse_args()
-    if args.deployment:
-        localsettings.use_deployment(args.deployment)
-        args.repository = args.repository or setting("SW_RUNTIME_REPOSITORY") or localsettings.deployment_repository()
+    if args.application:
+        localsettings.use_application(args.application)
+        args.repository = args.repository or setting("SW_RUNTIME_REPOSITORY") or localsettings.application_repository()
         if not args.repository:
-            parser.error("the deployment folder is not a checkout of a GitHub repository: give --repository")
+            parser.error("the folder of the application is not a checkout of a GitHub repository: give --repository")
     args.dist = args.dist or localsettings.default_dist()
     args.repository = args.repository or setting("SW_RUNTIME_REPOSITORY", "lassoan/SlicerWeb")
     if args.channel and not all(c.isalnum() or c in "._-" for c in args.channel):
@@ -141,8 +141,8 @@ def main():
     for name in ("wheels", "extensions"):
         if not os.path.isdir(os.path.join(args.dist, name)):
             sys.exit(f"Not found: {os.path.join(args.dist, name)} (run: python build.py 60-wheels 80-extensions)")
-    # The configuration of the application as the deployment has it now: a change of it needs no build
-    if args.deployment:
+    # The configuration of the application as its application.json has it now: a change of it needs no build
+    if args.application:
         localsettings.write_application_config(args.dist)
 
     visibility = gh("repo", "view", args.repository, "--json", "visibility", "--jq", ".visibility", capture=True)

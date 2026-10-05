@@ -85,8 +85,8 @@ python build.py 50-slicer 60-wheels   # or just the stages that matter after a c
 `slicerweb.py` builds an application: the folder it is run in, or the one `-C <folder>` names. Its
 `application.json` says which extensions the application has and which features it offers.
 [examples/](examples/README.md) has two: `full`, with every extension of `extensions/` - the
-application SlicerWeb is developed with - and `minimal`. A deployment is such a folder in a
-repository of its own, which the build is published to
+application SlicerWeb is developed with - and `minimal`. An application that is published is such
+a folder in a repository of its own, which the build is published to
 ([docs/extensions.md](docs/extensions.md)).
 
 What differs from one computer to another - where everything built goes, where the SlicerWeb
@@ -125,7 +125,7 @@ taken from `SW_DIST`. Pyodide itself is served from the application, not from a 
 ## Publishing
 
 The application is published at <https://lassoan.github.io/slicerweb-app/> from
-[lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), a deployment
+[lassoan/slicerweb-app](https://github.com/lassoan/slicerweb-app), the repository of the application
 ([docs/extensions.md](docs/extensions.md)): its `main` branch says which extensions the build has
 (`application.json`, which configures the application too) and holds the workflow that publishes the site, which calls the
 [Publish app](.github/workflows/publish-app.yml) workflow of this repository. That workflow also runs
@@ -140,7 +140,7 @@ such proxy of its own).
 Other files of such servers - any URL a user loads - are fetched through a download proxy: a
 Cloudflare Worker, [download-proxy/worker.js](download-proxy/worker.js), that only pages of the
 allowed sites may use and that passes files on without keeping them. It is published with
-`python scripts/publish_download_proxy.py --deployment <folder with the Cloudflare settings>`, and
+`python scripts/publish_download_proxy.py --settings <folder with the Cloudflare settings>`, and
 the site is built with its address from the repository variable `SLICERWEB_DOWNLOAD_PROXY`
 (`VITE_DOWNLOAD_PROXY`; without one, `0`: no proxy, which the site says plainly instead of trying).
 Servers that allow cross-origin requests are read directly, never through the proxy.

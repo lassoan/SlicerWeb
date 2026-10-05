@@ -107,7 +107,7 @@ export function slicerWebAssets(): Plugin {
             return;
           }
           // Not there: not found, as on the published site - not the page, which the development
-          // server would answer with (wheels/application.json of a build without a deployment, say)
+          // server would answer with (wheels/application.json of a build without an application, say)
           res.statusCode = 404;
           res.end();
           return;

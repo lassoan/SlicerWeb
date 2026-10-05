@@ -78,7 +78,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "General/SaveWrittenFilesToDownloads": true,
   "General/AutoSave": true,
   "Modules/FavoriteModules": ["SegmentEditor", "VolumeRendering", "Transforms", "SceneViews"],
-  // as the deployment says (application.json, features.developerMode)
+  // as the application says (application.json, features.developerMode)
   "Developer/DeveloperMode": appConfig.features.developerMode === "enabledByDefault",
   "Developer/ShowRenderingFPS": false,
   "Developer/AllowJSPI": true,
@@ -89,7 +89,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   "Segmentations/ImageSampleDistanceWhileMoving": 2,
 };
 
-/** What the deployment does not let a user change (application.json): such a setting has its value
+/** What the application does not let a user change (application.json): such a setting has its value
  *  whatever the browser kept. */
 export function fixedSettings(): Partial<AppSettings> {
   return appConfig.features.developerMode === "unavailable" ? { "Developer/DeveloperMode": false } : {};
@@ -106,7 +106,7 @@ export function loadSettings(): AppSettings {
 }
 
 /** Keep the settings that differ from the defaults: one the user has not changed follows the
- *  default, also when the deployment changes it. */
+ *  default, also when the application changes it. */
 export function saveSettings(settings: AppSettings) {
   const changed = Object.fromEntries(Object.entries(settings).filter(
     ([key, value]) => JSON.stringify(value) !== JSON.stringify((DEFAULT_SETTINGS as unknown as Record<string, unknown>)[key])));

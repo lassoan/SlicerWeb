@@ -2,11 +2,12 @@
 """Run SlicerWeb build stages inside the toolchain container (on Windows, Linux or macOS).
 
 slicerweb.py runs this as the env file of an application says (python slicerweb.py build, in
-the folder of the application: a deployment, or examples/full); this is what it calls.
+the folder of the application: the checkout of its repository, or examples/full); this is what it
+calls.
 
     python build.py 00-sources 10-vtk-compiletools 20-vtk
     python build.py all
-    python build.py --deployment ../slicerweb-app 60-wheels 80-extensions
+    python build.py --application ../slicerweb-app 60-wheels 80-extensions
     python build.py --extensions-dir ../SlicerWebExtensions 80-extensions
     python build.py --extensions SlicerHeart 80-extensions      # only rebuild some of them
     python build.py shell
@@ -21,12 +22,12 @@ of VTK, ITK, Slicer and the extensions, built from the sources this checkout pin
 checkout: the first build records which, and a build of another checkout is refused - give each
 SlicerWeb checkout a volume of its own (the applications built with one checkout share it).
 
-A deployment (--deployment, docs/extensions.md) is a checkout of a repository of its own: its
-extensions are those of extensions/ here that its application.json names, and the description
-files of its own extensions folder (put together in <dist>/extension-descriptions, which is the
-extension folder of the build), and the configuration of its application goes to
-<dist>/wheels/application.json, and its .env has its settings (SW_DIST, by default
-~/SlicerWeb-build/dist-<name of the folder>).
+An application (--application, docs/extensions.md) is a folder with application.json - the
+checkout of a repository of its own, or an example of this one: its extensions are those of
+extensions/ here that its application.json names, and the description files of its own extensions
+folder (put together in <dist>/extension-descriptions, which is the extension folder of the build),
+and its configuration goes to <dist>/wheels/application.json, and its .env has its settings
+(SW_DIST, by default ~/SlicerWeb-build/dist-<name of the folder>).
 
 A GitHub token for private repositories is taken from the SW_GIT_TOKEN environment variable, or
 from the file github-token of the folder SW_SECRETS names - no checkout holds secrets; without one,
@@ -59,8 +60,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__.split("\n\n", 1)[1])
     parser.add_argument("stages", nargs="*", default=["all"], help="stages to run (default: all), or shell")
-    parser.add_argument("--deployment", default=None,
-                        help="a deployment folder: its application.json and .env (see above)")
+    parser.add_argument("--application", default=None,
+                        help="the folder of an application: its application.json and .env (see above)")
     parser.add_argument("--extensions-dir", default=None,
                         help="folder of extension description files for 80-extensions (default: extensions/ of this repository); "
                              "the build then has those extensions only - the others are removed from it and from --dist, so "
@@ -69,19 +70,19 @@ def main():
                         help="names of the extensions to build this time, separated by spaces (default: all)")
     parser.add_argument("--dist", default=None, help="where the wheels and web bundles are copied (SW_DIST)")
     args = parser.parse_args()
-    if args.deployment:
-        localsettings.use_deployment(args.deployment)
+    if args.application:
+        localsettings.use_application(args.application)
     args.extensions_dir = args.extensions_dir or setting("SW_EXTENSIONS_DIR")
     args.dist = args.dist or localsettings.default_dist()
 
     dist = os.path.abspath(args.dist)
     os.makedirs(dist, exist_ok=True)
-    if args.deployment and not args.extensions_dir:
+    if args.application and not args.extensions_dir:
         # Those of extensions/ here that it names, and its own (docs/extensions.md)
         args.extensions_dir = os.path.join(dist, "extension-descriptions")
-        origins = localsettings.assemble_deployment_extensions(args.extensions_dir)
-        print(f"Extensions of the deployment: {', '.join(sorted(n for n, o in origins.items() if o == 'slicerweb')) or 'none'} from SlicerWeb; "
-              f"{', '.join(sorted(n for n, o in origins.items() if o == 'deployment')) or 'none'} of its own")
+        origins = localsettings.assemble_application_extensions(args.extensions_dir)
+        print(f"Extensions of the application: {', '.join(sorted(n for n, o in origins.items() if o == 'slicerweb')) or 'none'} from SlicerWeb; "
+              f"{', '.join(sorted(n for n, o in origins.items() if o == 'application')) or 'none'} of its own")
 
     if subprocess.run(["docker", "image", "inspect", IMAGE], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0:
         if subprocess.run(["docker", "build", "-t", IMAGE, os.path.join(ROOT, "docker")]).returncode != 0:
@@ -131,18 +132,18 @@ def git_version(folder):
 
 def write_build_info(dist):
     """What the build is made of, next to the wheels (wheels/build-info.json): when it was built and
-    from which commits of this repository and of the deployment. It goes wherever the wheels go - the
-    runtime release, the site - and the application shows it at the end of its menu. (The revisions
-    of the extensions are in extensions/index.json.)"""
+    from which commits of this repository and of the application's. It goes wherever the wheels go -
+    the runtime release, the site - and the application shows it at the end of its menu. (The
+    revisions of the extensions are in extensions/index.json.)"""
     wheels = os.path.join(dist, "wheels")
     if not os.path.isdir(wheels):
         return
     info = {"date": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
             "slicerweb": git_version(ROOT)}
-    deployment = localsettings.deployment()
-    if deployment:
-        info["deployment"] = {"name": localsettings.deployment_repository() or os.path.basename(deployment),
-                              **(git_version(deployment) or {})}
+    application = localsettings.application_folder()
+    if application:
+        info["application"] = {"name": localsettings.application_repository() or os.path.basename(application),
+                               **(git_version(application) or {})}
     with open(os.path.join(wheels, "build-info.json"), "w", encoding="utf-8") as handle:
         json.dump(info, handle, indent=1)
     print(f"Build info: {json.dumps(info)}")

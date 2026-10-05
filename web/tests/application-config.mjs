@@ -1,6 +1,6 @@
-// The configuration of the application (application.json of a deployment, which the build writes to
-// wheels/application.json): the features it has. The page is given each configuration here, as a
-// deployment's build would serve it.
+// The configuration of the application (its application.json, which the build writes to
+// wheels/application.json): the features it has. The page is given each configuration here, as the
+// build of an application would serve it.
 // - none: the Python console and the Extensions Manager are in the menu and open with Ctrl+3 and
 //   Ctrl+4; Developer mode is offered in the settings, on
 // - pythonConsole and extensionsManager false: not in the menu, and the shortcuts do nothing

@@ -1,4 +1,4 @@
-/* The configuration of the application: what the deployment it is published from sets in its
+/* The configuration of the application: what the repository it is published from sets in its
  * application.json (docs/extensions.md) - which features it has, and later its defaults, branding
  * and colors. The build writes it, but for the extensions, next to the wheels
  * (wheels/application.json); without one - SlicerWeb built on its own - the application has the
@@ -40,7 +40,7 @@ const ALLOWED: { [K in keyof AppConfig["features"]]: readonly AppConfig["feature
   extensionsManager: [true, false],
 };
 
-/** The configuration in effect (the defaults until loadAppConfig has read the deployment's). */
+/** The configuration in effect (the defaults until loadAppConfig has read the application's). */
 export const appConfig: AppConfig = structuredClone(DEFAULT_APP_CONFIG);
 
 /** Read wheels/application.json, if the build has one. What it cannot have is reported and left at

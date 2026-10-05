@@ -1,6 +1,6 @@
 # Examples
 
-Applications built from this checkout. Each is a folder like a deployment
+Applications built from this checkout. Each is a folder like the repository of an application
 ([docs/extensions.md](../docs/extensions.md)): `application.json` says which extensions the
 application has and which features it offers, and `.env` - copied from `.env.example`, kept out of
 the repository by `.gitignore` - says where everything is on this computer. They are not published:

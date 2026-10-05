@@ -27,8 +27,8 @@ if (info?.slicerweb?.commit && !lines.some((l) => l.includes(info.slicerweb.comm
   console.log("FAIL: the SlicerWeb commit of the build is not shown");
   failed = true;
 }
-if (info?.deployment?.commit && !lines.some((l) => l.includes(info.deployment.commit.slice(0, 7)))) {
-  console.log("FAIL: the commit of the deployment is not shown");
+if (info?.application?.commit && !lines.some((l) => l.includes(info.application.commit.slice(0, 7)))) {
+  console.log("FAIL: the commit of the application is not shown");
   failed = true;
 }
 // the menu stays open when the version is clicked (to select it)

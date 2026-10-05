@@ -1,6 +1,6 @@
-# Publish a SlicerWeb application. Deployments call this workflow (docs/extensions.md): the
-# published application, https://lassoan.github.io/slicerweb-app/ (lassoan/slicerweb-app), and
-# others such as the SlicerHeart web viewer. Each says which extensions its build has, and its
+# Publish a SlicerWeb application. The repositories of applications call this workflow
+# (docs/extensions.md): that of the published application, https://lassoan.github.io/slicerweb-app/
+# (lassoan/slicerweb-app), and others. Each says which extensions its build has, and its
 # "Publish app" workflow calls this one: the runtime then comes from a release of that repository,
 # and the site goes where it says - a branch of that repository itself, deploy/<channel>.
 #
@@ -15,8 +15,8 @@
 # the branch holds one build and no history. What it is made of:
 #  - the web application, built here from web/
 #  - the WebAssembly runtime (VTK, ITK, Slicer libraries and modules, extensions), which takes hours
-#    to compile and cannot be built by a runner: it is downloaded from a release of the deployment,
-#    uploaded from a local build with scripts/publish_runtime.py
+#    to compile and cannot be built by a runner: it is downloaded from a release of the
+#    application's repository, uploaded from a local build with scripts/publish_runtime.py
 #  - the sample data, copied into the site because a site of static files cannot fetch files from
 #    servers that refuse cross-origin requests (web/scripts/mirror-sample-data.mjs)
 
@@ -84,13 +84,13 @@ on:
         default: true
 
 # A newer build of a site replaces one still being published to the same place; builds of other
-# places - another channel of a deployment (deploy/latest, deploy/stable) - go on side by side.
+# places - another channel of an application (deploy/latest, deploy/stable) - go on side by side.
 concurrency:
   group: publish-app-${{ inputs.appRepository || 'lassoan/slicerweb-app' }}-${{ inputs.appBranch || 'deploy/latest' }}
   cancel-in-progress: true
 
 env:
-  # Called by a deployment: where it says (its own repository unless it names another). Run here (a
+  # Called by an application: where it says (its own repository unless it names another). Run here (a
   # push to web/): lassoan/slicerweb-app, its latest channel.
   APP_REPOSITORY: ${{ inputs.appRepository || 'lassoan/slicerweb-app' }}
   APP_BRANCH: ${{ inputs.appBranch || 'deploy/latest' }}

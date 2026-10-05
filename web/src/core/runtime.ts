@@ -50,8 +50,8 @@ export interface GitVersion {
 export interface BuildInfo {
   date: string;
   slicerweb?: GitVersion | null;
-  /** the repository of the deployment, for a build of one (build.py --deployment) */
-  deployment?: GitVersion & { name: string };
+  /** the repository of the application, for a build of one (build.py --application) */
+  application?: GitVersion & { name: string };
 }
 
 /** Base64 of bytes, in pieces: a megabyte of arguments at once overflows the call stack. */

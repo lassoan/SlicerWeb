@@ -330,7 +330,7 @@ onMounted(async () => {
 // application log (the error log there), Ctrl+4 the Extensions Manager - each shows or hides it
 // (Cmd on a Mac). Taken before a text field gets the key, so that they work while typing in the
 // console too.
-// (not those of what the deployment leaves out: application.json, features)
+// (not those of what the application leaves out: application.json, features)
 const windowShortcuts: Record<string, () => void> = {
   ...(appConfig.features.pythonConsole ? { "3": () => { store.pythonConsoleOpen = !store.pythonConsoleOpen; } } : {}),
   "0": () => { store.logWindowOpen = !store.logWindowOpen; },

@@ -116,7 +116,7 @@ export const store = reactive({
  * as Slicer's own setting. (A change made from Python comes back the other way, see App.vue.)
  */
 export function setSetting<K extends keyof AppSettings>(key: K, value: AppSettings[K], tellPython = true) {
-  // what the deployment does not let a user change keeps its value (told to Python again, if it was
+  // what the application does not let a user change keeps its value (told to Python again, if it was
   // Python that changed it)
   const fixed = fixedSettings()[key];
   if (fixed !== undefined && value !== fixed) {

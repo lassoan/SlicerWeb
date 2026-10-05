@@ -336,6 +336,22 @@ check("Show 3D off hides the segmentation in 3D and keeps binary labelmap", afte
 await page.evaluate((id) => window.slicerWeb.bridge.call("setSegmentationDisplay", [id, { showSurfaces: true }]), segNodeId);
 const afterShow = await value(`(lambda s: f"{s.GetDisplayNode().GetPreferredDisplayRepresentationName3D()} {bool(s.GetDisplayNode().GetVisibility3D())} {s.GetSegmentation().ContainsRepresentation('Closed surface')}")(slicer.util.getNode("seg"))`);
 check("Show 3D on shows it again, without creating closed surfaces", afterShow === "Binary labelmap True False", afterShow);
+await page.waitForTimeout(1500);
+check("and the GPU surfaces are drawn again", Number(await value(mapperCount)) > 0, await value(mapperCount));
+
+// A display node change while the segmentation node's modified events are blocked (as the desktop "Show 3D" button does)
+// updates the 3D view, too: the segmentation node then reports the change without saying which display node changed
+await exec(`slicer.util.getNode("seg").GetDisplayNode().SetVisibility3D(False)`);
+await page.waitForTimeout(1500);
+check("hidden in 3D: no GPU surfaces", Number(await value(mapperCount)) === 0, await value(mapperCount));
+await exec(`
+seg = slicer.util.getNode("seg")
+wasModifying = seg.StartModify()
+seg.GetDisplayNode().SetVisibility3D(True)
+seg.EndModify(wasModifying)
+`);
+await page.waitForTimeout(1500);
+check("shown while the segmentation node's events are blocked: the GPU surfaces are drawn", Number(await value(mapperCount)) > 0, await value(mapperCount));
 
 // Application setting: the representation that new segmentations show in 3D views
 const newSegmentation3D = () => value(`(lambda s: (s.CreateDefaultDisplayNodes(), str(s.GetDisplayNode().GetPreferredDisplayRepresentationName3D()))[1])(

@@ -10,11 +10,10 @@ left behind is Qt: the widgets are Vue components that talk to the same objects.
 
 ## Opening data with a link
 
-Add the address of a file to the link, URL-encoded, and the application opens on it:
+Add the address of a file to the link, URL-encoded, and the application opens on it. Examples:
 
-```
-https://lassoan.github.io/slicerweb-app/?url=https%3A%2F%2Fgithub.com%2Flassoan%2FPublicTestingData%2Freleases%2Fdownload%2Fdata%2FColoredVolumeRenderingScene.mrb
-```
+- From dropbox: https://lassoan.github.io/slicerweb-app/?url=https%3A%2F%2Fwww.dropbox.com%2Fscl%2Ffi%2Froj7jd4fmcm4rtotwoisl%2FSlicerSceneWithSegClipping3.mrb%3Frlkey%3Dkakd6h5r7961njw0x20hwgcyk%26dl%3D0
+- From github: https://lassoan.github.io/slicerweb-app/?url=https%3A%2F%2Fgithub.com%2Flassoan%2FPublicTestingData%2Freleases%2Fdownload%2Fdata%2FColoredVolumeRenderingScene.mrb
 
 Any file it reads works, a whole `.mrb` scene too, from any server: one that does not allow other
 sites to read its files is reached through the site's download proxy, and a Dropbox share link can

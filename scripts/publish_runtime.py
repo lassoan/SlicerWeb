@@ -3,7 +3,7 @@
 where the "Publish app" workflow takes it from (.github/workflows/publish-app.yml).
 
     python scripts/publish_runtime.py --deployment ../slicerweb-app --channel latest --publish
-    python scripts/publish_runtime.py --deployment ../SlicerHeartWebViewer-deploy --channel latest --publish
+    python scripts/publish_runtime.py --deployment ../SlicerHeartWebViewer-app --channel latest --publish
     python scripts/publish_runtime.py --repository myorg/slicerweb-deploy --channel stable --publish
     python scripts/publish_runtime.py --publish       # the "runtime" release of this repository
 

@@ -235,7 +235,7 @@ to a branch of its own, `deploy/<channel>`, from a runtime release of its own, `
 that a version keeps the build it was published with. The workflow then takes the channel as an
 input (`appBranch: deploy/${{ inputs.channel }}`, `runtime: runtime-${{ inputs.channel }}`), and
 `publish_runtime.py --channel stable --publish` uploads to that release and runs it for that channel.
-[JolleyLab/SlicerHeartWebViewer-deploy](https://github.com/JolleyLab/SlicerHeartWebViewer-deploy) is
+[JolleyLab/SlicerHeartWebViewer-app](https://github.com/JolleyLab/SlicerHeartWebViewer-app) is
 set up this way (private).
 
 Other inputs: `appRepository` may be another private repository (give the workflow a deploy key as

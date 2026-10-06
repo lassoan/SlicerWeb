@@ -1,4 +1,4 @@
-From a23d30f7dafeeb0c2d40367a28a8fff922509de7 Mon Sep 17 00:00:00 2001
+From a201e4e99ea5641e977f455137c5b08df1d9cd7e Mon Sep 17 00:00:00 2001
 From: Andras Lasso <lasso@queensu.ca>
 Date: Fri, 2 Oct 2026 01:52:58 -0400
 Subject: [PATCH] ENH: Show binary labelmap segmentations as smooth surfaces in
@@ -28,6 +28,13 @@ OpenGL and WebGL2 (requires EXT_color_buffer_float).
 - Non-linear transforms: the labelmap is resampled on the CPU.
 - Large labelmaps are downsampled to MaximumNumberOfVoxels.
 - The surface smoothing factor conversion parameter sets the smoothing.
+- Segment colors are computed once per voxel (when the labelmap or the
+  colors change), not at every surface point of every frame.
+- ImageSampleDistance casts rays for every n-th pixel and scales the image
+  up to the viewport (color interpolated; depth, position and normal of
+  the frontmost surface for the render passes), as ImageSampleDistance of
+  vtkGPUVolumeRayCastMapper: faster rendering while the camera is moving,
+  for example on mobile devices.
 
 Show 3D button: new "Representation" submenu (binary labelmap or closed
 surface), the same choice as the Segmentations module's representation
@@ -45,9 +52,9 @@ for new segmentations can be set in application settings
  .../vtkSlicerSegmentationsModuleLogic.cxx     |   40 +
  .../Logic/vtkSlicerSegmentationsModuleLogic.h |    9 +
  .../Segmentations/MRMLDM/CMakeLists.txt       |    2 +
- ...kMRMLSegmentationsDisplayableManager3D.cxx |  338 ++-
- .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2468 +++++++++++++++++
- .../vtkSegmentationLabelmapSurfaceMapper.h    |  148 +
+ ...kMRMLSegmentationsDisplayableManager3D.cxx |  338 +-
+ .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2912 +++++++++++++++++
+ .../vtkSegmentationLabelmapSurfaceMapper.h    |  155 +
  .../UI/qSlicerSegmentationsSettingsPanel.ui   |   19 +-
  .../Widgets/qMRMLSegmentEditorWidget.cxx      |    5 +-
  .../qMRMLSegmentationDisplayNodeWidget.cxx    |    2 +
@@ -55,7 +62,7 @@ for new segmentations can be set in application settings
  .../Widgets/qMRMLSegmentationShow3DButton.h   |    1 +
  .../qSlicerSegmentationsSettingsPanel.cxx     |   28 +
  .../qSlicerSegmentationsSettingsPanel.h       |    1 +
- 19 files changed, 3263 insertions(+), 28 deletions(-)
+ 19 files changed, 3714 insertions(+), 28 deletions(-)
  create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
  create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
 
@@ -95,10 +102,10 @@ index 0b1c8b4bf3..00f0a0fcc2 100644
  std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName2D()
  {
 diff --git a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
-index db40ef9909..0da555278c 100644
+index fddaa170d1..2c1fc249dc 100644
 --- a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
 +++ b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.h
-@@ -190,13 +190,19 @@ public:
+@@ -202,13 +202,19 @@ public:
    /// Collect representation names that are stored as poly data
    void GetPolyDataRepresentationNames(std::set<std::string>& representationNames);
  
@@ -355,7 +362,7 @@ index 78a84a5ab0..d271e96d20 100644
  
  set(${KIT}_TARGET_LIBRARIES
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
-index 34aacdc73e..8b413a7942 100644
+index 12c1186e54..a3326fdaa7 100644
 --- a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
 @@ -20,6 +20,7 @@
@@ -511,8 +518,8 @@ index 34aacdc73e..8b413a7942 100644
 +                                                                                                    vtkGeneralTransform* nodeToWorld)
 +{
 +  TransformedLabelmap& transformed = this->TransformedLabelmaps[displayNode][labelmap];
-+  bool upToDate = transformed.Labelmap && transformed.SourceLabelmapTime == labelmap->GetMTime();
-+  if (upToDate && vtkMRMLTransformNode::AreTransformsEqual(nodeToWorld, transformed.NodeToWorldTransform))
++  bool labelmapCurrent = transformed.Labelmap && transformed.SourceLabelmapTime == labelmap->GetMTime();
++  if (labelmapCurrent && vtkMRMLTransformNode::AreTransformsEqual(nodeToWorld, transformed.NodeToWorldTransform))
 +  {
 +    return transformed.Labelmap;
 +  }
@@ -767,7 +774,7 @@ index 34aacdc73e..8b413a7942 100644
  //---------------------------------------------------------------------------
  void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::AddObservations(vtkMRMLSegmentationNode* node)
  {
-@@ -1136,6 +1465,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
+@@ -1142,6 +1471,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
      //   one that is picked and it may be of different type (volume, model, etc.)
      this->Internal->FindFirstPickedDisplayNodeFromPickerProp3Ds();
    }
@@ -781,10 +788,10 @@ index 34aacdc73e..8b413a7942 100644
  }
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
 new file mode 100644
-index 0000000000..c58a1a42c0
+index 0000000000..4571120c64
 --- /dev/null
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
-@@ -0,0 +1,2468 @@
+@@ -0,0 +1,2912 @@
 +/*==============================================================================
 +
 +  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
@@ -1145,79 +1152,9 @@ index 0000000000..c58a1a42c0
 +}
 +)";
 +
-+//----------------------------------------------------------------------------
-+// Ray casting shaders. A triangle that covers the viewport is drawn (without vertex buffers, from gl_VertexID); each
-+// fragment casts the ray of its pixel through the box of the grid. Rays do not depend on the clipping range of the
-+// camera (drawing the faces of the box would cast no rays where they are beyond the far clipping plane).
-+
-+const char* SurfaceVS = R"(//VTK::System::Dec
-+out vec2 pixelPositionDC;
-+void main()
-+{
-+  vec2 corner = vec2(float((gl_VertexID & 1) * 4 - 1), float((gl_VertexID & 2) * 2 - 1));
-+  pixelPositionDC = corner;
-+  // the depth of the fragments is set by the fragment shader; near the far plane, as back faces of a box would be
-+  gl_Position = vec4(corner, 0.999, 1.0);
-+}
-+)";
-+
-+const char* SurfaceFS = R"(//VTK::System::Dec
-+//VTK::Output::Dec
-+in vec2 pixelPositionDC;
-+uniform sampler3D distanceTexture;
-+uniform sampler3D labelTexture;
-+uniform sampler2D paletteTexture;
-+uniform sampler2D opaqueDepthTexture;
-+uniform mat4 MCDCMatrix;
-+uniform mat4 DCMCMatrix;
-+uniform mat4 MCVCMatrix;
-+uniform mat3 normalMatrix;
-+uniform mat3 gridToPhysical;
-+uniform vec3 eyePositionMC;
-+uniform vec3 viewDirectionMC;
-+uniform int parallelProjection;
-+uniform vec3 boxMin;
-+uniform vec3 boxMax;
-+uniform vec3 mcToGridScale;
-+uniform vec3 mcToGridOffset;
-+uniform vec3 gridDimensions;
-+uniform vec3 labelDimensions;
-+uniform vec3 downsampling;
-+uniform int padding;
-+uniform int paletteSize;
-+uniform float labelScale;
-+uniform float mcPerMm;
-+uniform float minimumStep;
-+uniform float ambientIntensity;
-+uniform float diffuseIntensity;
-+uniform float specularIntensity;
-+uniform float specularPower;
-+uniform vec3 specularColor;
-+uniform float opacity;
-+uniform int numberOfClippingPlanes;
-+uniform vec4 clippingPlanesMC[16];
-+uniform int keepWhereAnyPlaneKeeps;
-+uniform int capClippedSurface;
-+uniform int clippingOutline;
-+uniform vec3 outlineColor;
-+uniform float outlineWidth;
-+uniform float capOpacity;
-+uniform int stopAtOpaqueDepth;
-+uniform vec2 viewportOrigin;
-+uniform vec2 viewportSize;
-+//VTK::Light::Dec
-+//VTK::DepthPeeling::Dec
-+
-+float distanceAtGrid(vec3 gridPosition)
-+{
-+  return texture(distanceTexture, (gridPosition + vec3(0.5)) / gridDimensions).r;
-+}
-+
-+float distanceAt(vec3 positionMC)
-+{
-+  return distanceAtGrid(positionMC * mcToGridScale + mcToGridOffset);
-+}
-+
++// Colors of the segments at the voxels of the grid, for coloring the surface (alpha = 0 where there is no shown segment
++// near). Computing them once, rather than at every surface point of every frame, makes rendering several times faster.
++const char* ColorFS = R"(
 +// Color and opacity of the shown label at a grid position, or alpha = 0 if there is no shown label there.
 +vec4 labelColorAtGrid(vec3 gridPosition)
 +{
@@ -1274,7 +1211,7 @@ index 0000000000..c58a1a42c0
 +  return vec4(0.0);
 +}
 +
-+// Color of the segments at a surface point: colors of nearby voxels that are inside shown segments, weighted by their
++// Color of the segments at a grid position: colors of nearby voxels that are inside shown segments, weighted by their
 +// distance (in voxels), so that seams between segments are soft. Voxels behind thin segments get negligible weight.
 +vec4 segmentColor(vec3 gridPosition)
 +{
@@ -1326,6 +1263,104 @@ index 0000000000..c58a1a42c0
 +          sumWeights += weight;
 +        }
 +      }
++    }
++  }
++  return sumWeights > 0.0 ? sum / sumWeights : vec4(0.0);
++}
++void main()
++{
++  gl_FragData[0] = segmentColor(vec3(currentVoxel()));
++}
++)";
++
++//----------------------------------------------------------------------------
++// Ray casting shaders. A triangle that covers the viewport is drawn (without vertex buffers, from gl_VertexID); each
++// fragment casts the ray of its pixel through the box of the grid. Rays do not depend on the clipping range of the
++// camera (drawing the faces of the box would cast no rays where they are beyond the far clipping plane).
++
++const char* SurfaceVS = R"(//VTK::System::Dec
++out vec2 pixelPositionDC;
++void main()
++{
++  vec2 corner = vec2(float((gl_VertexID & 1) * 4 - 1), float((gl_VertexID & 2) * 2 - 1));
++  pixelPositionDC = corner;
++  // the depth of the fragments is set by the fragment shader; near the far plane, as back faces of a box would be
++  gl_Position = vec4(corner, 0.999, 1.0);
++}
++)";
++
++const char* SurfaceFS = R"(//VTK::System::Dec
++//VTK::Output::Dec
++in vec2 pixelPositionDC;
++uniform sampler3D distanceTexture;
++uniform sampler3D colorTexture;
++uniform sampler2D opaqueDepthTexture;
++uniform mat4 MCDCMatrix;
++uniform mat4 DCMCMatrix;
++uniform mat4 MCVCMatrix;
++uniform mat3 normalMatrix;
++uniform mat3 gridToPhysical;
++uniform vec3 eyePositionMC;
++uniform vec3 viewDirectionMC;
++uniform int parallelProjection;
++uniform vec3 boxMin;
++uniform vec3 boxMax;
++uniform vec3 mcToGridScale;
++uniform vec3 mcToGridOffset;
++uniform vec3 gridDimensions;
++uniform float mcPerMm;
++uniform float minimumStep;
++uniform float ambientIntensity;
++uniform float diffuseIntensity;
++uniform float specularIntensity;
++uniform float specularPower;
++uniform vec3 specularColor;
++uniform float opacity;
++uniform int numberOfClippingPlanes;
++uniform vec4 clippingPlanesMC[16];
++uniform int keepWhereAnyPlaneKeeps;
++uniform int capClippedSurface;
++uniform int clippingOutline;
++uniform vec3 outlineColor;
++uniform float outlineWidth;
++uniform float capOpacity;
++uniform int stopAtOpaqueDepth;
++uniform vec2 viewportOrigin;
++uniform vec2 viewportSize;
++// Size of a pixel of the viewport in pixels of the image that rays are cast for (ImageSampleDistance)
++uniform vec2 fullResolutionScale;
++//VTK::Light::Dec
++//VTK::DepthPeeling::Dec
++
++float distanceAtGrid(vec3 gridPosition)
++{
++  return texture(distanceTexture, (gridPosition + vec3(0.5)) / gridDimensions).r;
++}
++
++float distanceAt(vec3 positionMC)
++{
++  return distanceAtGrid(positionMC * mcToGridScale + mcToGridOffset);
++}
++
++// Color and opacity of the segments at a surface point (gridPosition in grid voxels), interpolated from the colors
++// precomputed at the voxels (see ColorFS). Voxels without a color (far from shown segments) are ignored.
++vec4 segmentColor(vec3 gridPosition)
++{
++  ivec3 maxVoxel = ivec3(gridDimensions + vec3(0.5)) - ivec3(1);
++  vec3 baseVoxel = floor(gridPosition);
++  vec3 fraction = gridPosition - baseVoxel;
++  vec4 sum = vec4(0.0);
++  float sumWeights = 0.0;
++  for (int corner = 0; corner < 8; corner++)
++  {
++    ivec3 offset = ivec3(corner & 1, (corner >> 1) & 1, corner >> 2);
++    vec4 color = texelFetch(colorTexture, clamp(ivec3(baseVoxel) + offset, ivec3(0), maxVoxel), 0);
++    if (color.a > 0.0)
++    {
++      vec3 weights = mix(vec3(1.0) - fraction, fraction, vec3(offset));
++      float weight = max(weights.x * weights.y * weights.z, 1.0e-4);
++      sum += weight * color;
++      sumWeights += weight;
 +    }
 +  }
 +  return sumWeights > 0.0 ? sum / sumWeights : vec4(0.5, 0.5, 0.5, 1.0);
@@ -1413,7 +1448,7 @@ index 0000000000..c58a1a42c0
 +  // Size of a pixel at the point, in millimeters (view coordinates are in millimeters)
 +  vec4 positionDC = MCDCMatrix * vec4(positionMC, 1.0);
 +  positionDC /= positionDC.w;
-+  vec4 neighborMC = DCMCMatrix * vec4(positionDC.x + 2.0 / viewportSize.x, positionDC.yzw);
++  vec4 neighborMC = DCMCMatrix * vec4(positionDC.x + 2.0 / (viewportSize.x * fullResolutionScale.x), positionDC.yzw);
 +  vec4 neighborVC = MCVCMatrix * vec4(neighborMC.xyz / neighborMC.w, 1.0);
 +  vec4 positionVC = MCVCMatrix * vec4(positionMC, 1.0);
 +  float pixelSizeMm = length(neighborVC.xyz / neighborVC.w - positionVC.xyz / positionVC.w);
@@ -1428,7 +1463,7 @@ index 0000000000..c58a1a42c0
 +  vec3 gradientVC = normalMatrix * (gradientGrid * mcToGridScale);
 +  vec3 planeNormalVC = normalize(normalMatrix * plane.xyz);
 +  float inPlaneGradient = max(length(gradientVC - dot(gradientVC, planeNormalVC) * planeNormalVC), 0.2);
-+  if (abs(distanceMm) / inPlaneGradient > 0.5 * outlineWidth * pixelSizeMm)
++  if (abs(distanceMm) / inPlaneGradient > 0.5 * max(outlineWidth, fullResolutionScale.x) * pixelSizeMm)
 +  {
 +    return false;
 +  }
@@ -1529,7 +1564,7 @@ index 0000000000..c58a1a42c0
 +  if (stopAtOpaqueDepth == 1)
 +  {
 +    vec2 pixel = gl_FragCoord.xy - viewportOrigin;
-+    float opaqueDepth = texelFetch(opaqueDepthTexture, ivec2(pixel), 0).r;
++    float opaqueDepth = texelFetch(opaqueDepthTexture, ivec2(pixel * fullResolutionScale), 0).r;
 +    if (opaqueDepth < 1.0)
 +    {
 +      vec4 opaquePositionMC = DCMCMatrix * vec4(2.0 * pixel / viewportSize - 1.0, 2.0 * opaqueDepth - 1.0, 1.0);
@@ -1621,13 +1656,162 @@ index 0000000000..c58a1a42c0
 +  {
 +    discard;
 +  }
-+  gl_FragDepth = firstDepth;
++  //SEG::Output::Impl
++}
++)";
++
++// Output of the ray casting shader into the viewport, where the render passes (depth peeling, ambient occlusion) take it
++const char* SurfaceOutputImpl = R"(gl_FragDepth = firstDepth;
 +  //VTK::DepthPeeling::PreColor
 +  gl_FragData[0] = vec4(accumulatedColor.rgb / accumulatedColor.a, accumulatedColor.a);
++  //VTK::SSAO::Impl
++  //VTK::DepthPeeling::Impl)";
++
++// Output of the ray casting shader into an image of a lower resolution (ImageSampleDistance): color (premultiplied, so
++// that it can be interpolated), depth (24 bits in RGB) and normal of the frontmost surface point. Only 8-bit color
++// buffers are used: they are what every graphics card can render into (several 32-bit float ones together are not, on
++// some mobile GPUs), and positions are computed from the depth.
++const char* LowResolutionOutputImpl = R"(gl_FragData[0] = accumulatedColor;
++  highp uint depthBits = uint(clamp(firstDepth, 0.0, 1.0) * 16777215.0 + 0.5);
++  gl_FragData[1] = vec4(vec3(uvec3(depthBits >> 16u, depthBits >> 8u, depthBits) & uvec3(255u)) / 255.0, 1.0);
++  gl_FragData[2] = vec4(0.5 * firstNormalVC + vec3(0.5), 1.0);)";
++
++// Scales the image of a lower resolution up to the viewport: color is interpolated, the normal is that of the frontmost
++// of the nearest image pixels that have a surface, and the position (and depth) is where the ray of the viewport pixel
++// meets the plane of the surface there. Positions of the image pixels themselves would make every block of viewport
++// pixels a flat step, which ambient occlusion takes for occluders. The output is the same as that of the ray casting
++// shader, for the render passes.
++const char* CompositeFS = R"(//VTK::System::Dec
++//VTK::Output::Dec
++in vec2 pixelPositionDC;
++uniform sampler2D lowResolutionColorTexture;
++uniform sampler2D lowResolutionDepthTexture;
++uniform sampler2D lowResolutionNormalTexture;
++uniform vec2 viewportOrigin;
++uniform vec2 viewportSize;
++uniform vec2 lowResolutionSize;
++uniform mat4 projectionMatrix;
++uniform mat4 inverseProjectionMatrix;
++//VTK::DepthPeeling::Dec
++void main()
++{
++  vec2 position = (gl_FragCoord.xy - viewportOrigin) / viewportSize * lowResolutionSize;
++  vec4 color = texture(lowResolutionColorTexture, position / lowResolutionSize);
++  if (color.a < 0.002)
++  {
++    discard;
++  }
++  ivec2 baseTexel = ivec2(floor(position - vec2(0.5)));
++  ivec2 maxTexel = ivec2(lowResolutionSize) - ivec2(1);
++  float firstDepth = 1.0;
++  vec3 firstPositionVC = vec3(0.0);
++  vec3 firstNormalVC = vec3(0.0, 0.0, 1.0);
++  for (int i = 0; i < 4; i++)
++  {
++    ivec2 texel = clamp(baseTexel + ivec2(i & 1, i >> 1), ivec2(0), maxTexel);
++    if (texelFetch(lowResolutionColorTexture, texel, 0).a <= 0.0)
++    {
++      continue;
++    }
++    highp uvec3 depthBytes = uvec3(texelFetch(lowResolutionDepthTexture, texel, 0).rgb * 255.0 + vec3(0.5));
++    float depth = float((depthBytes.r << 16u) | (depthBytes.g << 8u) | depthBytes.b) / 16777215.0;
++    if (depth <= firstDepth)
++    {
++      firstDepth = depth;
++      // the point of the image pixel (its center) at that depth
++      vec2 texelDC = 2.0 * (vec2(texel) + vec2(0.5)) / lowResolutionSize - vec2(1.0);
++      vec4 positionVC = inverseProjectionMatrix * vec4(texelDC, 2.0 * depth - 1.0, 1.0);
++      firstPositionVC = positionVC.xyz / positionVC.w;
++      firstNormalVC = 2.0 * texelFetch(lowResolutionNormalTexture, texel, 0).xyz - vec3(1.0);
++    }
++  }
++  // The ray of this pixel (view coordinates), and where it meets the plane of the surface; not at grazing angles,
++  // where the plane says little about where the surface is
++  if (firstDepth < 1.0 && length(firstNormalVC) > 0.5)
++  {
++    firstNormalVC = normalize(firstNormalVC);
++    vec2 pixelDC = 2.0 * (gl_FragCoord.xy - viewportOrigin) / viewportSize - vec2(1.0);
++    vec4 nearVC = inverseProjectionMatrix * vec4(pixelDC, -1.0, 1.0);
++    vec4 farVC = inverseProjectionMatrix * vec4(pixelDC, 1.0, 1.0);
++    vec3 rayStart = nearVC.xyz / nearVC.w;
++    vec3 rayDirection = farVC.xyz / farVC.w - rayStart;
++    float rate = dot(firstNormalVC, rayDirection);
++    if (abs(rate) > 0.2 * length(rayDirection))
++    {
++      float t = dot(firstNormalVC, firstPositionVC - rayStart) / rate;
++      if (t > 0.0 && t < 1.0)
++      {
++        firstPositionVC = rayStart + t * rayDirection;
++        vec4 positionDC = projectionMatrix * vec4(firstPositionVC, 1.0);
++        firstDepth = clamp(0.5 * positionDC.z / positionDC.w + 0.5, 0.0, 1.0);
++      }
++    }
++  }
++  gl_FragDepth = firstDepth;
++  //VTK::DepthPeeling::PreColor
++  gl_FragData[0] = vec4(color.rgb / color.a, color.a);
 +  //VTK::SSAO::Impl
 +  //VTK::DepthPeeling::Impl
 +}
 +)";
++
++//----------------------------------------------------------------------------
++// Apply the render passes (depth peeling, ambient occlusion) to a shader that writes the output of the mapper
++void ApplyRenderPasses(const std::vector<vtkOpenGLRenderPass*>& renderPasses,
++                       std::string& vertexShader,
++                       std::string& geometryShader,
++                       std::string& fragmentShader,
++                       vtkAbstractMapper* mapper,
++                       vtkActor* actor)
++{
++  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  {
++    renderPass->PreReplaceShaderValues(vertexShader, geometryShader, fragmentShader, mapper, actor);
++  }
++  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  {
++    renderPass->PostReplaceShaderValues(vertexShader, geometryShader, fragmentShader, mapper, actor);
++  }
++  // Screen-space ambient occlusion (shadows) reads positions and normals as vtkSSAOPass makes polygonal mappers write them
++  bool ssao = std::any_of(renderPasses.begin(), renderPasses.end(), [](vtkOpenGLRenderPass* renderPass) { return renderPass->IsA("vtkSSAOPass"); });
++  std::string ssaoImplementation = "gl_FragData[1] = vec4(firstPositionVC, 1.0);\n"
++                                   "  gl_FragData[2] = vec4(firstNormalVC, 1.0);\n";
++  vtkShaderProgram::Substitute(fragmentShader, "//VTK::SSAO::Impl", ssao ? ssaoImplementation : std::string());
++}
++
++//----------------------------------------------------------------------------
++// Make the color buffers 0..count-1 of the bound framebuffer drawn into. vtkOpenGLState caches the draw buffers, but
++// updates only the first one when a framebuffer is bound: the others may be those of the previously bound framebuffer,
++// and the call that switches them on would be skipped. So glDrawBuffers is called here in any case.
++void ActivateDrawBuffers(vtkOpenGLState* ostate, unsigned int count)
++{
++  unsigned int buffers[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
++  ostate->vtkglDrawBuffers(count, buffers);
++  glDrawBuffers(static_cast<GLsizei>(count), buffers);
++}
++
++//----------------------------------------------------------------------------
++// Set the parameters of the render passes for drawing the output of the mapper. vtkSSAOPass makes only the color buffer
++// of its framebuffer drawn into for mappers other than polygonal and volume mappers: positions and normals, which the
++// mapper writes for ambient occlusion, would be missing where it draws (no shadows on the segments).
++void SetRenderPassParameters(const std::vector<vtkOpenGLRenderPass*>& renderPasses,
++                             vtkShaderProgram* program,
++                             vtkAbstractMapper* mapper,
++                             vtkActor* actor,
++                             vtkOpenGLVertexArrayObject* vao,
++                             vtkOpenGLState* ostate)
++{
++  bool ssao = false;
++  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  {
++    renderPass->SetShaderParameters(program, mapper, actor, vao);
++    ssao = ssao || renderPass->IsA("vtkSSAOPass");
++  }
++  if (ssao)
++  {
++    ActivateDrawBuffers(ostate, 3);
++  }
++}
 +
 +//----------------------------------------------------------------------------
 +// Upload a matrix so that "matrix * vector" in GLSL is the same as in VTK
@@ -1801,6 +1985,19 @@ index 0000000000..c58a1a42c0
 +  void SetGridUniforms(vtkShaderProgram* program);
 +  void SetInsideUniforms(vtkShaderProgram* program);
 +  bool DrawSlices(vtkOpenGLQuadHelper* quad, vtkTextureObject* target, const int region[6]);
++  /// Compute the colors of the segments at the voxels of the grid, in a region (in grid coordinates) or everywhere
++  /// (if region is nullptr).
++  bool ComputeColors(vtkOpenGLRenderWindow* renWin, const int* region);
++  /// Ready the program of the ray casting shader with the specified output code (and render passes applied to it, if
++  /// it is rendered into the viewport).
++  vtkShaderProgram* ReadySurfaceProgram(vtkOpenGLRenderer* ren,
++                                        vtkActor* actor,
++                                        const std::vector<vtkOpenGLRenderPass*>& renderPasses,
++                                        bool lowResolution,
++                                        vtkShaderProgram*& cachedProgram,
++                                        std::string& cachedKey);
++  /// Make the image of the lower resolution (and the framebuffer to render into it) the specified size.
++  bool ReadyLowResolutionFramebuffer(vtkOpenGLRenderWindow* renWin, const int size[2]);
 +  vtkSmartPointer<vtkTextureObject> CreateTexture(vtkOpenGLRenderWindow* renWin, unsigned int internalFormat, int components, int vtkType, bool linear);
 +
 +  vtkSegmentationLabelmapSurfaceMapper* External;
@@ -1835,7 +2032,7 @@ index 0000000000..c58a1a42c0
 +  std::vector<float> PreviousLabelsFloat;
 +
 +  // Graphics resources
-+  vtkOpenGLRenderWindow* Context{ nullptr };
++  vtkWeakPointer<vtkOpenGLRenderWindow> Context;
 +  vtkSmartPointer<vtkTextureObject> LabelTexture;
 +  vtkSmartPointer<vtkTextureObject> PaletteTexture;
 +  vtkSmartPointer<vtkTextureObject> DistanceTexture;
@@ -1864,9 +2061,21 @@ index 0000000000..c58a1a42c0
 +  vtkOpenGLQuadHelper* CombineQuad{ nullptr };
 +  vtkOpenGLQuadHelper* MaskQuad{ nullptr };
 +
++  vtkOpenGLQuadHelper* ColorQuad{ nullptr };
++  vtkSmartPointer<vtkTextureObject> ColorTexture;
++  bool ColorsNeedUpdate{ true };
++
 +  vtkShaderProgram* SurfaceProgram{ nullptr };
 +  std::string SurfaceProgramKey;
 +  vtkNew<vtkOpenGLVertexArrayObject> SurfaceVAO;
++
++  // Rendering at a lower resolution (ImageSampleDistance > 1): color, depth, normal
++  vtkShaderProgram* LowResolutionProgram{ nullptr };
++  std::string LowResolutionProgramKey;
++  vtkShaderProgram* CompositeProgram{ nullptr };
++  std::string CompositeProgramKey;
++  vtkSmartPointer<vtkOpenGLFramebufferObject> LowResolutionFramebuffer;
++  vtkSmartPointer<vtkTextureObject> LowResolutionTextures[3];
 +};
 +
 +//----------------------------------------------------------------------------
@@ -2221,6 +2430,7 @@ index 0000000000..c58a1a42c0
 +    }
 +    this->PaletteSize = paletteWidth * paletteHeight;
 +    this->UploadedLabelColors = this->LabelColors;
++    this->ColorsNeedUpdate = true;
 +  }
 +  return true;
 +}
@@ -2570,11 +2780,121 @@ index 0000000000..c58a1a42c0
 +
 +  if (success)
 +  {
++    success = this->ComputeColors(renWin, fullUpdate ? nullptr : innerRegion);
++  }
++  if (success)
++  {
 +    this->ComputedSmoothingFactor = this->External->SmoothingFactor;
 +    this->DistanceFieldTime.Modified();
 +    this->External->NumberOfDistanceFieldComputations++;
 +  }
 +  return success;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ComputeColors(vtkOpenGLRenderWindow* renWin, const int* region)
++{
++  bool sameGrid = (this->ColorTexture != nullptr);
++  for (int axis = 0; axis < 3 && sameGrid; ++axis)
++  {
++    unsigned int dimension = (axis == 0 ? this->ColorTexture->GetWidth() : (axis == 1 ? this->ColorTexture->GetHeight() : this->ColorTexture->GetDepth()));
++    sameGrid = (static_cast<int>(dimension) == this->GridDimensions[axis]);
++  }
++  if (!sameGrid)
++  {
++    if (this->ColorTexture)
++    {
++      this->ColorTexture->ReleaseGraphicsResources(renWin);
++    }
++    this->ColorTexture = this->CreateTexture(renWin, GL_RGBA8, 4, VTK_UNSIGNED_CHAR, false);
++    if (!this->ColorTexture)
++    {
++      vtkErrorWithObjectMacro(this->External, "ComputeColors: failed to allocate texture");
++      return false;
++    }
++    region = nullptr;
++  }
++  int wholeGrid[6] = { 0, this->GridDimensions[0] - 1, 0, this->GridDimensions[1] - 1, 0, this->GridDimensions[2] - 1 };
++
++  vtkOpenGLState* ostate = renWin->GetState();
++  vtkOpenGLState::ScopedglViewport savedViewport(ostate);
++  vtkOpenGLState::ScopedglScissor savedScissor(ostate);
++  vtkOpenGLState::ScopedglColorMask savedColorMask(ostate);
++  vtkOpenGLState::ScopedglEnableDisable savedDepthTest(ostate, GL_DEPTH_TEST);
++  vtkOpenGLState::ScopedglEnableDisable savedBlend(ostate, GL_BLEND);
++  vtkOpenGLState::ScopedglEnableDisable savedScissorTest(ostate, GL_SCISSOR_TEST);
++  vtkOpenGLState::ScopedglEnableDisable savedCullFace(ostate, GL_CULL_FACE);
++  ostate->vtkglDisable(GL_DEPTH_TEST);
++  ostate->vtkglDisable(GL_BLEND);
++  ostate->vtkglDisable(GL_CULL_FACE);
++  ostate->vtkglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++  ostate->vtkglViewport(0, 0, this->GridDimensions[0], this->GridDimensions[1]);
++
++  this->Framebuffer->SetContext(renWin);
++  this->Framebuffer->SaveCurrentBindingsAndBuffers();
++  this->Framebuffer->Bind();
++  this->Framebuffer->ActivateDrawBuffers(1);
++  bool success = this->ReadyQuad(renWin, this->ColorQuad, std::string(SliceCommonFS) + LabelFS + ColorFS);
++  if (success)
++  {
++    vtkShaderProgram* program = this->ColorQuad->Program;
++    this->LabelTexture->Activate();
++    this->PaletteTexture->Activate();
++    this->SetGridUniforms(program);
++    this->SetInsideUniforms(program);
++    success = this->DrawSlices(this->ColorQuad, this->ColorTexture, region ? region : wholeGrid);
++    this->LabelTexture->Deactivate();
++    this->PaletteTexture->Deactivate();
++  }
++  glFramebufferTextureLayer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, 0, 0, 0);
++  this->Framebuffer->RestorePreviousBindingsAndBuffers();
++  if (success)
++  {
++    this->ColorsNeedUpdate = false;
++  }
++  return success;
++}
++
++//----------------------------------------------------------------------------
++bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReadyLowResolutionFramebuffer(vtkOpenGLRenderWindow* renWin, const int size[2])
++{
++  if (!this->LowResolutionFramebuffer)
++  {
++    this->LowResolutionFramebuffer = vtkSmartPointer<vtkOpenGLFramebufferObject>::New();
++    this->LowResolutionFramebuffer->SetContext(renWin);
++    // color (premultiplied, interpolated when scaled up), depth (in RGB), normal
++    for (int i = 0; i < 3; ++i)
++    {
++      vtkSmartPointer<vtkTextureObject> texture = vtkSmartPointer<vtkTextureObject>::New();
++      texture->SetContext(renWin);
++      texture->SetWrapS(vtkTextureObject::ClampToEdge);
++      texture->SetWrapT(vtkTextureObject::ClampToEdge);
++      texture->SetMinificationFilter(i == 0 ? vtkTextureObject::Linear : vtkTextureObject::Nearest);
++      texture->SetMagnificationFilter(i == 0 ? vtkTextureObject::Linear : vtkTextureObject::Nearest);
++      if (!texture->Allocate2D(size[0], size[1], 4, VTK_UNSIGNED_CHAR))
++      {
++        vtkErrorWithObjectMacro(this->External, "Failed to allocate the image for rendering at a lower resolution");
++        this->LowResolutionFramebuffer = nullptr;
++        return false;
++      }
++      this->LowResolutionTextures[i] = texture;
++    }
++    renWin->GetState()->PushDrawFramebufferBinding();
++    this->LowResolutionFramebuffer->Bind(GL_DRAW_FRAMEBUFFER);
++    for (int i = 0; i < 3; ++i)
++    {
++      this->LowResolutionFramebuffer->AddColorAttachment(i, this->LowResolutionTextures[i]);
++    }
++    renWin->GetState()->PopDrawFramebufferBinding();
++  }
++  for (int i = 0; i < 3; ++i)
++  {
++    if (static_cast<int>(this->LowResolutionTextures[i]->GetWidth()) != size[0] || static_cast<int>(this->LowResolutionTextures[i]->GetHeight()) != size[1])
++    {
++      this->LowResolutionTextures[i]->Resize(size[0], size[1]);
++    }
++  }
++  return true;
 +}
 +
 +//----------------------------------------------------------------------------
@@ -2643,27 +2963,14 @@ index 0000000000..c58a1a42c0
 +}
 +
 +//----------------------------------------------------------------------------
-+void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLRenderer* ren, vtkActor* actor)
++vtkShaderProgram* vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReadySurfaceProgram(vtkOpenGLRenderer* ren,
++                                                                                         vtkActor* actor,
++                                                                                         const std::vector<vtkOpenGLRenderPass*>& renderPasses,
++                                                                                         bool lowResolution,
++                                                                                         vtkShaderProgram*& cachedProgram,
++                                                                                         std::string& cachedKey)
 +{
 +  vtkOpenGLRenderWindow* renWin = static_cast<vtkOpenGLRenderWindow*>(ren->GetRenderWindow());
-+  vtkTextureObject* distanceTexture = this->DistanceTexture;
-+  if (!distanceTexture)
-+  {
-+    return;
-+  }
-+
-+  // Render passes (depth peeling, order independent translucency) modify the shader
-+  std::vector<vtkOpenGLRenderPass*> renderPasses;
-+  vtkInformation* info = actor->GetPropertyKeys();
-+  if (info && info->Has(vtkOpenGLRenderPass::RenderPasses()))
-+  {
-+    int numberOfRenderPasses = info->Length(vtkOpenGLRenderPass::RenderPasses());
-+    for (int i = 0; i < numberOfRenderPasses; ++i)
-+    {
-+      renderPasses.push_back(static_cast<vtkOpenGLRenderPass*>(info->Get(vtkOpenGLRenderPass::RenderPasses(), i)));
-+    }
-+  }
-+
 +  // Lighting code depends on the lights of the renderer
 +  std::ostringstream lightingImplementation;
 +  int lightingComplexity = ren->GetLightingComplexity();
@@ -2696,44 +3003,79 @@ index 0000000000..c58a1a42c0
 +  }
 +  std::ostringstream programKey;
 +  programKey << lightingImplementation.str();
-+  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  for (vtkOpenGLRenderPass* renderPass : lowResolution ? std::vector<vtkOpenGLRenderPass*>() : renderPasses)
 +  {
 +    programKey << renderPass << ":" << renderPass->GetShaderStageMTime() << ";";
 +  }
-+  if (!this->SurfaceProgram || this->SurfaceProgramKey != programKey.str())
++  if (!cachedProgram || cachedKey != programKey.str())
 +  {
 +    std::string vertexShader = SurfaceVS;
 +    std::string geometryShader;
 +    std::string fragmentShader = SurfaceFS;
-+    for (vtkOpenGLRenderPass* renderPass : renderPasses)
-+    {
-+      renderPass->PreReplaceShaderValues(vertexShader, geometryShader, fragmentShader, this->External, actor);
-+    }
++    vtkShaderProgram::Substitute(fragmentShader, "//SEG::Output::Impl", lowResolution ? LowResolutionOutputImpl : SurfaceOutputImpl);
 +    vtkShaderProgram::Substitute(fragmentShader, "//VTK::Light::Dec", lightingComplexity > 0 ? ren->GetLightingUniforms() : "");
 +    vtkShaderProgram::Substitute(fragmentShader, "//VTK::Light::Impl", lightingImplementation.str());
-+    for (vtkOpenGLRenderPass* renderPass : renderPasses)
++    if (!lowResolution)
 +    {
-+      renderPass->PostReplaceShaderValues(vertexShader, geometryShader, fragmentShader, this->External, actor);
++      ApplyRenderPasses(renderPasses, vertexShader, geometryShader, fragmentShader, this->External, actor);
 +    }
-+    // Screen-space ambient occlusion (shadows) reads positions and normals as vtkSSAOPass makes polygonal mappers write them
-+    bool ssao = std::any_of(renderPasses.begin(), renderPasses.end(), [](vtkOpenGLRenderPass* renderPass) { return renderPass->IsA("vtkSSAOPass"); });
-+    std::string ssaoImplementation = "gl_FragData[1] = vec4(firstPositionVC, 1.0);\n"
-+                                     "  gl_FragData[2] = vec4(firstNormalVC, 1.0);\n";
-+    vtkShaderProgram::Substitute(fragmentShader, "//VTK::SSAO::Impl", ssao ? ssaoImplementation : std::string());
-+    this->SurfaceProgram = renWin->GetShaderCache()->ReadyShaderProgram(vertexShader.c_str(), fragmentShader.c_str(), geometryShader.c_str());
-+    this->SurfaceProgramKey = programKey.str();
++    cachedProgram = renWin->GetShaderCache()->ReadyShaderProgram(vertexShader.c_str(), fragmentShader.c_str(), geometryShader.c_str());
++    cachedKey = programKey.str();
 +  }
 +  else
 +  {
-+    renWin->GetShaderCache()->ReadyShaderProgram(this->SurfaceProgram);
++    renWin->GetShaderCache()->ReadyShaderProgram(cachedProgram);
 +  }
-+  vtkShaderProgram* program = this->SurfaceProgram;
-+  if (!program || !program->GetCompiled())
++  return (cachedProgram && cachedProgram->GetCompiled()) ? cachedProgram : nullptr;
++}
++
++//----------------------------------------------------------------------------
++void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::RenderSurface(vtkOpenGLRenderer* ren, vtkActor* actor)
++{
++  vtkOpenGLRenderWindow* renWin = static_cast<vtkOpenGLRenderWindow*>(ren->GetRenderWindow());
++  vtkTextureObject* distanceTexture = this->DistanceTexture;
++  if (!distanceTexture)
++  {
++    return;
++  }
++
++  // Render passes (depth peeling, order independent translucency) modify the shader
++  std::vector<vtkOpenGLRenderPass*> renderPasses;
++  vtkInformation* info = actor->GetPropertyKeys();
++  if (info && info->Has(vtkOpenGLRenderPass::RenderPasses()))
++  {
++    int numberOfRenderPasses = info->Length(vtkOpenGLRenderPass::RenderPasses());
++    for (int i = 0; i < numberOfRenderPasses; ++i)
++    {
++      renderPasses.push_back(static_cast<vtkOpenGLRenderPass*>(info->Get(vtkOpenGLRenderPass::RenderPasses(), i)));
++    }
++  }
++
++  // Image sample distance: rays are cast for an image of a lower resolution, which is scaled up to the viewport
++  vtkOpenGLState* ostate = renWin->GetState();
++  int viewport[4] = { 0, 0, 1, 1 };
++  ostate->vtkglGetIntegerv(GL_VIEWPORT, viewport);
++  int lowResolutionSize[2] = { viewport[2], viewport[3] };
++  for (int i = 0; i < 2; ++i)
++  {
++    lowResolutionSize[i] = std::max(1, static_cast<int>(std::ceil(viewport[2 + i] / this->External->ImageSampleDistance)));
++  }
++  bool lowResolution = (lowResolutionSize[0] < viewport[2] || lowResolutionSize[1] < viewport[3]);
++  if (lowResolution && !this->ReadyLowResolutionFramebuffer(renWin, lowResolutionSize))
++  {
++    lowResolution = false;
++  }
++
++  vtkShaderProgram*& cachedProgram = lowResolution ? this->LowResolutionProgram : this->SurfaceProgram;
++  std::string& cachedKey = lowResolution ? this->LowResolutionProgramKey : this->SurfaceProgramKey;
++  vtkShaderProgram* program = this->ReadySurfaceProgram(ren, actor, renderPasses, lowResolution, cachedProgram, cachedKey);
++  if (!program)
 +  {
 +    vtkErrorWithObjectMacro(this->External, "RenderSurface: failed to compile shader");
 +    this->Failed = true;
 +    return;
 +  }
++  int lightingComplexity = ren->GetLightingComplexity();
 +
 +  // Matrices
 +  vtkCamera* camera = ren->GetActiveCamera();
@@ -2859,22 +3201,23 @@ index 0000000000..c58a1a42c0
 +  program->SetUniformf("outlineWidth", static_cast<float>(this->External->OutlineWidth));
 +
 +  distanceTexture->Activate();
-+  this->LabelTexture->Activate();
++  this->ColorTexture->Activate();
 +  this->PaletteTexture->Activate();
 +  program->SetUniformi("distanceTexture", distanceTexture->GetTextureUnit());
-+  this->SetInsideUniforms(program);
++  program->SetUniformi("colorTexture", this->ColorTexture->GetTextureUnit());
 +
 +  // Translucent surfaces: the depth test does not hide surfaces behind opaque geometry, rays stop there instead
 +  bool stopAtOpaqueDepth = actor->IsRenderingTranslucentPolygonalGeometry() && this->CaptureOpaqueDepth(ren);
-+  vtkOpenGLState* ostate = renWin->GetState();
 +  program->SetUniformi("stopAtOpaqueDepth", stopAtOpaqueDepth ? 1 : 0);
-+  // Viewport: for reading the opaque depth and for the size of pixels (clipping outline)
-+  int viewport[4] = { 0, 0, 1, 1 };
-+  ostate->vtkglGetIntegerv(GL_VIEWPORT, viewport);
++  // Viewport (or the image of a lower resolution): for reading the opaque depth and for the size of pixels (clipping outline)
 +  float viewportOrigin[2] = { static_cast<float>(viewport[0]), static_cast<float>(viewport[1]) };
 +  float viewportSize[2] = { static_cast<float>(viewport[2]), static_cast<float>(viewport[3]) };
-+  program->SetUniform2f("viewportOrigin", viewportOrigin);
-+  program->SetUniform2f("viewportSize", viewportSize);
++  float rayImageOrigin[2] = { 0.0f, 0.0f };
++  float rayImageSize[2] = { static_cast<float>(lowResolutionSize[0]), static_cast<float>(lowResolutionSize[1]) };
++  float fullResolutionScale[2] = { viewportSize[0] / rayImageSize[0], viewportSize[1] / rayImageSize[1] };
++  program->SetUniform2f("viewportOrigin", lowResolution ? rayImageOrigin : viewportOrigin);
++  program->SetUniform2f("viewportSize", lowResolution ? rayImageSize : viewportSize);
++  program->SetUniform2f("fullResolutionScale", fullResolutionScale);
 +  if (stopAtOpaqueDepth)
 +  {
 +    this->OpaqueDepthTexture->Activate();
@@ -2886,24 +3229,103 @@ index 0000000000..c58a1a42c0
 +    program->SetUniformi("opaqueDepthTexture", this->PaletteTexture->GetTextureUnit());
 +  }
 +
-+  for (vtkOpenGLRenderPass* renderPass : renderPasses)
-+  {
-+    renderPass->SetShaderParameters(program, this->External, actor, this->SurfaceVAO);
-+  }
-+
 +  vtkOpenGLState::ScopedglEnableDisable savedCullFace(ostate, GL_CULL_FACE);
 +  ostate->vtkglDisable(GL_CULL_FACE);
-+  this->SurfaceVAO->Bind();
-+  glDrawArrays(GL_TRIANGLES, 0, 3);
-+  this->SurfaceVAO->Release();
++  if (!lowResolution)
++  {
++    SetRenderPassParameters(renderPasses, program, this->External, actor, this->SurfaceVAO, ostate);
++    this->SurfaceVAO->Bind();
++    glDrawArrays(GL_TRIANGLES, 0, 3);
++    this->SurfaceVAO->Release();
++  }
++  else
++  {
++    // Rays are cast for the image of the lower resolution
++    vtkOpenGLState::ScopedglViewport savedViewport(ostate);
++    vtkOpenGLState::ScopedglScissor savedScissor(ostate);
++    vtkOpenGLState::ScopedglColorMask savedColorMask(ostate);
++    vtkOpenGLState::ScopedglClearColor savedClearColor(ostate);
++    vtkOpenGLState::ScopedglEnableDisable savedDepthTest(ostate, GL_DEPTH_TEST);
++    vtkOpenGLState::ScopedglEnableDisable savedBlend(ostate, GL_BLEND);
++    vtkOpenGLState::ScopedglEnableDisable savedScissorTest(ostate, GL_SCISSOR_TEST);
++    this->LowResolutionFramebuffer->SaveCurrentBindingsAndBuffers();
++    this->LowResolutionFramebuffer->Bind();
++    ActivateDrawBuffers(ostate, 3);
++    ostate->vtkglDisable(GL_DEPTH_TEST);
++    ostate->vtkglDisable(GL_BLEND);
++    ostate->vtkglDisable(GL_SCISSOR_TEST);
++    ostate->vtkglColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    ostate->vtkglViewport(0, 0, lowResolutionSize[0], lowResolutionSize[1]);
++    ostate->vtkglClearColor(0.0, 0.0, 0.0, 0.0);
++    ostate->vtkglClear(GL_COLOR_BUFFER_BIT);
++    this->SurfaceVAO->Bind();
++    glDrawArrays(GL_TRIANGLES, 0, 3);
++    this->SurfaceVAO->Release();
++    this->LowResolutionFramebuffer->RestorePreviousBindingsAndBuffers();
++  }
 +  vtkOpenGLCheckErrorMacro("failed after rendering segmentation surface");
 +
 +  distanceTexture->Deactivate();
-+  this->LabelTexture->Deactivate();
++  this->ColorTexture->Deactivate();
 +  this->PaletteTexture->Deactivate();
 +  if (stopAtOpaqueDepth)
 +  {
 +    this->OpaqueDepthTexture->Deactivate();
++  }
++  if (!lowResolution)
++  {
++    return;
++  }
++
++  // The image is scaled up to the viewport, through the render passes
++  std::ostringstream compositeKey;
++  for (vtkOpenGLRenderPass* renderPass : renderPasses)
++  {
++    compositeKey << renderPass << ":" << renderPass->GetShaderStageMTime() << ";";
++  }
++  if (!this->CompositeProgram || this->CompositeProgramKey != compositeKey.str())
++  {
++    std::string vertexShader = SurfaceVS;
++    std::string geometryShader;
++    std::string fragmentShader = CompositeFS;
++    ApplyRenderPasses(renderPasses, vertexShader, geometryShader, fragmentShader, this->External, actor);
++    this->CompositeProgram = renWin->GetShaderCache()->ReadyShaderProgram(vertexShader.c_str(), fragmentShader.c_str(), geometryShader.c_str());
++    this->CompositeProgramKey = compositeKey.str();
++  }
++  else
++  {
++    renWin->GetShaderCache()->ReadyShaderProgram(this->CompositeProgram);
++  }
++  vtkShaderProgram* composite = this->CompositeProgram;
++  if (!composite || !composite->GetCompiled())
++  {
++    vtkErrorWithObjectMacro(this->External, "RenderSurface: failed to compile shader");
++    this->Failed = true;
++    return;
++  }
++  const char* textureNames[3] = { "lowResolutionColorTexture", "lowResolutionDepthTexture", "lowResolutionNormalTexture" };
++  for (int i = 0; i < 3; ++i)
++  {
++    this->LowResolutionTextures[i]->Activate();
++    composite->SetUniformi(textureNames[i], this->LowResolutionTextures[i]->GetTextureUnit());
++  }
++  composite->SetUniform2f("viewportOrigin", viewportOrigin);
++  composite->SetUniform2f("viewportSize", viewportSize);
++  composite->SetUniform2f("lowResolutionSize", rayImageSize);
++  vtkNew<vtkMatrix4x4> projection;
++  projection->DeepCopy(camera->GetProjectionTransformMatrix(ren->GetTiledAspectRatio(), -1, 1));
++  vtkNew<vtkMatrix4x4> inverseProjection;
++  vtkMatrix4x4::Invert(projection, inverseProjection);
++  SetUniformMatrix4x4(composite, "projectionMatrix", projection);
++  SetUniformMatrix4x4(composite, "inverseProjectionMatrix", inverseProjection);
++  SetRenderPassParameters(renderPasses, composite, this->External, actor, this->SurfaceVAO, ostate);
++  this->SurfaceVAO->Bind();
++  glDrawArrays(GL_TRIANGLES, 0, 3);
++  this->SurfaceVAO->Release();
++  vtkOpenGLCheckErrorMacro("failed after scaling up segmentation surface");
++  for (int i = 0; i < 3; ++i)
++  {
++    this->LowResolutionTextures[i]->Deactivate();
 +  }
 +}
 +
@@ -2911,7 +3333,7 @@ index 0000000000..c58a1a42c0
 +void vtkSegmentationLabelmapSurfaceMapper::vtkInternal::ReleaseGraphicsResources(vtkWindow* window)
 +{
 +  vtkOpenGLQuadHelper** quads[] = {
-+    &this->SeedQuad, &this->JumpFloodQuad, &this->FinalizeQuad, &this->SmoothQuad, &this->CombineQuad, &this->MaskQuad,
++    &this->SeedQuad, &this->JumpFloodQuad, &this->FinalizeQuad, &this->SmoothQuad, &this->CombineQuad, &this->MaskQuad, &this->ColorQuad,
 +  };
 +  for (vtkOpenGLQuadHelper** quad : quads)
 +  {
@@ -2921,6 +3343,10 @@ index 0000000000..c58a1a42c0
 +  for (vtkTextureObject* texture : { this->LabelTexture.GetPointer(),
 +                                     this->PaletteTexture.GetPointer(),
 +                                     this->DistanceTexture.GetPointer(),
++                                     this->ColorTexture.GetPointer(),
++                                     this->LowResolutionTextures[0].GetPointer(),
++                                     this->LowResolutionTextures[1].GetPointer(),
++                                     this->LowResolutionTextures[2].GetPointer(),
 +                                     this->OpaqueDepthTexture.GetPointer(),
 +                                     this->OpaqueDepthCopyColorTexture.GetPointer() })
 +  {
@@ -2933,9 +3359,20 @@ index 0000000000..c58a1a42c0
 +  {
 +    this->OpaqueDepthFramebuffer->ReleaseGraphicsResources(window);
 +  }
++  if (this->LowResolutionFramebuffer)
++  {
++    this->LowResolutionFramebuffer->ReleaseGraphicsResources(window);
++  }
 +  this->OpaqueDepthTexture = nullptr;
 +  this->OpaqueDepthCopyColorTexture = nullptr;
 +  this->OpaqueDepthFramebuffer = nullptr;
++  this->LowResolutionFramebuffer = nullptr;
++  for (int i = 0; i < 3; ++i)
++  {
++    this->LowResolutionTextures[i] = nullptr;
++  }
++  this->ColorTexture = nullptr;
++  this->ColorsNeedUpdate = true;
 +  this->LabelTexture = nullptr;
 +  this->PaletteTexture = nullptr;
 +  this->DistanceTexture = nullptr;
@@ -2944,6 +3381,10 @@ index 0000000000..c58a1a42c0
 +  this->SurfaceVAO->ReleaseGraphicsResources();
 +  this->SurfaceProgram = nullptr;
 +  this->SurfaceProgramKey.clear();
++  this->LowResolutionProgram = nullptr;
++  this->LowResolutionProgramKey.clear();
++  this->CompositeProgram = nullptr;
++  this->CompositeProgramKey.clear();
 +  this->DistanceFieldNeedsUpdate = true;
 +  this->Context = nullptr;
 +}
@@ -2973,7 +3414,7 @@ index 0000000000..c58a1a42c0
 +{
 +  // Graphics resources are released by ReleaseGraphicsResources (called when the actor is removed from the renderer)
 +  vtkInternal* d = this->Internal;
-+  vtkOpenGLQuadHelper* quads[] = { d->SeedQuad, d->JumpFloodQuad, d->FinalizeQuad, d->SmoothQuad, d->CombineQuad, d->MaskQuad };
++  vtkOpenGLQuadHelper* quads[] = { d->SeedQuad, d->JumpFloodQuad, d->FinalizeQuad, d->SmoothQuad, d->CombineQuad, d->MaskQuad, d->ColorQuad };
 +  for (vtkOpenGLQuadHelper* quad : quads)
 +  {
 +    delete quad;
@@ -2986,6 +3427,7 @@ index 0000000000..c58a1a42c0
 +{
 +  this->Superclass::PrintSelf(os, indent);
 +  os << indent << "SmoothingFactor: " << this->SmoothingFactor << "\n";
++  os << indent << "ImageSampleDistance: " << this->ImageSampleDistance << "\n";
 +  os << indent << "CapClippedSurface: " << (this->CapClippedSurface ? "true" : "false") << "\n";
 +  os << indent << "CapOpacity: " << this->CapOpacity << "\n";
 +  os << indent << "KeepWhereAnyClippingPlaneKeeps: " << (this->KeepWhereAnyClippingPlaneKeeps ? "true" : "false") << "\n";
@@ -3217,9 +3659,13 @@ index 0000000000..c58a1a42c0
 +  }
 +  if (this->Internal->Context != renWin)
 +  {
-+    if (this->Internal->Context)
++    if (vtkOpenGLRenderWindow* previousContext = this->Internal->Context)
 +    {
-+      this->Internal->ReleaseGraphicsResources(this->Internal->Context);
++      // The resources belong to the context of the previous window: it must be current while they are released
++      // (WebGL refuses to delete objects of another context)
++      previousContext->MakeCurrent();
++      this->Internal->ReleaseGraphicsResources(previousContext);
++      renWin->MakeCurrent();
 +    }
 +    this->Internal->Context = renWin;
 +    this->Internal->Failed = false;
@@ -3244,6 +3690,11 @@ index 0000000000..c58a1a42c0
 +    this->Internal->DistanceFieldNeedsUpdate = false;
 +    this->Internal->ChangedRegionValid = false;
 +  }
++  if (this->Internal->ColorsNeedUpdate && !this->Internal->ComputeColors(renWin, nullptr))
++  {
++    this->Internal->Failed = true;
++    return;
++  }
 +  this->Internal->RenderSurface(ren, actor);
 +}
 +
@@ -3255,10 +3706,10 @@ index 0000000000..c58a1a42c0
 +}
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
 new file mode 100644
-index 0000000000..ea2553200c
+index 0000000000..d59ce0373a
 --- /dev/null
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,155 @@
 +/*==============================================================================
 +
 +  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
@@ -3364,6 +3815,12 @@ index 0000000000..ea2553200c
 +  vtkSetClampMacro(OutlineWidth, double, 0.5, 100.0);
 +  vtkGetMacro(OutlineWidth, double);
 +
++  /// Rays are cast for every n-th pixel across and down (1: every pixel), and the image is scaled up to the viewport,
++  /// as with ImageSampleDistance of vtkGPUVolumeRayCastMapper. Larger values make rendering faster at the expense of
++  /// detail, for example while the camera is moving.
++  vtkSetClampMacro(ImageSampleDistance, double, 1.0, 8.0);
++  vtkGetMacro(ImageSampleDistance, double);
++
 +  /// Number of times the signed distance field has been computed (for testing).
 +  vtkGetMacro(NumberOfDistanceFieldComputations, int);
 +
@@ -3389,6 +3846,7 @@ index 0000000000..ea2553200c
 +  int FillInputPortInformation(int port, vtkInformation* info) override;
 +
 +  double SmoothingFactor{ 0.5 };
++  double ImageSampleDistance{ 1.0 };
 +  bool CapClippedSurface{ true };
 +  double CapOpacity{ 1.0 };
 +  bool KeepWhereAnyClippingPlaneKeeps{ false };

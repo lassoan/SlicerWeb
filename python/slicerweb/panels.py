@@ -193,11 +193,19 @@ def markupsInfo(nodeID):
             "visible": bool(node.GetNthControlPointVisibility(i)),
             "locked": bool(node.GetNthControlPointLocked(i)),
         })
+    # What the markup is measured by: shown when enabled and computed (or the reason it could not be,
+    # as the desktop's Markups module says), and all of them for choosing which are enabled
     measurements = []
+    measurementSettings = []
     for i in range(node.GetNumberOfMeasurements()):
         m = node.GetNthMeasurement(i)
+        if m is None or not m.GetName():
+            continue
+        measurementSettings.append({"name": m.GetName(), "enabled": bool(m.GetEnabled())})
         if m.GetEnabled() and m.GetValueDefined():
-            measurements.append({"name": m.GetName(), "value": m.GetValue(), "units": m.GetUnits(), "text": m.GetValueWithUnitsAsPrintableString()})
+            ok = m.GetLastComputationResult() == m.OK
+            measurements.append({"name": m.GetName(), "value": m.GetValue(), "units": m.GetUnits(),
+                                 "text": m.GetValueWithUnitsAsPrintableString() if ok else m.GetLastComputationResultAsPrintableString()})
     return {
         "id": nodeID,
         "name": node.GetName(),
@@ -205,6 +213,7 @@ def markupsInfo(nodeID):
         "markupType": node.GetMarkupType(),
         "controlPoints": points,
         "measurements": measurements,
+        "measurementSettings": measurementSettings,
         "locked": bool(node.GetLocked()),
         "visible": bool(d.GetVisibility()) if d else False,
         "color": _color_hex(d.GetSelectedColor()) if d else "#ffffff",
@@ -213,6 +222,22 @@ def markupsInfo(nodeID):
         "fillOpacity": d.GetFillOpacity() if d else 0.5,
         "handles": _handlesInfo(d) if d else None,
     }
+
+
+@method()
+def setMarkupsMeasurementEnabled(nodeID, name, enabled):
+    """Enable or disable a measurement of a markup (the Enabled column of the desktop's measurement settings)."""
+    node = _node(nodeID)
+    found = False
+    for i in range(node.GetNumberOfMeasurements()):
+        m = node.GetNthMeasurement(i)
+        if m is not None and m.GetName() == name:
+            m.SetEnabled(bool(enabled))
+            found = True
+    if not found:
+        raise ValueError(f"{node.GetName()} has no measurement named {name}")
+    node.UpdateAllMeasurements()
+    return True
 
 
 # Interaction handles of markups (the desktop's qMRMLMarkupsInteractionHandleWidget): for each kind, whether it is shown

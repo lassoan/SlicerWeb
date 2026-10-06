@@ -11,6 +11,8 @@ interface MarkupsInfo {
   markupType: string;
   controlPoints: { index: number; label: string; position: number[]; selected: boolean; visible: boolean; locked: boolean }[];
   measurements: { name: string; value: number; units: string; text: string }[];
+  /** All the measurements the markup has, and whether each is computed and shown */
+  measurementSettings: { name: string; enabled: boolean }[];
   locked: boolean;
   visible: boolean;
   color: string;
@@ -34,7 +36,13 @@ const HANDLE_KINDS: { kind: HandleKindName; label: string }[] = [
 const HANDLE_COMPONENTS = ["X", "Y", "Z", "View plane"];
 
 const nodeID = useSelectedNode("Markups");
-const { state, bridge } = useNodeState<MarkupsInfo>("markupsInfo", nodeID);
+const { state, bridge, refresh } = useNodeState<MarkupsInfo>("markupsInfo", nodeID);
+/** Which measurements are computed and shown (in the views and here), as the desktop's measurement settings. */
+async function setMeasurementEnabled(name: string, enabled: boolean) {
+  if (!nodeID.value) return;
+  await bridge.call("setMarkupsMeasurementEnabled", [nodeID.value, name, enabled]);
+  refresh();
+}
 // The markup chosen here is the one that placed points go to, as in the Markups module of desktop
 // Slicer: placing a point then adds to it rather than making a new one
 watch(nodeID, (id) => { if (id) bridge.call("setActivePlaceNode", [id]).catch(() => {}); }, { immediate: true });
@@ -78,10 +86,23 @@ i.SetCurrentInteractionMode(i.Place)
         <SwButton text="Clear points" @clicked="point(0, 'clear')" />
         <SwButton :text="state.locked ? 'Unlock' : 'Lock'" @clicked="set({ locked: !state!.locked })" />
       </div>
-      <SwCollapsible v-if="state.measurements.length" text="Measurements">
+      <SwCollapsible v-if="state.measurementSettings?.length" text="Measurements" data-name="measurements">
         <div v-for="m in state.measurements" :key="m.name" class="flex justify-between text-[13px]">
           <span class="text-muted-foreground">{{ m.name }}</span><span class="font-medium text-highlight tabular-nums">{{ m.text }}</span>
         </div>
+        <div v-if="!state.measurements.length" class="text-[13px] text-muted-foreground">No measurement</div>
+        <SwCollapsible text="Measurement settings" collapsed data-name="measurementSettings">
+          <table class="w-full text-[12px]">
+            <thead><tr class="text-muted-foreground"><th class="text-left font-normal">Name</th><th class="w-16 font-normal">Enabled</th></tr></thead>
+            <tbody>
+              <tr v-for="m in state.measurementSettings" :key="m.name" :data-measurement="m.name">
+                <td class="py-0.5">{{ m.name }}</td>
+                <td class="text-center"><input type="checkbox" :checked="m.enabled"
+                  @change="setMeasurementEnabled(m.name, ($event.target as HTMLInputElement).checked)" /></td>
+              </tr>
+            </tbody>
+          </table>
+        </SwCollapsible>
       </SwCollapsible>
       <SwCollapsible :text="`Control points (${state.controlPoints.length})`">
         <table class="w-full text-[12px]">

@@ -73,13 +73,37 @@ await page.waitForTimeout(1500);
 const after = Number(await painted());
 check("a finger dragged in a slice view paints", after - before, (n) => n > 0);
 
-// another mouse mode ends it
+// another mouse mode (to scroll the slices, say) does not end Paint: it waits meanwhile
+const fingerDrag = async () => {
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [touch(cx, cy)] });
+  await page.waitForTimeout(100);
+  for (let i = 1; i <= 10; i++) {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [touch(cx + i * 4, cy + i * 6)] });
+    await page.waitForTimeout(50);
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(1500);
+};
+const suspended = () => page.evaluate(() => window.slicerWeb.bridge.call("segmentEditorState").then((s) => s.suspended));
 await page.getByRole("button", { name: "Mouse mode" }).first().tap();
 await page.waitForTimeout(400);
 await page.getByRole("menuitem", { name: "Scroll slices" }).tap();
 await page.waitForTimeout(800);
-check("choosing another mouse mode ends Paint", await effect(), null);
+check("choosing another mouse mode keeps Paint", await effect(), "Paint");
+check("but suspended", await suspended(), true);
 check("and that mode is the one in use", await page.evaluate(() => window.slicerWeb.store.interactionMode), "Scroll");
+const offset = () => py(`str(round(slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetSliceOffset(), 2))`);
+const [paintedBefore, offsetBefore] = [Number(await painted()), await offset()];
+await fingerDrag();
+check("a finger drag then scrolls the slices", await offset(), (o) => o !== offsetBefore);
+check("and does not paint", Number(await painted()), paintedBefore);
+await page.getByRole("button", { name: "Mouse mode" }).first().tap();
+await page.waitForTimeout(400);
+await page.locator("[data-name=segmentEditMode]").first().tap();
+await page.waitForTimeout(800);
+check("choosing Paint's mouse mode again resumes it", await suspended(), false);
+await fingerDrag();
+check("and a finger drag paints again", Number(await painted()), (n) => n > paintedBefore);
 
 // opening another module ends it too, the panel being closed or not
 await page.evaluate(() => { window.slicerWeb.store.rightPanelOpen = true; });

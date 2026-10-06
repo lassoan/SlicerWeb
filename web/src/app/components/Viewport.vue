@@ -129,7 +129,8 @@ function onVisible() {
 }
 
 // Magnifier: a fingertip covers the point it touches, so while control points are placed or moved,
-// the image under the finger is shown enlarged above it.
+// or a Segment Editor effect draws in the view (painting, drawing an outline, cutting with
+// scissors), the image under the finger is shown enlarged above it.
 const magnifierPosition = ref<{ x: number; y: number } | null>(null);
 const magnifierOffset = ref<{ x: number; y: number } | undefined>(undefined);
 
@@ -183,7 +184,7 @@ async function updateMagnifier(touch: Touch) {
   if (!magnifierChecked) {
     magnifierChecked = true;
     // the press is processed by the view before this answer arrives (it starts moving a control point)
-    magnifierEnabled = await bridge.call<boolean>("markupsInteractionActive").catch(() => false);
+    magnifierEnabled = await bridge.call<boolean>("touchMagnifierWanted", [props.view.layoutName]).catch(() => false);
     // on the canvas the views share, the view is read from its rectangle of it
     viewCanvas.value = sharedRendering.value ? sharedCanvas.value : ((container.value?.querySelector("canvas") as HTMLCanvasElement) ?? null);
     magnifierOffset.value = sharedRendering.value ? containerOnSharedCanvas() : undefined;

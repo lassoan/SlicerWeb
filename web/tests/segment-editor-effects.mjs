@@ -31,10 +31,8 @@ shape = slicer.util.arrayFromVolume(volume).shape
 mid = [s // 2 for s in shape]
 
 def count(node, segmentID):
-    """What the segment holds now, read from the segmentation itself."""
-    labelmap = node.GetSegmentation().GetSegment(segmentID).GetRepresentation("Binary labelmap")
-    scalars = labelmap.GetPointData().GetScalars() if labelmap else None
-    return 0 if scalars is None else int((numpy_support.vtk_to_numpy(scalars) > 0).sum())
+    """What the segment holds now. By its own label: segments may share a labelmap (a layer)."""
+    return int((slicer.util.arrayFromSegmentBinaryLabelmap(node, segmentID, volume) > 0).sum())
 
 def segmentation(name):
     node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", name)
@@ -77,10 +75,10 @@ put(shapes, theBall, ball(6))
 `);
 await use("shapes", "theBall");
 const ballVoxels = await number(`count(shapes, theBall)`);
-check("margin grows the segment", (await apply("Margin", { marginMm: 2 })) === true
+check("margin grows the segment", (await apply("Margin", { marginMm: 3 })) === true
   && (await number(`count(shapes, theBall)`)) > ballVoxels, `${ballVoxels} -> ${await number(`count(shapes, theBall)`)}`);
 const grown = await number(`count(shapes, theBall)`);
-await apply("Margin", { marginMm: -2 });
+await apply("Margin", { marginMm: -3 });
 const shrunk = await number(`count(shapes, theBall)`);
 check("and shrinks it again", shrunk < grown && Math.abs(shrunk - ballVoxels) < ballVoxels * 0.1,
   `${grown} -> ${shrunk}, from ${ballVoxels}`);
@@ -129,7 +127,24 @@ put(logical, two, square(-5, 5, -5, 5))
   const ok = await apply("Logic", { operation, modifierSegmentID: other });
   const got = await number(`count(logical, one)`);
   check(`logical ${operation}`, ok === true && got === expected, `${got} voxels (expected ${expected})`);
+  // "Bypass masking" is on by default, as on the desktop: only the selected segment changes
+  const otherAfter = await number(`count(logical, two)`);
+  check(`logical ${operation} leaves the other segment as it is`, otherAfter === 100, `${otherAfter} voxels (expected 100)`);
 }
+// without bypassing masking, the segment editor's masking applies: adding overwrites the other segment
+await page.evaluate(() => window.slicerWeb.bridge.call("segmentEditorSetEffectParameter", ["Logic", "BypassMasking", 0]));
+await run(`
+logical = segmentation("Logic-masked")
+one = logical.GetSegmentation().AddEmptySegment("", "one")
+two = logical.GetSegmentation().AddEmptySegment("", "two")
+put(logical, one, square(-10, 0, -10, 0))
+put(logical, two, square(-5, 5, -5, 5))
+`);
+await use("logical", "one");
+await apply("Logic", { operation: "add", modifierSegmentID: String(await value(`two`)).replace(/^'|'$/g, "") });
+const overwritten = await number(`count(logical, two)`);
+check("logical add without bypassing masking overwrites the other segment", overwritten === 0, `${overwritten} voxels left in it`);
+await page.evaluate(() => window.slicerWeb.bridge.call("segmentEditorSetEffectParameter", ["Logic", "BypassMasking", 1]));
 
 // --- grow from seeds
 await run(`

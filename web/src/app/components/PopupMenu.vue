@@ -36,7 +36,11 @@ function onPointerDown(event: PointerEvent) {
   if (!root.value?.contains(target) && !menu.value?.contains(target)) open.value = false;
 }
 function onKeyDown(event: KeyboardEvent) {
-  if (event.key === "Escape") open.value = false;
+  // An Escape that closes the menu is the menu's: nothing else acts on it (a Segment Editor effect stays)
+  if (event.key === "Escape" && open.value) {
+    open.value = false;
+    event.preventDefault();
+  }
 }
 
 onMounted(() => {

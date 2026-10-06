@@ -50,7 +50,10 @@ async function select(name: string) {
 }
 
 function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") emit("close");
+  if (e.key === "Escape") {
+    e.preventDefault();
+    emit("close");
+  }
 }
 onMounted(() => {
   place();

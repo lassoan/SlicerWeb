@@ -486,10 +486,8 @@ def getNodes(className="vtkMRMLNode", includeHidden=False, attributes=None):
     attributes is {name: value} as qMRMLNodeComboBox::addAttribute() takes them: a value of None
     matches any node that has the attribute (e.g. parameter nodes of one module).
     """
-    nodes = _scene().GetNodesByClass(className)
     result = []
-    for i in range(nodes.GetNumberOfItems()):
-        n = nodes.GetItemAsObject(i)
+    for n in _nodesByClass(className):
         if not includeHidden and n.GetHideFromEditors():
             continue
         if attributes and not all(
@@ -747,9 +745,7 @@ def _viewNodeByLayoutName(layoutName):
     if not layoutName:
         return None
     for className in ("vtkMRMLSliceNode", "vtkMRMLViewNode"):
-        nodes = _scene().GetNodesByClass(className)
-        for i in range(nodes.GetNumberOfItems()):
-            node = nodes.GetItemAsObject(i)
+        for node in _nodesByClass(className):
             if node.GetLayoutName() == layoutName:
                 return node
     return None
@@ -826,9 +822,23 @@ def _setVolumeVisibleInView(volume, viewNode, visible):
             displayNode.AddViewNodeID(i)
 
 
-def _nodesByClass(className):
-    nodes = _scene().GetNodesByClass(className)
-    return [nodes.GetItemAsObject(i) for i in range(nodes.GetNumberOfItems())]
+def collectionItems(collection):
+    """The items of a collection that a method returned as a new reference (vtkMRMLScene::GetNodesByClass,
+    say), which is given up here.
+
+    Such a collection is the caller's to free: kept, it keeps every node in it alive, and a node
+    removed from the scene is then never deleted, nor the image it holds.
+    """
+    if collection is None:
+        return []
+    try:
+        return [collection.GetItemAsObject(i) for i in range(collection.GetNumberOfItems())]
+    finally:
+        collection.UnRegister(None)
+
+
+def _nodesByClass(className, scene=None):
+    return collectionItems((scene or _scene()).GetNodesByClass(className))
 
 
 @method()
@@ -1190,6 +1200,17 @@ def markupsInteractionActive():
     finally:
         nodes.UnRegister(None)
     return False
+
+
+@method()
+def touchMagnifierWanted(layoutName):
+    """Whether a finger in the view hides what it works on: control points being placed or moved,
+    or a Segment Editor effect drawing there (a brush stroke, a Draw outline, a Scissors cut)."""
+    if markupsInteractionActive():
+        return True
+    from . import segment_editor
+
+    return segment_editor._editor is not None and segment_editor._editor.editingInView(layoutName)
 
 
 @method()

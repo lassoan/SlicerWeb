@@ -57,9 +57,12 @@ export const store = reactive({
   error: "" as string,
   modules: [] as ModuleSummary[],
   activeModule: "Data",
-  /** The Segment Editor effect at work ("" for none): Paint and Erase take the mouse in the views,
-   *  which the mouse mode button shows (App.vue follows it). */
+  /** The Segment Editor effect at work ("" for none). One used with the mouse in the views (Paint,
+   *  Draw, Scissors, ...) is a mouse mode, which the mouse mode button shows; choosing another mouse
+   *  mode suspends it, and choosing its own again resumes it (App.vue follows them). */
   segmentEditorEffect: "",
+  segmentEditorTakesMouse: false,
+  segmentEditorSuspended: false,
   /** Whether the crosshair is shown in the views (the toolbar's Crosshair button says so). */
   crosshairOn: false,
   /** A narrow screen held upright (a phone): the side panels are opened from buttons at the ends

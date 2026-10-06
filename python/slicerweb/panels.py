@@ -114,11 +114,10 @@ def applyVolumeDisplayPreset(nodeID, presetId):
 def colorTables():
     import slicer
 
-    scene = slicer.mrmlScene
-    nodes = scene.GetNodesByClass("vtkMRMLColorNode")
+    from .bridge import collectionItems
+
     result = []
-    for i in range(nodes.GetNumberOfItems()):
-        n = nodes.GetItemAsObject(i)
+    for n in collectionItems(slicer.mrmlScene.GetNodesByClass("vtkMRMLColorNode")):
         result.append({"id": n.GetID(), "name": n.GetName(), "category": n.GetAttribute("Category") or ""})
     return result
 
@@ -678,8 +677,9 @@ def volumeRenderingInfo(volumeNodeID):
     logic = _logic("VolumeRendering")
     volume = _node(volumeNodeID)
     displayNode = logic.GetFirstVolumeRenderingDisplayNode(volume)
-    presets = logic.GetPresetsScene().GetNodesByClass("vtkMRMLVolumePropertyNode")
-    names = [presets.GetItemAsObject(i).GetName() for i in range(presets.GetNumberOfItems())]
+    from .bridge import collectionItems
+
+    names = [p.GetName() for p in collectionItems(logic.GetPresetsScene().GetNodesByClass("vtkMRMLVolumePropertyNode"))]
     # How hard the views work at a volume is a property of the view, not of the volume, so it is
     # read from the first 3D view (they are all set together below).
     viewNodes = [slicer.mrmlScene.GetNthNodeByClass(i, "vtkMRMLViewNode")

@@ -69,4 +69,56 @@ await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [po
 await page.waitForTimeout(400);
 console.log("while panning:", JSON.stringify(await magnifier()));
 await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+
+// and while a Segment Editor effect draws with the finger: painting in a slice view, and in the
+// 3D view with "Edit in 3D views"
+let failures = 0;
+const check = (what, ok, detail) => {
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"} ${what}${detail === undefined ? "" : ": " + detail}`);
+};
+await page.evaluate(() => window.slicerWeb.bridge.evalPython(`
+import numpy as np, slicer
+from slicerweb import segment_editor
+volume = slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode")[0]
+node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode", "Magnified")
+node.CreateDefaultDisplayNodes()
+node.SetReferenceImageGeometryParameterFromVolumeNode(volume)
+seg = node.GetSegmentation().AddEmptySegment("", "box")
+a = np.zeros(slicer.util.arrayFromVolume(volume).shape, np.uint8)
+a[20:-20, 100:-100, 100:-100] = 1
+slicer.util.updateSegmentBinaryLabelmapFromArray(a, node, seg, volume)
+e = segment_editor.editor()
+e.setup(node.GetID(), volume.GetID())
+e.selectSegment(seg)
+`));
+await page.evaluate(() => window.slicerWeb.bridge.call("segmentEditorSetEffect", ["Paint"]));
+await page.waitForTimeout(500);
+const strokeWithFinger = async (x, y) => {
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point(x, y)] });
+  await page.waitForTimeout(250);
+  for (let i = 1; i <= 4; i++) {
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point(x + i * 4, y)] });
+    await page.waitForTimeout(120);
+  }
+  const during = await magnifier();
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await page.waitForTimeout(600);
+  return [during, await magnifier()];
+};
+let [during, after] = await strokeWithFinger(cx, cy);
+check("painting with a finger in a slice view shows the magnifier", !!during?.visible, JSON.stringify(during));
+check("and it goes when the finger is lifted", after === null, JSON.stringify(after));
+await page.evaluate(() => window.slicerWeb.bridge.call("segmentEditorShow3D", [true]));
+await page.evaluate(() => window.slicerWeb.bridge.call("segmentEditorSetEffectParameter", ["Paint", "EditIn3DViews", 1]));
+await page.evaluate(() => window.slicerWeb.bridge.evalPython("[v for v in slicer.app.layoutManager().views().values() if v.IsA('vtkSlicerWebThreeDView')][0].GetRenderer().ResetCamera()"));
+await page.waitForTimeout(3000);
+const box3D = shared
+  ? await page.evaluate(() => { const r = window.slicerWeb.store.viewRects["1"]; return { x: r.left, y: r.top, width: r.width, height: r.height }; })
+  : await page.locator("#slicer-view-1").boundingBox();
+[during, after] = await strokeWithFinger(box3D.x + box3D.width / 2, box3D.y + box3D.height / 2);
+check("painting with a finger in a 3D view shows the magnifier", !!during?.visible, JSON.stringify(during));
+check("and it goes when the finger is lifted", after === null, JSON.stringify(after));
 await browser.close();
+console.log(failures ? `${failures} check(s) failed` : "ALL PASSED");
+process.exit(failures ? 1 : 0);

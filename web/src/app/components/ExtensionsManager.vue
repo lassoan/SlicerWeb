@@ -72,6 +72,7 @@ function onSearchKey(event: KeyboardEvent) {
     const e = shown.value[highlighted.value];
     if (e) toggle(e);
   } else if (event.key === "Escape") {
+    event.preventDefault();
     emit("close");
   }
 }

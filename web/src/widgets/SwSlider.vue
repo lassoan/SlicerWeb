@@ -7,8 +7,10 @@ const props = withDefaults(
     value?: number; minimum?: number; maximum?: number; singleStep?: number; decimals?: number; suffix?: string; enabled?: boolean;
     /** ctkSliderWidget tracking: when false, valueChanged is emitted when the slider is released, not while it moves */
     tracking?: boolean;
+    /** ctkSliderWidget spinBoxVisible: the value is also shown in a spin box */
+    spinBoxVisible?: boolean;
   }>(),
-  { value: 0, minimum: 0, maximum: 100, singleStep: 1, decimals: 2, suffix: "", enabled: true, tracking: true },
+  { value: 0, minimum: 0, maximum: 100, singleStep: 1, decimals: 2, suffix: "", enabled: true, tracking: true, spinBoxVisible: true },
 );
 const emit = defineEmits<{ valueChanged: [number] }>();
 // The value shown: what the user set here, and what the widget is given (Python sets the element's
@@ -29,9 +31,9 @@ function set(v: number, emitChange = true) {
     <input type="range" class="h-1 min-w-0 flex-1 cursor-pointer accent-highlight" :min="minimum" :max="maximum" :step="singleStep"
       :value="current" @input="set(Number(($event.target as HTMLInputElement).value), tracking)"
       @change="!tracking && set(Number(($event.target as HTMLInputElement).value))" />
-    <input type="number" class="w-[76px] rounded border border-input bg-background px-1.5 py-0.5 text-right text-[12px] text-foreground outline-none focus:border-primary"
+    <input v-if="spinBoxVisible" type="number" class="w-[76px] rounded border border-input bg-background px-1.5 py-0.5 text-right text-[12px] text-foreground outline-none focus:border-primary"
       :min="minimum" :max="maximum" :step="singleStep" :value="text"
       @change="set(Number(($event.target as HTMLInputElement).value))" />
-    <span v-if="suffix" class="text-[12px] text-muted-foreground">{{ suffix }}</span>
+    <span v-if="suffix && spinBoxVisible" class="text-[12px] text-muted-foreground">{{ suffix }}</span>
   </div>
 </template>

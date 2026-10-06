@@ -217,7 +217,7 @@ void vtkSlicerWebSegmentEditorDisplayableManager::UpdateBrush()
   const char* effect = editorNode ? editorNode->GetAttribute(GetActiveEffectAttributeName()) : nullptr;
   const std::string effectName = effect ? effect : "";
   // A brush is shown for the effects that paint with one; other effects (and no effect) have none.
-  const bool brushEffect = (effectName == "Paint" || effectName == "Erase");
+  const bool brushEffect = (effectName == "Paint" || effectName == "Erase" || effectName == "Smoothing");
   double radius = 0.0;
   if (brushEffect)
   {

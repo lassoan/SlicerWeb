@@ -59,13 +59,45 @@ watch(() => store.activeView, scheduleSubjectHierarchyRefresh);
 // last asked of it (see slicerweb.bridge.interactionMode).
 // The Segment Editor effect at work, for the mouse mode button; and it stops when another module
 // is opened (not when the panel of the Segment Editor is closed: a phone closes it to paint)
-events.on<{ effect?: string | null }>("segment-editor-changed", (state) => {
+events.on<{ effect?: string | null; takesMouse?: boolean; suspended?: boolean }>("segment-editor-changed", (state) => {
   store.segmentEditorEffect = state?.effect ?? "";
+  store.segmentEditorTakesMouse = !!state?.takesMouse;
+  store.segmentEditorSuspended = !!state?.suspended;
 });
 watch(() => store.activeModule, (now, before) => {
   if (before === "SegmentEditor" && now !== "SegmentEditor" && store.segmentEditorEffect) {
     runtime.bridge.call("segmentEditorSetEffect", [null]).catch(() => {});
   }
+});
+// The keyboard shortcuts of the desktop Segment Editor, while the module is open: Escape deactivates
+// the effect (which also cancels what is being drawn or cut), Space switches to the effect that was
+// active before. Not while typing, nor for keys a menu or dialog has taken (they listen before this,
+// which is why this listens in the bubbling phase, last).
+function isTyping(target: EventTarget | null) {
+  const element = target as HTMLElement | null;
+  return !!element?.closest?.("input, textarea, select, [contenteditable=''], [contenteditable='true'], [role='dialog'], [role='menu']");
+}
+function onSegmentEditorKey(event: KeyboardEvent) {
+  if (store.activeModule !== "SegmentEditor" || event.ctrlKey || event.altKey || event.metaKey) return;
+  // VTK marks every key that reaches a view as handled: that is not a menu having taken it
+  const fromView = (event.target as HTMLElement | null)?.tagName === "CANVAS";
+  if (event.defaultPrevented && !fromView) return;
+  if (isTyping(event.target)) return;
+  if (event.key === "Escape" && event.type === "keydown") {
+    if (store.segmentEditorEffect) runtime.bridge.call("segmentEditorSetEffect", [null]).catch(() => {});
+  } else if (event.key === " ") {
+    // Not the browser's: scrolling, or clicking the button that has the focus
+    event.preventDefault();
+    if (event.type === "keydown" && !event.repeat) runtime.bridge.call("segmentEditorSelectLastEffect").catch(() => {});
+  }
+}
+onMounted(() => {
+  window.addEventListener("keydown", onSegmentEditorKey);
+  window.addEventListener("keyup", onSegmentEditorKey);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onSegmentEditorKey);
+  window.removeEventListener("keyup", onSegmentEditorKey);
 });
 events.on<{ mode: string; placeNodeClassName: string }>("interaction-mode", ({ mode, placeNodeClassName }) => {
   store.interactionMode = mode === "Place" && placeNodeClassName ? `Place:${placeNodeClassName}` : mode;

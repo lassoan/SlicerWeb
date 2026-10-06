@@ -1,0 +1,111 @@
+From 5a007361adf25c9232d81668b0e877b25cdfd05f Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Mon, 5 Oct 2026 23:53:27 -0400
+Subject: [PATCH 16/17] BUG: Copy the depth of a volume's scene into a buffer
+ of the same format
+
+vtkOpenGLGPUVolumeRayCastMapper copies the depth buffer of what is drawn
+before it with glBlitFramebuffer, into a depth texture of a fixed format
+(24 bit on OpenGL ES, 32 bit otherwise, or depth-stencil). OpenGL ES (and
+WebGL 2) allow a depth blit only between buffers of the same format; with
+ambient occlusion on, the scene is drawn into vtkSSAOPass's framebuffer,
+whose depth is 32 bit float, and every frame failed with "GL_INVALID_OPERATION:
+glBlitFramebuffer: Depth/stencil buffer format combination not allowed for
+blit". The volume was then not cut by what is in front of it.
+
+When the scene is drawn into a framebuffer of the application, the format
+of its depth attachment is asked for and the depth texture made in it (made
+again if the format changes). The window's own framebuffer is handled as
+before.
+---
+ .../vtkOpenGLGPUVolumeRayCastMapper.cxx       | 57 ++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx b/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
+index dd5571602a..2787ea7065 100644
+--- a/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
++++ b/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
+@@ -431,6 +431,10 @@ public:
+   vtkTextureObject* DepthTextureObject;
+   vtkTextureObject* DepthCopyColorTextureObject;
+   vtkOpenGLFramebufferObject* DepthCopyFBO;
++  // The format DepthTextureObject was made in (a vtkTextureObject depth format, or -1 for the
++  // window's), and whether with stencil: that of the depth buffer it is copied from
++  int DepthTextureFormat = -1;
++  bool DepthTextureStencil = false;
+   bool SharedDepthTextureObject;
+ 
+   int TextureWidth;
+@@ -790,6 +794,53 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::CaptureDepthTexture(vtkRender
+   this->DepthTextureObject->SetContext(orenWin);
+   this->DepthCopyColorTextureObject->SetContext(orenWin);
+ 
++  // The depth is copied with a blit, which takes a depth buffer of the format of the one it is
++  // copied from: OpenGL ES (WebGL) refuses any other ("Depth/stencil buffer format combination not
++  // allowed for blit"), and the volume is then not cut by what is in front of it. When the scene is
++  // drawn into a framebuffer of the application (that of a render pass, such as vtkSSAOPass, whose
++  // depth is 32 bit float), its format is asked for; the window's own is the one assumed below.
++  int depthFormat = -1;
++  bool depthStencil = orenWin->GetStencilCapable();
++  GLint readFramebuffer = 0;
++  glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &readFramebuffer);
++  if (readFramebuffer != 0)
++  {
++    GLint objectType = GL_NONE;
++    glGetFramebufferAttachmentParameteriv(
++      GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &objectType);
++    if (objectType != GL_NONE)
++    {
++      GLint componentType = 0;
++      GLint depthBits = 0;
++      GLint stencilBits = 0;
++      glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
++        GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &componentType);
++      glGetFramebufferAttachmentParameteriv(
++        GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depthBits);
++      glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
++        GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencilBits);
++      depthStencil = stencilBits > 0;
++      depthFormat = componentType == GL_FLOAT ? vtkTextureObject::Float32
++        : depthBits >= 32                     ? vtkTextureObject::Fixed32
++        : depthBits >= 24                     ? vtkTextureObject::Fixed24
++                                              : vtkTextureObject::Fixed16;
++    }
++  }
++  if (this->DepthTextureObject->GetHandle() &&
++    (depthFormat != this->DepthTextureFormat || depthStencil != this->DepthTextureStencil))
++  {
++    // made for a depth buffer of another format: made again
++    this->DepthTextureObject->ReleaseGraphicsResources(orenWin);
++    if (this->DepthCopyFBO)
++    {
++      this->DepthCopyFBO->ReleaseGraphicsResources(orenWin);
++      this->DepthCopyFBO->Delete();
++      this->DepthCopyFBO = nullptr;
++    }
++  }
++  this->DepthTextureFormat = depthFormat;
++  this->DepthTextureStencil = depthStencil;
++
+   //  this->DepthTextureObject->Activate();
+   if (!this->DepthTextureObject->GetHandle())
+   {
+@@ -806,10 +857,14 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::CaptureDepthTexture(vtkRender
+     this->DepthTextureObject->SetMinificationFilter(vtkTextureObject::Linear);
+ #endif
+ 
+-    if (orenWin->GetStencilCapable())
++    if (depthStencil)
+     {
+       this->DepthTextureObject->AllocateDepthStencil(this->WindowSize[0], this->WindowSize[1]);
+     }
++    else if (depthFormat >= 0)
++    {
++      this->DepthTextureObject->AllocateDepth(this->WindowSize[0], this->WindowSize[1], depthFormat);
++    }
+     else
+     {
+       // For now, the format is set by default to GL_DEPTH_COMPONENT24.
+-- 
+2.44.0.windows.1
+

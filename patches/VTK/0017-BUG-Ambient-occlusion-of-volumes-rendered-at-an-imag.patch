@@ -1,0 +1,229 @@
+From 253834fd6b2206dd84e4c3f787f0817751690738 Mon Sep 17 00:00:00 2001
+From: SlicerWeb <slicerweb@example.invalid>
+Date: Mon, 5 Oct 2026 23:54:39 -0400
+Subject: [PATCH 17/17] BUG: Ambient occlusion of volumes rendered at an image
+ sample distance
+
+With an image sample distance other than 1 (used for rendering a volume
+faster while it is being rotated, as adaptive volume rendering does),
+vtkOpenGLGPUVolumeRayCastMapper renders into a smaller framebuffer and
+draws it into the scene with a full screen quad. With ambient occlusion on
+(vtkSSAOPass), the volume lost its occlusion there and was drawn brighter,
+until the camera stopped:
+
+- The smaller framebuffer had no depth buffer, so the depth of the volume
+  that the ray casting writes (gl_FragDepth, for vtkSSAOPass) was lost, and
+  the full screen quad did not write any depth either.
+- The positions and normals vtkSSAOPass needs were drawn into 8 bit
+  textures, which clamp the view coordinates and signed normals to 0..1.
+
+When the render pass takes the depth of the volume (GLDepthMaskOverride,
+as vtkSSAOPass sets it), the smaller framebuffer has a depth texture, the
+positions and normals are drawn in float textures (not interpolated), and
+after the colors the quad is drawn once more writing only the depth, where
+the volume is in front of what is there.
+---
+ .../vtkOpenGLGPUVolumeRayCastMapper.cxx       | 76 +++++++++++++++++--
+ .../VolumeOpenGL2/vtkVolumeShaderComposer.h   | 12 ++-
+ 2 files changed, 80 insertions(+), 8 deletions(-)
+
+diff --git a/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx b/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
+index 2787ea7065..5a20c940ee 100644
+--- a/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
++++ b/Rendering/VolumeOpenGL2/vtkOpenGLGPUVolumeRayCastMapper.cxx
+@@ -194,6 +194,7 @@ public:
+     }
+     this->ImageSampleTexture.clear();
+     this->ImageSampleTexNames.clear();
++    this->ImageSampleDepthTexture = nullptr;
+ 
+     if (this->ImageSampleVAO)
+     {
+@@ -503,6 +504,10 @@ public:
+   size_t NumImageSampleDrawBuffers = 0;
+   // Whether this frame is rendered into ImageSampleFBO (BeginImageSample could make it)
+   bool ImageSampling = false;
++  // Whether the render pass takes the depth of the volume (vtkSSAOPass), which ImageSampleFBO then
++  // has, with the positions and normals the pass draws in floats
++  bool ImageSampleDepth = false;
++  vtkSmartPointer<vtkTextureObject> ImageSampleDepthTexture;
+   bool RebuildImageSampleProg = false;
+   bool RenderPassAttached = false;
+ 
+@@ -1741,6 +1746,17 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::BeginImageSample(vtkRenderer*
+     this->RebuildImageSampleProg = true;
+   }
+ 
++  // A render pass that takes the depth of the volume (vtkSSAOPass gives it GLDepthMaskOverride)
++  // gets it, and the positions and normals it draws, from the smaller image as well: without them
++  // a volume rendered at an image sample distance has no ambient occlusion
++  const bool depth = this->DepthMaskOverride && this->RenderPassAttached;
++  if (depth != this->ImageSampleDepth)
++  {
++    this->ReleaseImageSampleGraphicsResources(ren->GetRenderWindow());
++    this->ImageSampleDepth = depth;
++    this->RebuildImageSampleProg = true;
++  }
++
+   float const xySampleDist = this->Parent->ImageSampleDistance;
+   this->ImageSampling = xySampleDist != 1.f && this->InitializeImageSampleFBO(ren);
+   if (this->ImageSampling)
+@@ -1751,7 +1767,9 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::BeginImageSample(vtkRenderer*
+       static_cast<unsigned int>(this->NumImageSampleDrawBuffers));
+ 
+     this->ImageSampleFBO->GetContext()->GetState()->vtkglClearColor(0.0, 0.0, 0.0, 0.0);
+-    this->ImageSampleFBO->GetContext()->GetState()->vtkglClear(GL_COLOR_BUFFER_BIT);
++    // (the depth mask is on: DepthMaskOverride)
++    this->ImageSampleFBO->GetContext()->GetState()->vtkglClear(
++      this->ImageSampleDepth ? GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
+   }
+ }
+ 
+@@ -1780,10 +1798,14 @@ bool vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::InitializeImageSampleFBO(vtkR
+     {
+       auto tex = vtkSmartPointer<vtkTextureObject>::New();
+       tex->SetContext(win);
+-      tex->Create2D(this->WindowSize[0], this->WindowSize[1], 4, VTK_UNSIGNED_CHAR, false);
++      // The positions and normals of a render pass that takes the depth (vtkSSAOPass) are in view
++      // coordinates and signed: in floats, and not interpolated between pixels
++      const bool floats = this->ImageSampleDepth && i > 0;
++      tex->Create2D(
++        this->WindowSize[0], this->WindowSize[1], 4, floats ? VTK_FLOAT : VTK_UNSIGNED_CHAR, false);
+       tex->Activate();
+-      tex->SetMinificationFilter(vtkTextureObject::Linear);
+-      tex->SetMagnificationFilter(vtkTextureObject::Linear);
++      tex->SetMinificationFilter(floats ? vtkTextureObject::Nearest : vtkTextureObject::Linear);
++      tex->SetMagnificationFilter(floats ? vtkTextureObject::Nearest : vtkTextureObject::Linear);
+       tex->SetWrapS(vtkTextureObject::ClampToEdge);
+       tex->SetWrapT(vtkTextureObject::ClampToEdge);
+       this->ImageSampleTexture.push_back(tex);
+@@ -1805,6 +1827,18 @@ bool vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::InitializeImageSampleFBO(vtkR
+     {
+       this->ImageSampleFBO->AddColorAttachment(i, this->ImageSampleTexture[i]);
+     }
++    if (this->ImageSampleDepth)
++    {
++      this->ImageSampleDepthTexture = vtkSmartPointer<vtkTextureObject>::New();
++      this->ImageSampleDepthTexture->SetContext(win);
++      this->ImageSampleDepthTexture->SetWrapS(vtkTextureObject::ClampToEdge);
++      this->ImageSampleDepthTexture->SetWrapT(vtkTextureObject::ClampToEdge);
++      this->ImageSampleDepthTexture->SetMinificationFilter(vtkTextureObject::Nearest);
++      this->ImageSampleDepthTexture->SetMagnificationFilter(vtkTextureObject::Nearest);
++      this->ImageSampleDepthTexture->AllocateDepth(
++        this->WindowSize[0], this->WindowSize[1], vtkTextureObject::Float32);
++      this->ImageSampleFBO->AddDepthAttachment(this->ImageSampleDepthTexture);
++    }
+ 
+     // Verify completeness
+     const int complete = this->ImageSampleFBO->CheckFrameBufferStatus(GL_FRAMEBUFFER);
+@@ -1862,10 +1896,10 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::EndImageSample(vtkRenderer* r
+ 
+       vtkShaderProgram::Substitute(frag, "//VTK::FSQ::Decl",
+         vtkvolume::ImageSampleDeclarationFrag(
+-          this->ImageSampleTexNames, this->NumImageSampleDrawBuffers));
++          this->ImageSampleTexNames, this->NumImageSampleDrawBuffers, this->ImageSampleDepth));
+       vtkShaderProgram::Substitute(frag, "//VTK::FSQ::Impl",
+         vtkvolume::ImageSampleImplementationFrag(
+-          this->ImageSampleTexNames, this->NumImageSampleDrawBuffers));
++          this->ImageSampleTexNames, this->NumImageSampleDrawBuffers, this->ImageSampleDepth));
+ 
+       this->ImageSampleProg =
+         win->GetShaderCache()->ReadyShaderProgram(GLUtil::GetFullScreenQuadVertexShader().c_str(),
+@@ -1907,9 +1941,30 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::EndImageSample(vtkRenderer* r
+       this->ImageSampleProg->SetUniformi(
+         this->ImageSampleTexNames[i].c_str(), this->ImageSampleTexture[i]->GetTextureUnit());
+     }
++    if (this->ImageSampleDepth)
++    {
++      this->ImageSampleDepthTexture->Activate();
++      this->ImageSampleProg->SetUniformi(
++        "renderedDepth", this->ImageSampleDepthTexture->GetTextureUnit());
++    }
+ 
+     this->ImageSampleVAO->Bind();
+     GLUtil::DrawFullScreenQuad();
++    if (this->ImageSampleDepth)
++    {
++      // And the depth of the volume, where it is in front of what is there already: what the
++      // render pass computes ambient occlusion from. (Drawn on its own, as the colors are blended
++      // in without a depth test.)
++      vtkOpenGLState::ScopedglColorMask colorMask(ostate);
++      vtkOpenGLState::ScopedglDepthMask depthMask(ostate);
++      vtkOpenGLState::ScopedglDepthFunc depthFunc(ostate);
++      ostate->vtkglColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
++      ostate->vtkglDepthMask(GL_TRUE);
++      ostate->vtkglEnable(GL_DEPTH_TEST);
++      ostate->vtkglDepthFunc(GL_LESS);
++      GLUtil::DrawFullScreenQuad();
++      ostate->vtkglDisable(GL_DEPTH_TEST);
++    }
+     this->ImageSampleVAO->Release();
+     vtkOpenGLStaticCheckErrorMacro("Error after DrawFullScreenQuad()!");
+ 
+@@ -1917,6 +1972,10 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal::EndImageSample(vtkRenderer* r
+     {
+       tex->Deactivate();
+     }
++    if (this->ImageSampleDepth)
++    {
++      this->ImageSampleDepthTexture->Deactivate();
++    }
+   }
+ }
+ 
+@@ -2233,6 +2292,11 @@ void vtkOpenGLGPUVolumeRayCastMapper::vtkInternal ::ReleaseImageSampleGraphicsRe
+     }
+     this->ImageSampleTexture.clear();
+     this->ImageSampleTexNames.clear();
++    if (this->ImageSampleDepthTexture)
++    {
++      this->ImageSampleDepthTexture->ReleaseGraphicsResources(win);
++      this->ImageSampleDepthTexture = nullptr;
++    }
+ 
+     if (this->ImageSampleVAO)
+     {
+diff --git a/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h b/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
+index 76d23458cc..150fc08b9f 100644
+--- a/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
++++ b/Rendering/VolumeOpenGL2/vtkVolumeShaderComposer.h
+@@ -3900,19 +3900,23 @@ inline std::string WorkerImplementation(
+ 
+ //---------------------------------------------------------------------------
+ inline std::string ImageSampleDeclarationFrag(
+-  const std::vector<std::string>& varNames, size_t usedNames)
++  const std::vector<std::string>& varNames, size_t usedNames, bool depth = false)
+ {
+   std::string shader = "\n";
+   for (size_t i = 0; i < usedNames; i++)
+   {
+     shader += "uniform sampler2D " + varNames[i] + ";\n";
+   }
++  if (depth)
++  {
++    shader += "uniform sampler2D renderedDepth;\n";
++  }
+   return shader;
+ }
+ 
+ //---------------------------------------------------------------------------
+ inline std::string ImageSampleImplementationFrag(
+-  const std::vector<std::string>& varNames, size_t usedNames)
++  const std::vector<std::string>& varNames, size_t usedNames, bool depth = false)
+ {
+   std::string shader = "\n";
+   for (size_t i = 0; i < usedNames; i++)
+@@ -3921,6 +3925,10 @@ inline std::string ImageSampleImplementationFrag(
+     ss << i;
+     shader += " gl_FragData[" + ss.str() + "] = texture2D(" + varNames[i] + ", texCoord);\n";
+   }
++  if (depth)
++  {
++    shader += " gl_FragDepth = texture2D(renderedDepth, texCoord).r;\n";
++  }
+   shader += " return;\n";
+   return shader;
+ }
+-- 
+2.44.0.windows.1
+

@@ -1,5 +1,6 @@
 // Markups module: which measurements a markup has computed and shown is chosen in the Measurements
-// section, as in desktop Slicer's "Measurement settings" (each measurement with an Enabled checkbox).
+// section: its edit button lists every measurement the markup offers, each with a checkbox (not
+// computed meanwhile); when editing is done, the enabled measurements are shown.
 // Usage: node tests/markups-measurements.mjs [url] [screenshot.png]
 import { chromium } from "playwright-core";
 
@@ -27,45 +28,45 @@ curve = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsClosedCurveNode", "C")
 for a in range(8):
     curve.AddControlPoint(30 * math.cos(a * math.pi / 4), 30 * math.sin(a * math.pi / 4), 0)
 def enabled(name):
-    for i in range(curve.GetNumberOfMeasurements()):
-        if curve.GetNthMeasurement(i).GetName() == name:
-            return curve.GetNthMeasurement(i).GetEnabled()
+    return bool(curve.GetMeasurement(name).GetEnabled())
 `);
 await page.evaluate(() => { window.slicerWeb.store.activeModule = "Markups"; });
 await page.waitForTimeout(2500);
 const panel = page.locator(".sw-panel-scroll").last();
 const section = panel.locator("[data-name=measurements]");
-check("the Markups module has a Measurements section", (await section.count()) === 1);
-const shown = async () => (await section.innerText()).split("Measurement settings")[0];
-check("nothing is enabled at first", (await py("str(bool(enabled('length')) or bool(enabled('area')))")) === "False");
-check("so no measurement is shown", /No measurement/.test(await shown()), (await shown()).replace(/\n/g, " | "));
+const edit = section.locator("[data-name=editMeasurements]");
+const shown = async () => (await section.innerText()).replace(/\n/g, " | ");
+const checkbox = (name) => section.locator(`[data-measurement="${name}"] input[type=checkbox]`);
+check("the Markups module has a Measurements section, with an edit button", (await section.count()) === 1 && (await edit.count()) === 1);
+check("nothing is enabled at first", (await py("str(enabled('length') or enabled('area'))")) === "False");
+check("so no measurement is shown, and no checkboxes", /No measurement/.test(await shown()) && (await section.locator("input[type=checkbox]").count()) === 0,
+  await shown());
 
-await section.getByText("Measurement settings", { exact: true }).click();
-await page.waitForTimeout(400);
-const settings = panel.locator("[data-name=measurementSettings]");
-const names = await settings.locator("tr[data-measurement]").evaluateAll((rows) => rows.map((r) => r.getAttribute("data-measurement")));
-check("the settings list every measurement of the markup", names.includes("length") && names.includes("area"), names.join(", "));
+await edit.click();
+await page.waitForTimeout(500);
+const names = await section.locator("[data-measurement]").evaluateAll((items) => items.map((i) => i.getAttribute("data-measurement")));
+check("editing lists every measurement the markup offers, with a checkbox", names.includes("length") && names.includes("area") && names.length >= 6,
+  names.join(", "));
+check("without their values", !/mm|cm2/.test(await shown()), await shown());
 
-await settings.locator('tr[data-measurement="length"] input[type=checkbox]').check();
-await page.waitForTimeout(1200);
-check("enabling the length computes it", (await py("str(bool(enabled('length')))")) === "True");
-check("and shows it", /length/i.test(await shown()) && !/No measurement/.test(await shown()), (await shown()).replace(/\n/g, " | "));
+await checkbox("length").check();
+await checkbox("area").check();
+await page.waitForTimeout(1000);
+check("checking enables them", (await py("str(enabled('length') and enabled('area'))")) === "True");
+await checkbox("length").uncheck();
+await page.waitForTimeout(800);
+check("unchecking disables", (await py("str(enabled('length'))")) === "False");
 
-await settings.locator('tr[data-measurement="area"] input[type=checkbox]').check();
-await page.waitForTimeout(1200);
-check("enabling the area computes it", (await py("str(bool(enabled('area')))")) === "True");
-check("and shows it, with the length", /area/i.test(await shown()) && /length/i.test(await shown()), (await shown()).replace(/\n/g, " | "));
-
-await settings.locator('tr[data-measurement="length"] input[type=checkbox]').uncheck();
-await page.waitForTimeout(1200);
-check("disabling the length stops it", (await py("str(bool(enabled('length')))")) === "False");
-check("and it is not shown any more", !/length/i.test(await shown()), (await shown()).replace(/\n/g, " | "));
+await edit.click();
+await page.waitForTimeout(800);
+check("when editing is done, the enabled measurements are shown, with their values",
+  /area \| 28\.21cm2/.test(await shown()) && !/length/.test(await shown()) && (await section.locator("input[type=checkbox]").count()) === 0,
+  await shown());
 
 // a change made elsewhere (from Python) is shown too
 await run(`curve.GetMeasurement("length").SetEnabled(True)`);
 await page.waitForTimeout(1500);
-check("enabling a measurement from Python shows it in the panel",
-  /length/i.test(await shown()) && await settings.locator('tr[data-measurement="length"] input[type=checkbox]').isChecked());
+check("enabling a measurement from Python shows it in the panel", /length \| [\d.]+mm/.test(await shown()), await shown());
 
 if (shot) await page.screenshot({ path: shot });
 await browser.close();

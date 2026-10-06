@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
-import { Crosshair, Trash2, Lock, Unlock } from "@lucide/vue";
+import { Crosshair, Trash2, Lock, Unlock, Pencil, Check } from "@lucide/vue";
 import { SwCheckBox, SwCollapsible, SwColorPicker, SwFormRow, SwNodeSelector, SwSlider, SwButton } from "@/widgets";
 import { store } from "../store";
 import { useNodeState } from "./useNodeState";
@@ -37,6 +37,9 @@ const HANDLE_COMPONENTS = ["X", "Y", "Z", "View plane"];
 
 const nodeID = useSelectedNode("Markups");
 const { state, bridge, refresh } = useNodeState<MarkupsInfo>("markupsInfo", nodeID);
+/** Choosing which measurements are computed and shown: all are listed, each with a checkbox. */
+const editingMeasurements = ref(false);
+watch(nodeID, () => { editingMeasurements.value = false; });
 /** Which measurements are computed and shown (in the views and here), as the desktop's measurement settings. */
 async function setMeasurementEnabled(name: string, enabled: boolean) {
   if (!nodeID.value) return;
@@ -87,22 +90,25 @@ i.SetCurrentInteractionMode(i.Place)
         <SwButton :text="state.locked ? 'Unlock' : 'Lock'" @clicked="set({ locked: !state!.locked })" />
       </div>
       <SwCollapsible v-if="state.measurementSettings?.length" text="Measurements" data-name="measurements">
-        <div v-for="m in state.measurements" :key="m.name" class="flex justify-between text-[13px]">
-          <span class="text-muted-foreground">{{ m.name }}</span><span class="font-medium text-highlight tabular-nums">{{ m.text }}</span>
-        </div>
-        <div v-if="!state.measurements.length" class="text-[13px] text-muted-foreground">No measurement</div>
-        <SwCollapsible text="Measurement settings" collapsed data-name="measurementSettings">
-          <table class="w-full text-[12px]">
-            <thead><tr class="text-muted-foreground"><th class="text-left font-normal">Name</th><th class="w-16 font-normal">Enabled</th></tr></thead>
-            <tbody>
-              <tr v-for="m in state.measurementSettings" :key="m.name" :data-measurement="m.name">
-                <td class="py-0.5">{{ m.name }}</td>
-                <td class="text-center"><input type="checkbox" :checked="m.enabled"
-                  @change="setMeasurementEnabled(m.name, ($event.target as HTMLInputElement).checked)" /></td>
-              </tr>
-            </tbody>
-          </table>
-        </SwCollapsible>
+        <template #actions>
+          <button type="button" class="rounded p-1 text-muted-foreground hover:text-highlight" data-name="editMeasurements"
+            :class="editingMeasurements ? 'text-highlight' : ''"
+            :title="editingMeasurements ? 'Done: show the enabled measurements' : 'Choose the measurements to compute and show'"
+            @click="editingMeasurements = !editingMeasurements">
+            <Check v-if="editingMeasurements" :size="15" /><Pencil v-else :size="14" />
+          </button>
+        </template>
+        <!-- Editing: every measurement the markup offers, to enable or disable (nothing computed) -->
+        <template v-if="editingMeasurements">
+          <SwCheckBox v-for="m in state.measurementSettings" :key="m.name" :text="m.name" :checked="m.enabled" :data-measurement="m.name"
+            @toggled="setMeasurementEnabled(m.name, $event)" />
+        </template>
+        <template v-else>
+          <div v-for="m in state.measurements" :key="m.name" class="flex justify-between text-[13px]">
+            <span class="text-muted-foreground">{{ m.name }}</span><span class="font-medium text-highlight tabular-nums">{{ m.text }}</span>
+          </div>
+          <div v-if="!state.measurements.length" class="text-[13px] text-muted-foreground">No measurement</div>
+        </template>
       </SwCollapsible>
       <SwCollapsible :text="`Control points (${state.controlPoints.length})`">
         <table class="w-full text-[12px]">

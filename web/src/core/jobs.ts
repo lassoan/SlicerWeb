@@ -40,6 +40,8 @@ export class JobRunner {
   private jobs = new Map<string, { resolve: (r: JobResult) => void; reject: (e: Error) => void; events: JobEvents }>();
   private nextId = 1;
   private current: string | null = null;
+  /** The extension wheels the worker was started with, to tell when it has fallen behind the page. */
+  private startedWith: string[] = [];
 
   constructor(
     private wheelsURL = new URL("wheels/", document.baseURI).href,
@@ -51,9 +53,29 @@ export class JobRunner {
     return this.current !== null;
   }
 
+  /**
+   * The extension wheels a job can import from, as the page has them. An extension installed while
+   * the page runs - from the Extensions Manager - is installed into the page's Python at once; the
+   * worker has a Python of its own, so a worker started before that has no such wheel and a job of
+   * that extension fails to find its own files. One that is not working is ended here, and the next
+   * start installs the whole set; one in the middle of a job is left to finish it first (see start()).
+   */
+  setExtensionWheels(wheels: string[]) {
+    this.extensionWheels = [...wheels];
+    if (this.behind && !this.busy) this.end();
+  }
+
+  /** Whether the worker was started with other wheels than the page has now. */
+  private get behind() {
+    return this.ready !== null && JSON.stringify(this.startedWith) !== JSON.stringify(this.extensionWheels);
+  }
+
   /** Start the worker and install the wheels in it (kept warm for later jobs). */
   async start(): Promise<void> {
+    // A worker that fell behind the page's extensions while it was idle is replaced by one that has them.
+    if (this.behind && !this.busy) this.end();
     if (this.ready) return this.ready;
+    this.startedWith = [...this.extensionWheels];
     this.ready = (async () => {
       const response = await fetch(this.wheelsURL + "index.json");
       const index = (await response.json()) as WheelIndex;
@@ -104,13 +126,18 @@ export class JobRunner {
 
   /** Stop the work: the worker is ended, and the next job starts a new one. */
   cancel() {
-    if (!this.worker) return;
-    this.worker.terminate();
-    this.worker = null;
-    this.ready = null;
+    if (!this.worker && !this.ready) return;
+    this.end();
     for (const [, job] of this.jobs) job.reject(new Error("The job was cancelled"));
     this.jobs.clear();
     this.current = null;
+  }
+
+  /** End the worker, started or starting; the next start makes a new one. */
+  private end() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.ready = null;
   }
 
   private onMessage(message: any) {
@@ -129,9 +156,14 @@ export class JobRunner {
   }
 }
 
-/** The job runner of this page, made when it is first needed (starting one costs a few seconds). */
+/**
+ * The job runner of this page, made when it is first needed (starting one costs a few seconds).
+ * Given the page's extension wheels, it follows them: a worker that lacks one is replaced before its
+ * next job.
+ */
 let runner: JobRunner | null = null;
-export function jobRunner(extensionWheels: string[] = []): JobRunner {
-  if (!runner) runner = new JobRunner(undefined, extensionWheels);
+export function jobRunner(extensionWheels?: string[]): JobRunner {
+  if (!runner) runner = new JobRunner(undefined, extensionWheels ?? []);
+  else if (extensionWheels) runner.setExtensionWheels(extensionWheels);
   return runner;
 }

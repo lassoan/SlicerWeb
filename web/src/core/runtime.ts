@@ -556,6 +556,9 @@ bridge.call
     // system like the others; what it loaded is dropped the same way. During the start the wheels
     // are dropped together, once everything is loaded (see start()).
     if (this.started) await this.dropLoadedLibraryFiles();
+    // It is one of this page's extensions from now on: the worker that runs jobs installs the same
+    // wheels as the page, and takes this one before its next job (see jobs.ts).
+    if (!this.config.extensionWheels.includes(url)) this.config.extensionWheels = [...this.config.extensionWheels, url];
   }
 
   /** What the runtime was built from - wheels/build-info.json, written by build.py - or null for a

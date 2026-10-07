@@ -130,8 +130,9 @@ function onVisible() {
 
 // Magnifier: a fingertip covers the point it touches, so while control points are placed or moved,
 // or a Segment Editor effect draws in the view (painting, drawing an outline, cutting with
-// scissors), the image under the finger is shown enlarged above it.
+// scissors), the image under the finger is shown enlarged in the corner of the view opposite to it.
 const magnifierPosition = ref<{ x: number; y: number } | null>(null);
+const magnifierBounds = ref<{ width: number; height: number } | undefined>(undefined);
 const magnifierOffset = ref<{ x: number; y: number } | undefined>(undefined);
 
 /** Where this view's space is on the shared canvas, in CSS pixels from its top left. */
@@ -172,8 +173,12 @@ watch(sharedCanvas, (canvas, previous) => {
 }, { immediate: true });
 const viewCanvas = ref<HTMLCanvasElement | null>(null);
 let magnifierTouch: number | null = null;
-let magnifierChecked = false; // the view has been asked whether a control point is placed or moved
-let magnifierEnabled = false; // ... and it is
+let magnifierEnabled = false; // the view says a control point is placed or moved, or an effect draws
+let magnifierAsking = false; // ... or it is being asked
+let magnifierAsked = 0; // when it was last asked (performance.now())
+let magnifierAskUntil = 0; // until when it is asked again after saying no
+const MAGNIFIER_ASK_INTERVAL = 80; // ms between two questions
+const MAGNIFIER_ASK_FOR = 1000; // ms after the touch began: an interaction the press started is going by then
 
 function touchInContainer(touch: Touch) {
   const rect = container.value!.getBoundingClientRect();
@@ -181,15 +186,30 @@ function touchInContainer(touch: Touch) {
 }
 
 async function updateMagnifier(touch: Touch) {
-  if (!magnifierChecked) {
-    magnifierChecked = true;
-    // the press is processed by the view before this answer arrives (it starts moving a control point)
-    magnifierEnabled = await bridge.call<boolean>("touchMagnifierWanted", [props.view.layoutName]).catch(() => false);
+  if (!magnifierEnabled) {
+    // The view processes the press in a frame of its own, and only then is a control point being
+    // moved: asked too early - a finger that lands already moving sends its first move at once -
+    // the view says no. So it is asked again, a few times a second, for as long as an interaction
+    // the press started could still begin; one question at a time.
+    const now = performance.now();
+    if (magnifierAsking || now - magnifierAsked < MAGNIFIER_ASK_INTERVAL || now > magnifierAskUntil) return;
+    magnifierAsking = true;
+    magnifierAsked = now;
+    try {
+      magnifierEnabled = await bridge.call<boolean>("touchMagnifierWanted", [props.view.layoutName]).catch(() => false);
+    } finally {
+      magnifierAsking = false;
+    }
+    if (!magnifierEnabled) return;
     // on the canvas the views share, the view is read from its rectangle of it
     viewCanvas.value = sharedRendering.value ? sharedCanvas.value : ((container.value?.querySelector("canvas") as HTMLCanvasElement) ?? null);
     magnifierOffset.value = sharedRendering.value ? containerOnSharedCanvas() : undefined;
+    // the finger may have moved on while the view was answering
+    touch = lastTouch ?? touch;
   }
-  if (!magnifierEnabled || !viewCanvas.value || magnifierTouch !== touch.identifier) return;
+  if (!viewCanvas.value || magnifierTouch !== touch.identifier) return;
+  const rect = container.value!.getBoundingClientRect();
+  magnifierBounds.value = { width: rect.width, height: rect.height };
   magnifierPosition.value = touchInContainer(touch);
 }
 
@@ -199,8 +219,9 @@ function onTouchStart(event: TouchEvent) {
     return;
   }
   magnifierTouch = event.touches[0].identifier;
-  magnifierChecked = false;
   magnifierEnabled = false;
+  magnifierAsked = 0;
+  magnifierAskUntil = performance.now() + MAGNIFIER_ASK_FOR;
   lastTouch = event.touches[0];
   // the view processes the press in its next frame: ask after that, and refresh once more, because
   // the first image is read while the view is still being rendered
@@ -223,8 +244,8 @@ function onTouchMove(event: TouchEvent) {
 
 function hideMagnifier() {
   magnifierTouch = null;
-  magnifierChecked = true;
   magnifierEnabled = false;
+  magnifierAskUntil = 0;
   magnifierPosition.value = null;
   lastTouch = null;
 }
@@ -498,7 +519,7 @@ const offsetText = computed(() => (slice.offset !== undefined ? `${slice.offset.
       <div v-else class="flex h-full items-center justify-center text-[12px] text-muted-foreground">
         {{ view.className }} is shown in the module panel
       </div>
-      <TouchMagnifier :canvas="viewCanvas" :position="magnifierPosition" :render="renderView" :offset="magnifierOffset" />
+      <TouchMagnifier :canvas="viewCanvas" :position="magnifierPosition" :bounds="magnifierBounds" :render="renderView" :offset="magnifierOffset" />
     </div>
   </div>
 </template>

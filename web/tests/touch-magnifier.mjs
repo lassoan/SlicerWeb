@@ -1,5 +1,7 @@
 // Magnifier: while control points are placed or moved with a finger, the image under the finger is
-// shown enlarged above it. With --shared, the views share one WebGL context (Rendering settings).
+// shown enlarged in a corner of the view: the one opposite to where the finger landed, and then
+// the other corner of that side when the finger comes close. With --shared, the views share one
+// WebGL context (Rendering settings).
 import { chromium } from "playwright-core";
 
 const base = process.argv[2] ?? "http://localhost:5173/";
@@ -33,8 +35,19 @@ const magnifier = () => page.evaluate(() => {
   let nonBlack = 0;
   for (let i = 0; i < data.length; i += 4) if (data[i] + data[i + 1] + data[i + 2] > 30) nonBlack++;
   const rect = el.getBoundingClientRect();
-  return { visible: true, nonBlackFraction: +(nonBlack / (data.length / 4)).toFixed(2), bottom: Math.round(rect.bottom), left: Math.round(rect.left) };
+  return { visible: true, nonBlackFraction: +(nonBlack / (data.length / 4)).toFixed(2),
+    top: Math.round(rect.top), bottom: Math.round(rect.bottom), left: Math.round(rect.left), right: Math.round(rect.right) };
 });
+let failures = 0;
+const check = (what, ok, detail) => {
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"} ${what}${detail === undefined ? "" : ": " + detail}`);
+};
+/** Whether the magnifier sits in the corner of the view away from the finger at (x, y): against the
+ *  edges opposite to it (a phone's view is narrower than two magnifiers, so it may still be beside the finger). */
+const inOppositeCorner = (m, view, x, y, margin = 12 + 2) => !!m
+  && (x < view.x + view.width / 2 ? m.right >= view.x + view.width - margin : m.left <= view.x + margin)
+  && (y < view.y + view.height / 2 ? m.bottom >= view.y + view.height - margin : m.top <= view.y + margin);
 
 // place a control point with a tap (place mode on)
 await page.evaluate(() => window.slicerWeb.bridge.call("placeMarkup", ["vtkMRMLMarkupsFiducialNode", "Points", true]));
@@ -43,7 +56,9 @@ await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [p
 await page.waitForTimeout(250);
 await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point(cx + 2, cy)] });
 await page.waitForTimeout(400);
-console.log("while placing:", JSON.stringify(await magnifier()), "finger y:", Math.round(cy));
+const placing = await magnifier();
+console.log("while placing:", JSON.stringify(placing), "finger:", Math.round(cx + 2), Math.round(cy));
+check("the magnifier is in the corner opposite to the finger", inOppositeCorner(placing, box, cx + 2, cy));
 await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 await page.waitForTimeout(600);
 console.log("after touch end:", JSON.stringify(await magnifier()));
@@ -57,11 +72,43 @@ for (let i = 1; i <= 6; i++) {
   await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point(cx - i * 5, cy - i * 3)] });
   await page.waitForTimeout(120);
 }
-console.log("while dragging:", JSON.stringify(await magnifier()));
+const dragging = await magnifier();
+console.log("while dragging:", JSON.stringify(dragging), "finger:", Math.round(cx - 30), Math.round(cy - 18));
+check("while dragging it stays on the side it started on, though the finger crossed the middle",
+  !!dragging && dragging.left === placing.left && dragging.top === placing.top, JSON.stringify(dragging));
+// the finger comes close to the magnifier (which is in the top corner): it moves to the bottom corner
+const nearY = dragging.bottom + 10;
+for (let y = cy - 18; y > nearY; y -= 10) {
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point(cx - 30, Math.max(y, nearY))] });
+  await page.waitForTimeout(60);
+}
+await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point(cx - 30, nearY)] });
+await page.waitForTimeout(300);
+const moved = await magnifier();
+console.log("finger near it:", JSON.stringify(moved), "finger:", Math.round(cx - 30), Math.round(nearY));
+check("when the finger comes close it moves to the other corner of its side",
+  !!moved && moved.left === dragging.left && moved.top > nearY, JSON.stringify(moved));
 if (shot) await page.screenshot({ path: shot });
 await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 await page.waitForTimeout(500);
 console.log("after drag end:", JSON.stringify(await magnifier()));
+// a finger that lands already moving: the first move comes at once, before the view has processed
+// the press, and the magnifier must still come
+await page.evaluate(() => window.slicerWeb.bridge.call("placeMarkup", ["vtkMRMLMarkupsFiducialNode", "Points", true]));
+await page.waitForTimeout(300);
+await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point(cx, cy)] });
+for (let i = 1; i <= 8; i++) {
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point(cx + i * 3, cy + i)] });
+  await page.waitForTimeout(16);
+}
+await page.waitForTimeout(400);
+const moving = await magnifier();
+check("a finger that lands already moving gets the magnifier too", !!moving?.visible, JSON.stringify(moving));
+await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+await page.waitForTimeout(500);
+await page.evaluate(() => window.slicerWeb.bridge.call("setInteractionMode", ["ViewTransform"]));
+await page.waitForTimeout(300);
+
 // no magnifier when only panning the view
 await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point(box.x + 20, box.y + 20)] });
 await page.waitForTimeout(250);
@@ -72,11 +119,6 @@ await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] }
 
 // and while a Segment Editor effect draws with the finger: painting in a slice view, and in the
 // 3D view with "Edit in 3D views"
-let failures = 0;
-const check = (what, ok, detail) => {
-  if (!ok) failures++;
-  console.log(`${ok ? "PASS" : "FAIL"} ${what}${detail === undefined ? "" : ": " + detail}`);
-};
 await page.evaluate(() => window.slicerWeb.bridge.evalPython(`
 import numpy as np, slicer
 from slicerweb import segment_editor

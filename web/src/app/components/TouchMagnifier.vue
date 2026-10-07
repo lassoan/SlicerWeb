@@ -1,8 +1,11 @@
 <script setup lang="ts">
 /**
- * Magnified view of the image under the finger, shown above the touch position (a fingertip covers
- * what it points at). It is used while control points are placed or moved: a region of the rendered
- * view is read back and drawn enlarged.
+ * Magnified view of the image under the finger, shown in a corner of the view (a fingertip covers
+ * what it points at, and a magnifier that followed the finger would hide what is next to it). It
+ * starts in the corner opposite to where the finger landed and stays on that side; it only moves
+ * to the other corner of that side, vertically, when the finger comes close to it. It is used
+ * while control points are placed or moved: a region of the rendered view is read back and drawn
+ * enlarged, the point under the finger at its center.
  */
 import { onBeforeUnmount, ref, watch } from "vue";
 
@@ -11,6 +14,8 @@ const props = defineProps<{
   canvas: HTMLCanvasElement | null;
   /** Position in the viewport (CSS pixels, relative to the container), or null when hidden. */
   position: { x: number; y: number } | null;
+  /** Size of the viewport (CSS pixels): the magnifier goes in the corner opposite to the position. */
+  bounds?: { width: number; height: number };
   /** Size of the magnified region in device pixels of the view (about a fingertip wide). */
   region?: number;
   /** Renders the view before the pixels are read (the drawing buffer is not preserved). */
@@ -23,7 +28,8 @@ const props = defineProps<{
 }>();
 
 const SIZE = 132; // diameter of the magnifier in CSS pixels
-const OFFSET = 28; // distance between the finger and the bottom of the magnifier
+const MARGIN = 12; // distance between the magnifier and the edges of the view
+const NEAR = 24; // how close the finger may come to the magnifier before it moves away
 const view = ref<HTMLCanvasElement>();
 const failed = ref(false);
 let pending = false;
@@ -78,10 +84,48 @@ async function update(x: number, y: number) {
   }
 }
 
+/** The corner the magnifier is in: chosen when the finger lands, kept while it is down. */
+const corner = ref<{ right: boolean; bottom: boolean } | null>(null);
+
+/** The size of the view, or a guess that puts the given position in its middle. */
+function bounds(position: { x: number; y: number }) {
+  return props.bounds ?? { width: 2 * position.x, height: 2 * position.y + 1 };
+}
+
+/** Where the magnifier is with the finger at a position, in a corner. */
+function rect(position: { x: number; y: number }, at: { right: boolean; bottom: boolean }) {
+  const { width, height } = bounds(position);
+  const far = (extent: number) => Math.max(0, extent - MARGIN - SIZE);
+  return { left: at.right ? far(width) : MARGIN, top: at.bottom ? far(height) : MARGIN };
+}
+
+/** Whether the finger is within NEAR of the magnifier at a corner. */
+function near(position: { x: number; y: number }, at: { right: boolean; bottom: boolean }) {
+  const { left, top } = rect(position, at);
+  const dx = Math.max(left - position.x, 0, position.x - (left + SIZE));
+  const dy = Math.max(top - position.y, 0, position.y - (top + SIZE));
+  return Math.hypot(dx, dy) < NEAR;
+}
+
+/** Where to put the magnifier for a finger position: see the component's description. */
+function place(position: { x: number; y: number }, previous: { x: number; y: number } | null | undefined) {
+  const { width, height } = bounds(position);
+  if (!previous || !corner.value) {
+    corner.value = { right: position.x < width / 2, bottom: position.y < height / 2 };
+    return;
+  }
+  const other = { right: corner.value.right, bottom: !corner.value.bottom };
+  if (near(position, corner.value) && !near(position, other)) corner.value = other;
+}
+
 watch(
   () => props.position,
-  (position) => {
-    if (!position) return;
+  (position, previous) => {
+    if (!position) {
+      corner.value = null;
+      return;
+    }
+    place(position, previous);
     update(position.x, position.y);
     // the first image can be read while the view is still rendering: refresh once
     window.setTimeout(() => props.position && update(props.position.x, props.position.y), 120);
@@ -92,20 +136,14 @@ onBeforeUnmount(() => (pending = false));
 
 const style = () => {
   const position = props.position!;
-  return {
-    left: `${position.x}px`,
-    top: `${position.y - OFFSET - SIZE}px`,
-    width: `${SIZE}px`,
-    height: `${SIZE}px`,
-  };
+  const { left, top } = rect(position, corner.value ?? { right: false, bottom: false });
+  return { left: `${left}px`, top: `${top}px`, width: `${SIZE}px`, height: `${SIZE}px` };
 };
 </script>
 
 <template>
-  <div v-if="position && !failed" class="pointer-events-none absolute z-30 -translate-x-1/2 overflow-hidden rounded-full border-2 border-primary shadow-lg"
+  <div v-if="position && !failed" class="pointer-events-none absolute z-30 overflow-hidden rounded-full border-2 border-primary shadow-lg"
     :style="style()" aria-hidden="true">
     <canvas ref="view" :width="SIZE * 2" :height="SIZE * 2" class="h-full w-full" />
-    <!-- center of the magnified region, where the finger is -->
-    <div class="absolute top-1/2 left-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border border-highlight/80" />
   </div>
 </template>

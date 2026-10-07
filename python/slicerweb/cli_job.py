@@ -82,6 +82,11 @@ def readInto(node, path):
     """Read a file into a node that already exists (the output the page is waiting for)."""
     storage = _storageNode(node.GetScene(), node)
     storage.SetFileName(path)
+    # A storage node asked to write its node while that node was still empty - the output of a run
+    # that had not finished yet, saved by the session (slicerweb.session) - remembers that there was
+    # nothing to write, and vtkMRMLVolumeArchetypeStorageNode then reads nothing either, saying it
+    # succeeded. There is something to read now.
+    storage.SetWriteState(storage.Idle)
     if not storage.ReadData(node):
         raise RuntimeError(f"{path} could not be read into {node.GetName()}")
     if hasattr(node, "CreateDefaultDisplayNodes") and node.GetDisplayNode() is None:

@@ -1,47 +1,55 @@
-From a201e4e99ea5641e977f455137c5b08df1d9cd7e Mon Sep 17 00:00:00 2001
+From 6d40ef4f718ec8d4d44d93dfd314c3c64588add5 Mon Sep 17 00:00:00 2001
 From: Andras Lasso <lasso@queensu.ca>
 Date: Fri, 2 Oct 2026 01:52:58 -0400
 Subject: [PATCH] ENH: Show binary labelmap segmentations as smooth surfaces in
  3D views
 
-Experimental display mode: when the representation in 3D views of a
-segmentation is "Binary labelmap", the segmentations displayable manager
-shows the labelmap as smooth surfaces computed on the GPU, without
-converting it to closed surface. Based on pieper/SlicerLive.
+New display mode for direct rendering of segmentations in 3D views,
+without the need of generating closed surface representation. Based on
+pieper/SlicerLive. The main advantage is that updates are immediate, even
+for hundreds of segments. The implementation works with all VTK rendering
+features that Slicer relies on - transparency, depth peeling, clipping,
+ambient shadows, picking, etc. - on both Slicer desktop and SlicerWeb.
 
-vtkSegmentationLabelmapSurfaceMapper computes a signed distance field of
-the shown segments in fragment shader passes (jump flooding), smooths it
-(Gaussian with twicing, which keeps thin structures; narrow gaps between
-segments are filled), and ray casts its zero level set. Works with
-OpenGL and WebGL2 (requires EXT_color_buffer_float).
+To use the new mode, choose "Binary labelmap" representation in the
+"Show 3D" button. It can also be made the default in Application Settings
+-> Segmentations -> Representation in 3D views.
 
-- Opaque segments share one surface with soft color seams, each
+How it works: vtkSegmentationLabelmapSurfaceMapper (in the segmentations
+displayable manager) computes a signed distance field of the shown
+segments in fragment shader passes (jump flooding), smooths it (Gaussian
+with twicing, which keeps thin structures; narrow gaps between segments
+are filled), and ray casts its zero level set.
+
+- Opaque segments share one surface with soft color seams; each
   translucent segment has its own (depth peeling and order independent
   translucency are supported).
-- Clipping (union and intersection clip types) with caps and outline,
-  per-segment 3D opacity and visibility, lighting,
-  shadows (screen-space ambient occlusion).
+- Clipping (union and intersection clip types) with caps and outline;
+  per-segment 3D opacity and visibility; lighting; shadows (screen-space
+  ambient occlusion).
 - Picking: vtkMRMLAccuratePicker asks the mapper to intersect the ray
   (new IntersectRayEvent), so Shift+mouse move, Pick3D and painting in
   3D views work on these surfaces.
 - Editing updates the distance field only around the changed labels.
 - Non-linear transforms: the labelmap is resampled on the CPU.
-- Large labelmaps are downsampled to MaximumNumberOfVoxels.
-- The surface smoothing factor conversion parameter sets the smoothing.
-- Segment colors are computed once per voxel (when the labelmap or the
-  colors change), not at every surface point of every frame.
-- ImageSampleDistance casts rays for every n-th pixel and scales the image
-  up to the viewport (color interpolated; depth, position and normal of
-  the frontmost surface for the render passes), as ImageSampleDistance of
-  vtkGPUVolumeRayCastMapper: faster rendering while the camera is moving,
-  for example on mobile devices.
+- Large labelmaps are downsampled to MaximumNumberOfVoxels; the surface
+  smoothing factor conversion parameter sets the smoothing.
+- Segment colors are computed once per voxel, not at every surface point
+  of every frame.
+- ImageSampleDistance casts rays for every n-th pixel and scales the
+  image up (as ImageSampleDistance of vtkGPUVolumeRayCastMapper), for
+  faster rendering while the camera is moving, for example on mobile
+  devices.
 
-Show 3D button: new "Representation" submenu (binary labelmap or closed
-surface), the same choice as the Segmentations module's representation
-in 3D views. Show 3D only creates the chosen representation and does
-not switch to closed surface. The default representation in 3D views
-for new segmentations can be set in application settings
-(Segmentations/DefaultRepresentation3D; default remains closed surface).
+GUI:
+- Show 3D button: new "Representation" submenu (binary labelmap or
+  closed surface), the same choice as the representation in 3D views of
+  the Segmentations module. Show 3D only creates the chosen
+  representation and does not switch to closed surface.
+- Application settings, Segmentations: the default representation in 3D
+  views for new segmentations (Segmentations/DefaultRepresentation3D).
+
+Co-authored-by: Steve Pieper <pieper@isomics.com>
 ---
  .../Core/vtkMRMLSegmentationDisplayNode.cxx   |   14 +-
  .../Core/vtkMRMLSegmentationDisplayNode.h     |    8 +-

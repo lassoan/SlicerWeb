@@ -107,8 +107,8 @@ test (`70`) and the extensions (`80`, which packages their wheels too). The whee
 `SW_DIST/wheels`.
 
 Patches to the upstream projects are in `patches/`, applied by stage `00` and kept small enough to
-be sent upstream — the interesting ones are the WebGL fixes in `patches/VTK/` and the one that lets
-Slicer's application logic work without threads.
+be sent upstream — the interesting ones are the WebGL fixes in `patches/VTK/`. Slicer itself needs
+none: everything SlicerWeb changed in it is in Slicer's main branch, which `sources.env` pins.
 
 ## Running it
 
@@ -187,4 +187,4 @@ uses.
 
 This repository also carries a little code derived from other projects under their own licences:
 the command line parsers under `Modules/CLI/` are generated from Slicer's module descriptions, and
-`patches/` holds differences against Slicer, VTK and SlicerExecutionModel.
+`patches/` holds differences against VTK, vtkAddon and SlicerExecutionModel.

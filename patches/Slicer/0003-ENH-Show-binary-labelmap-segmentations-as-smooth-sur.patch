@@ -1,8 +1,8 @@
-From 6d40ef4f718ec8d4d44d93dfd314c3c64588add5 Mon Sep 17 00:00:00 2001
+From bdaee69c5b625aca91e25e1a33e4201789f6aabc Mon Sep 17 00:00:00 2001
 From: Andras Lasso <lasso@queensu.ca>
-Date: Fri, 2 Oct 2026 01:52:58 -0400
-Subject: [PATCH] ENH: Show binary labelmap segmentations as smooth surfaces in
- 3D views
+Date: Thu, 8 Oct 2026 00:46:14 -0400
+Subject: [PATCH 3/4] ENH: Show binary labelmap segmentations as smooth
+ surfaces in 3D views
 
 New display mode for direct rendering of segmentations in 3D views,
 without the need of generating closed surface representation. Based on
@@ -26,59 +26,95 @@ are filled), and ray casts its zero level set.
   translucency are supported).
 - Clipping (union and intersection clip types) with caps and outline;
   per-segment 3D opacity and visibility; lighting; shadows (screen-space
-  ambient occlusion).
-- Picking: vtkMRMLAccuratePicker asks the mapper to intersect the ray
-  (new IntersectRayEvent), so Shift+mouse move, Pick3D and painting in
-  3D views work on these surfaces.
+  ambient occlusion). The depth of the opaque geometry, which stops the
+  rays of translucent surfaces, is copied from the framebuffer that is
+  bound for reading at the time of rendering (as in
+  vtkOpenGLGPUVolumeRayCastMapper), so that it is also correct when a
+  render pass such as vtkSSAOPass renders into its own framebuffer.
+- Picking: the mapper is a vtkMRMLRayCastMapper, so vtkMRMLAccuratePicker
+  asks it to intersect the pick ray and Shift+mouse move, Pick3D and
+  painting in 3D views work on these surfaces. The paint effect uses
+  vtkMRMLAccuratePicker instead of vtkCellPicker in 3D views.
 - Editing updates the distance field only around the changed labels.
 - Non-linear transforms: the labelmap is resampled on the CPU.
-- Large labelmaps are downsampled to MaximumNumberOfVoxels; the surface
-  smoothing factor conversion parameter sets the smoothing.
+- Large labelmaps are downsampled to MaximumNumberOfVoxels (the samples
+  of a downsampled block are spread evenly over the block, so that small
+  structures are kept at any downsampling factor); the surface smoothing
+  factor conversion parameter sets the smoothing.
 - Segment colors are computed once per voxel, not at every surface point
-  of every frame.
+  of every frame. SetLabelColor and RemoveAllLabelColors update the MTime
+  of the mapper only when a color actually changes.
 - ImageSampleDistance casts rays for every n-th pixel and scales the
   image up (as ImageSampleDistance of vtkGPUVolumeRayCastMapper), for
   faster rendering while the camera is moving, for example on mobile
   devices.
+- Each mapper instance holds its own textures. The displayable manager
+  uses one mapper for the opaque segments of a layer and one for each
+  distinct translucent opacity. To limit the number of mappers and to
+  keep the rendering stable while an opacity is adjusted, translucent
+  opacities are snapped to a few evenly spaced levels (0.25, 0.5 and
+  0.75 by default) and the level identifies the pipeline.
 
 GUI:
 - Show 3D button: new "Representation" submenu (binary labelmap or
   closed surface), the same choice as the representation in 3D views of
   the Segmentations module. Show 3D only creates the chosen
-  representation and does not switch to closed surface.
+  representation (and removes the other one, unless it is the source
+  representation) and does not switch to closed surface.
 - Application settings, Segmentations: the default representation in 3D
   views for new segmentations (Segmentations/DefaultRepresentation3D).
+- Segment Editor: toggling Show 3D only shows or hides the segmentation
+  when binary labelmap is the representation in 3D views, and an already
+  chosen 3D representation is kept when a segmentation is selected.
+
+Developer-visible changes:
+- vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D() may
+  return the binary labelmap representation name (it was always a poly
+  data representation name before). Callers that fetch the representation
+  by this name and expect vtkPolyData must check the type.
+  IsBinaryLabelmapPreferredDisplayRepresentation3D() tells whether binary
+  labelmap is chosen for 3D views.
+- vtkSlicerSegmentationsModuleLogic: GetDefaultSegmentationDisplayNode,
+  Get/SetDefaultRepresentation3D.
 
 Co-authored-by: Steve Pieper <pieper@isomics.com>
 ---
- .../Core/vtkMRMLSegmentationDisplayNode.cxx   |   14 +-
+ .../Core/vtkMRMLSegmentationDisplayNode.cxx   |   17 +-
  .../Core/vtkMRMLSegmentationDisplayNode.h     |    8 +-
- .../vtkMRMLAccuratePicker.cxx                 |   32 +
- .../vtkMRMLAccuratePicker.h                   |   27 +
  .../qSlicerSegmentEditorPaintEffect.cxx       |    6 +-
  .../Logic/vtkSlicerSegmentEditorLogic.cxx     |    7 +
  .../vtkSlicerSegmentationsModuleLogic.cxx     |   40 +
  .../Logic/vtkSlicerSegmentationsModuleLogic.h |    9 +
  .../Segmentations/MRMLDM/CMakeLists.txt       |    2 +
- ...kMRMLSegmentationsDisplayableManager3D.cxx |  338 +-
- .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2912 +++++++++++++++++
- .../vtkSegmentationLabelmapSurfaceMapper.h    |  155 +
+ ...kMRMLSegmentationsDisplayableManager3D.cxx |  340 +-
+ .../vtkSegmentationLabelmapSurfaceMapper.cxx  | 2890 +++++++++++++++++
+ .../vtkSegmentationLabelmapSurfaceMapper.h    |  160 +
  .../UI/qSlicerSegmentationsSettingsPanel.ui   |   19 +-
  .../Widgets/qMRMLSegmentEditorWidget.cxx      |    5 +-
  .../qMRMLSegmentationDisplayNodeWidget.cxx    |    2 +
  .../Widgets/qMRMLSegmentationShow3DButton.cxx |  136 +-
- .../Widgets/qMRMLSegmentationShow3DButton.h   |    1 +
+ .../Widgets/qMRMLSegmentationShow3DButton.h   |    6 +-
  .../qSlicerSegmentationsSettingsPanel.cxx     |   28 +
  .../qSlicerSegmentationsSettingsPanel.h       |    1 +
- 19 files changed, 3714 insertions(+), 28 deletions(-)
+ 17 files changed, 3646 insertions(+), 30 deletions(-)
  create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
  create mode 100644 Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
 
 diff --git a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx
-index 0b1c8b4bf3..00f0a0fcc2 100644
+index 0b1c8b4bf3..e6159ebd3c 100644
 --- a/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx
 +++ b/Libs/MRML/Core/vtkMRMLSegmentationDisplayNode.cxx
-@@ -1039,11 +1039,14 @@ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D()
+@@ -879,7 +879,8 @@ bool vtkMRMLSegmentationDisplayNode::CalculateAutoOpacitiesForSegments()
+     return false;
+   }
+ 
+-  // Get displayed 3D representation (always poly data)
++  // Get displayed 3D representation. It may be binary labelmap (shown as surfaces computed on the GPU),
++  // which is not poly data: then no segment poly data is collected below and the opacities cannot be computed.
+   std::string displayedPolyDataRepresentationName = this->GetDisplayRepresentationName3D();
+ 
+   // Make sure the segment display properties are updated
+@@ -1039,11 +1040,14 @@ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D()
    // Assume the first segment contains the same name of representations as all segments (this should be the case by design)
    vtkSegment* firstSegment = segmentation->GetNthSegment(0);
  
@@ -95,7 +131,7 @@ index 0b1c8b4bf3..00f0a0fcc2 100644
      {
        return std::string(this->PreferredDisplayRepresentationName3D);
      }
-@@ -1072,6 +1075,13 @@ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D()
+@@ -1072,6 +1076,13 @@ std::string vtkMRMLSegmentationDisplayNode::GetDisplayRepresentationName3D()
    return "";
  }
  
@@ -134,101 +170,6 @@ index fddaa170d1..2c1fc249dc 100644
    /// Decide which representation to use for 2D display.
    /// If preferred representation exists \sa PreferredDisplayRepresentationName2D, then return that.
    /// Otherwise return source representation.
-diff --git a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx
-index 294b75399b..97b8c6a931 100644
---- a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx
-+++ b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.cxx
-@@ -129,6 +129,38 @@ int vtkMRMLAccuratePicker::Pick(double selectionX, double selectionY, double sel
-   return this->Superclass::Pick(selectionX, selectionY, selectionZ, renderer);
- }
- 
-+//----------------------------------------------------------------------------
-+double vtkMRMLAccuratePicker::IntersectActorWithLine(const double p1[3], const double p2[3], double t1, double t2, double tol, vtkProp3D* prop, vtkMapper* m)
-+{
-+  vtkMapper* mapper = m;
-+  if (!mapper || !mapper->HasObserver(IntersectRayEvent))
-+  {
-+    return this->Superclass::IntersectActorWithLine(p1, p2, t1, t2, tol, prop, mapper);
-+  }
-+  RayIntersection intersection;
-+  std::copy_n(p1, 3, intersection.P1);
-+  std::copy_n(p2, 3, intersection.P2);
-+  intersection.T1 = t1;
-+  intersection.T2 = t2;
-+  mapper->InvokeEvent(IntersectRayEvent, &intersection);
-+  if (!intersection.Intersected || intersection.T < t1 || intersection.T > t2)
-+  {
-+    return VTK_DOUBLE_MAX;
-+  }
-+  if (intersection.T < this->GlobalTMin)
-+  {
-+    // Same outputs as for cells, except there is no cell
-+    this->Mapper = mapper;
-+    this->DataSet = nullptr;
-+    this->CellId = -1;
-+    this->SubId = -1;
-+    this->PointId = -1;
-+    std::copy_n(intersection.Position, 3, this->MapperPosition);
-+    std::copy_n(intersection.Normal, 3, this->MapperNormal);
-+  }
-+  return intersection.T;
-+}
-+
- //----------------------------------------------------------------------------
- namespace
- {
-diff --git a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h
-index 96e564d7c9..5f89534c7a 100644
---- a/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h
-+++ b/Libs/MRML/DisplayableManager/vtkMRMLAccuratePicker.h
-@@ -25,6 +25,9 @@
- #include <vtkCellPicker.h>
- #include <vtkSmartPointer.h>
- 
-+// VTK includes
-+#include <vtkCommand.h>
-+
- // STD includes
- #include <map>
- 
-@@ -71,6 +74,26 @@ public:
- 
-   using vtkCellPicker::Pick;
- 
-+  /// Mappers that render without geometry that the picker can intersect with the pick ray (for example surfaces that
-+  /// are ray cast on the GPU) can be picked by observing this event. Call data is a RayIntersection, with the ray in the
-+  /// model coordinates of the prop (from P1 to P2, between parametric coordinates T1 and T2); the observer sets
-+  /// Intersected and, if it is true, the parametric coordinate (T), position and normal of the first intersection.
-+  enum
-+  {
-+    IntersectRayEvent = vtkCommand::UserEvent + 7810
-+  };
-+  struct RayIntersection
-+  {
-+    double P1[3];
-+    double P2[3];
-+    double T1;
-+    double T2;
-+    bool Intersected{ false };
-+    double T{ 0.0 };
-+    double Position[3]{ 0.0, 0.0, 0.0 };
-+    double Normal[3]{ 0.0, 0.0, 1.0 };
-+  };
-+
-   /// Refresh the cell locators for the renderer's large surfaces, then pick as
-   /// vtkCellPicker does.
-   int Pick(double selectionX, double selectionY, double selectionZ, vtkRenderer* renderer) override;
-@@ -84,6 +107,10 @@ protected:
-   /// when the surface changes) and drop locators for surfaces no longer shown.
-   void UpdateLocators(vtkRenderer* renderer);
- 
-+  /// Intersect the pick ray with an actor. If the mapper observes IntersectRayEvent then the mapper computes
-+  /// the intersection, otherwise its cells are intersected as in vtkCellPicker.
-+  double IntersectActorWithLine(const double p1[3], const double p2[3], double t1, double t2, double tol, vtkProp3D* prop, vtkMapper* mapper) override;
-+
-   /// Pick the cell that the ray hits.
-   ///
-   /// vtkCellPicker picks cells within the pick tolerance of the ray, at the
 diff --git a/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx b/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx
 index 300ab9cd65..785d0ad0fb 100644
 --- a/Modules/Loadable/Segmentations/EditorEffects/qSlicerSegmentEditorPaintEffect.cxx
@@ -370,7 +311,7 @@ index 78a84a5ab0..d271e96d20 100644
  
  set(${KIT}_TARGET_LIBRARIES
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
-index 12c1186e54..a3326fdaa7 100644
+index 12c1186e54..9ef8f6e7bd 100644
 --- a/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkMRMLSegmentationsDisplayableManager3D.cxx
 @@ -20,6 +20,7 @@
@@ -402,7 +343,7 @@ index 12c1186e54..a3326fdaa7 100644
  #include <vtkPlanes.h>
  #include <vtkPolyData.h>
  #include <vtkPolyDataMapper.h>
-@@ -61,6 +69,13 @@
+@@ -61,6 +69,14 @@
  #include <vtkSmartPointer.h>
  #include <vtkTransform.h>
  #include <vtkTransformPolyDataFilter.h>
@@ -410,20 +351,21 @@ index 12c1186e54..a3326fdaa7 100644
 +
 +// STD includes
 +#include <algorithm>
++#include <cmath>
 +#include <functional>
 +#include <iterator>
 +#include <set>
  
  //---------------------------------------------------------------------------
  vtkStandardNewMacro(vtkMRMLSegmentationsDisplayableManager3D);
-@@ -130,6 +145,42 @@ public:
+@@ -130,6 +146,54 @@ public:
    typedef std::map<vtkMRMLSegmentationNode*, std::set<vtkMRMLSegmentationDisplayNode*>> SegmentationToDisplayCacheType;
    SegmentationToDisplayCacheType SegmentationToDisplayNodes;
  
 +  /// Display pipeline of segments of a binary labelmap layer, used when the 3D representation is binary labelmap.
-+  /// The labelmap is rendered as smooth surfaces, computed on the GPU. Segments of a layer that have the same opacity
-+  /// are shown by one pipeline (translucent ones are composited front to back by the mapper, without the surfaces where
-+  /// they touch each other), so that rendering stays fast when many segments are translucent.
++  /// The labelmap is rendered as smooth surfaces, computed on the GPU. Segments of a layer that have the same (snapped)
++  /// opacity are shown by one pipeline (translucent ones are composited front to back by the mapper, without the
++  /// surfaces where they touch each other), so that rendering stays fast when many segments are translucent.
 +  struct LabelmapPipeline
 +  {
 +    LabelmapPipeline()
@@ -440,8 +382,20 @@ index 12c1186e54..a3326fdaa7 100644
 +    /// Pickable segments shown by the pipeline
 +    std::map<int, std::string> PickableSegmentIDsByLabel;
 +  };
-+  /// first: shared labelmap of the layer, second: -1 for the opaque segments, otherwise the rank of the opacity of the
-+  /// translucent segments (0 for the highest opacity), so that changing the opacity keeps the pipeline
++  /// Opacity of translucent segments is snapped to the closest of NumberOfOpacityLevels evenly spaced levels between
++  /// 0 and 1 (for example 0.25, 0.5, and 0.75 for 5 levels; 0 and 1 are not used, because the segment would be hidden
++  /// or opaque), so that the number of pipelines (each with its own distance field on the GPU) is limited to
++  /// NumberOfOpacityLevels - 2 per layer, and changing the opacity of a segment slightly does not move it to another
++  /// pipeline (which would compute the distance field again).
++  static constexpr int NumberOfOpacityLevels = 5;
++  /// Snapped opacity level of a translucent segment (1 .. NumberOfOpacityLevels - 2) and the corresponding opacity
++  static int TranslucentOpacityLevel(double opacity)
++  {
++    return std::clamp(static_cast<int>(std::lround(opacity * (NumberOfOpacityLevels - 1))), 1, NumberOfOpacityLevels - 2);
++  }
++  static double TranslucentOpacity(int level) { return static_cast<double>(level) / (NumberOfOpacityLevels - 1); }
++  /// first: shared labelmap of the layer, second: -1 for the opaque segments, otherwise the snapped opacity level of
++  /// the translucent segments (\sa TranslucentOpacityLevel)
 +  typedef std::pair<vtkOrientedImageData*, int> LabelmapPipelineKey;
 +  typedef std::map<LabelmapPipelineKey, LabelmapPipeline> LabelmapPipelineMapType;
 +  std::map<vtkMRMLSegmentationDisplayNode*, LabelmapPipelineMapType> LabelmapPipelines;
@@ -459,7 +413,7 @@ index 12c1186e54..a3326fdaa7 100644
    // Segmentations
    void AddSegmentationNode(vtkMRMLSegmentationNode* displayableNode);
    void RemoveSegmentationNode(vtkMRMLSegmentationNode* displayableNode);
-@@ -145,6 +196,12 @@ public:
+@@ -145,6 +209,12 @@ public:
    void UpdateAllDisplayNodesForSegment(vtkMRMLSegmentationNode* segmentationNode);
    void UpdateSegmentPipelines(vtkMRMLSegmentationDisplayNode* displayNode, PipelineMapType& segmentPipelines);
    void UpdateDisplayNodePipeline(vtkMRMLSegmentationDisplayNode* displayNode, PipelineMapType& segmentPipelines);
@@ -472,7 +426,7 @@ index 12c1186e54..a3326fdaa7 100644
    void RemoveDisplayNode(vtkMRMLSegmentationDisplayNode* displayNode);
  
    // Observations
-@@ -162,6 +219,8 @@ public:
+@@ -162,6 +232,8 @@ public:
    void FindPickedDisplayNodeFromMesh(vtkPointSet* mesh);
    /// Find first picked node from prop3Ds in cell picker and set PickedNodeID in Internal
    void FindFirstPickedDisplayNodeFromPickerProp3Ds();
@@ -481,7 +435,7 @@ index 12c1186e54..a3326fdaa7 100644
  
  public:
    /// Picker of segment prop in renderer
-@@ -310,6 +369,7 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayableTra
+@@ -310,6 +382,7 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayableTra
  //---------------------------------------------------------------------------
  void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::RemoveDisplayNode(vtkMRMLSegmentationDisplayNode* displayNode)
  {
@@ -489,7 +443,7 @@ index 12c1186e54..a3326fdaa7 100644
    PipelinesCacheType::iterator pipelinesIter = this->DisplayPipelines.find(displayNode);
    if (pipelinesIter == this->DisplayPipelines.end())
    {
-@@ -504,14 +564,24 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
+@@ -504,14 +577,24 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
  
    // Determine which representation to show
    std::string shownRepresentationName = displayNode->GetDisplayRepresentationName3D();
@@ -516,7 +470,7 @@ index 12c1186e54..a3326fdaa7 100644
      return;
    }
  
-@@ -780,6 +850,265 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
+@@ -780,6 +863,254 @@ void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::UpdateDisplayNodePip
    }
  }
  
@@ -582,17 +536,6 @@ index 12c1186e54..a3326fdaa7 100644
 +  {
 +    std::vector<std::string> segmentIDs;
 +    segmentation->GetSegmentIDs(segmentIDs);
-+    std::set<double, std::greater<double>> translucentOpacities;
-+    for (const std::string& segmentID : segmentIDs)
-+    {
-+      vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties properties;
-+      displayNode->GetSegmentDisplayProperties(segmentID, properties);
-+      double opacity = displayOpacity * properties.Opacity3D;
-+      if (opacity < 1.0)
-+      {
-+        translucentOpacities.insert(opacity);
-+      }
-+    }
 +    for (const std::string& segmentID : segmentIDs)
 +    {
 +      vtkMRMLSegmentationDisplayNode::SegmentDisplayProperties properties;
@@ -607,10 +550,10 @@ index 12c1186e54..a3326fdaa7 100644
 +      {
 +        continue;
 +      }
-+      int rank = (opacity >= 1.0) ? -1 : static_cast<int>(std::distance(translucentOpacities.begin(), translucentOpacities.find(opacity)));
-+      LabelmapPipelineKey key(labelmap, rank);
++      bool opaque = (opacity >= 1.0);
++      LabelmapPipelineKey key(labelmap, opaque ? -1 : TranslucentOpacityLevel(opacity));
 +      shownSegmentIDsInPipelines[key].push_back(segmentID);
-+      pipelineOpacities[key] = std::min(opacity, 1.0);
++      pipelineOpacities[key] = opaque ? 1.0 : TranslucentOpacity(key.second);
 +    }
 +  }
 +
@@ -727,7 +670,7 @@ index 12c1186e54..a3326fdaa7 100644
 +    actorProperty->SetDiffuse(genericDisplayNode->GetDiffuse());
 +    actorProperty->SetSpecularPower(genericDisplayNode->GetPower());
 +    pipeline.Actor->SetVisibility(true);
-+    // The mapper intersects pick rays with the labelmap (see vtkMRMLAccuratePicker::IntersectRayEvent),
++    // The mapper intersects pick rays with the labelmap (it is a vtkMRMLRayCastMapper, see vtkMRMLAccuratePicker),
 +    // the segment at the picked position is found by FindPickedDisplayNodeFromLabelmaps
 +    pipeline.Actor->SetPickable(!pipeline.PickableSegmentIDsByLabel.empty());
 +  }
@@ -782,7 +725,7 @@ index 12c1186e54..a3326fdaa7 100644
  //---------------------------------------------------------------------------
  void vtkMRMLSegmentationsDisplayableManager3D::vtkInternal::AddObservations(vtkMRMLSegmentationNode* node)
  {
-@@ -1142,6 +1471,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
+@@ -1142,6 +1473,11 @@ int vtkMRMLSegmentationsDisplayableManager3D::Pick3D(double ras[3])
      //   one that is picked and it may be of different type (volume, model, etc.)
      this->Internal->FindFirstPickedDisplayNodeFromPickerProp3Ds();
    }
@@ -796,10 +739,10 @@ index 12c1186e54..a3326fdaa7 100644
  }
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
 new file mode 100644
-index 0000000000..4571120c64
+index 0000000000..d501e6b381
 --- /dev/null
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.cxx
-@@ -0,0 +1,2912 @@
+@@ -0,0 +1,2890 @@
 +/*==============================================================================
 +
 +  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
@@ -822,11 +765,9 @@ index 0000000000..4571120c64
 +
 +#include "vtkSegmentationLabelmapSurfaceMapper.h"
 +
-+// MRMLDisplayableManager includes
-+#include <vtkMRMLAccuratePicker.h>
-+
 +// SegmentationCore includes
 +#include <vtkOrientedImageData.h>
++#include <vtkOrientedImageDataResample.h>
 +
 +// VTK includes
 +#include <vtkActor.h>
@@ -845,6 +786,7 @@ index 0000000000..4571120c64
 +#include <vtkOpenGLState.h>
 +#include <vtkOpenGLVertexArrayObject.h>
 +#include <vtkInformation.h>
++#include <vtkIntArray.h>
 +#include <vtkOpenGLRenderPass.h>
 +#include <vtkPlane.h>
 +#include <vtkPlaneCollection.h>
@@ -908,11 +850,14 @@ index 0000000000..4571120c64
 +  return texelFetch(paletteTexture, ivec2(label % 256, label / 256), 0).a > 0.0;
 +}
 +// A downsampled voxel is shown if any of the labelmap voxels in it is shown (so that small or thin painted regions,
-+// for example in a single slice, do not disappear)
++// for example in a single slice, do not disappear).
++// At most 4 labelmap voxels are checked along each axis: all of them if the downsampling factor is at most 4,
++// evenly spaced samples (so some voxels may be missed) if it is larger.
 +bool isShownVoxel(ivec3 voxel)
 +{
 +  ivec3 labelSize = ivec3(labelDimensions + vec3(0.5));
 +  ivec3 factor = ivec3(downsampling + vec3(0.5));
++  ivec3 stride = (factor + ivec3(3)) / 4;
 +  ivec3 labelVoxel = (voxel - ivec3(padding)) * factor;
 +  if (any(lessThan(voxel, ivec3(padding))) || any(greaterThanEqual(labelVoxel, labelSize)))
 +  {
@@ -924,7 +869,7 @@ index 0000000000..4571120c64
 +    {
 +      for (int i = 0; i < 4; i++)
 +      {
-+        ivec3 offset = ivec3(i, j, k);
++        ivec3 offset = ivec3(i, j, k) * stride;
 +        if (any(greaterThanEqual(offset, factor)))
 +        {
 +          continue;
@@ -1183,11 +1128,13 @@ index 0000000000..4571120c64
 +  return texelFetch(paletteTexture, ivec2(label % 256, label / 256), 0);
 +}
 +
-+// Color of a shown label in the labelmap voxels of a downsampled grid voxel (alpha = 0 if there is none)
++// Color of a shown label in the labelmap voxels of a downsampled grid voxel (alpha = 0 if there is none).
++// Samples the same labelmap voxels as isShownVoxel.
 +vec4 labelColorInBlock(ivec3 voxel)
 +{
 +  ivec3 labelSize = ivec3(labelDimensions + vec3(0.5));
 +  ivec3 factor = ivec3(downsampling + vec3(0.5));
++  ivec3 stride = (factor + ivec3(3)) / 4;
 +  ivec3 labelVoxel = (voxel - ivec3(padding)) * factor;
 +  if (any(lessThan(voxel, ivec3(padding))) || any(greaterThanEqual(labelVoxel, labelSize)))
 +  {
@@ -1199,7 +1146,7 @@ index 0000000000..4571120c64
 +    {
 +      for (int i = 0; i < 4; i++)
 +      {
-+        ivec3 offset = ivec3(i, j, k);
++        ivec3 offset = ivec3(i, j, k) * stride;
 +        if (any(greaterThanEqual(offset, factor)))
 +        {
 +          continue;
@@ -1864,48 +1811,27 @@ index 0000000000..4571120c64
 +{
 +  vtkWeakPointer<vtkImageData> Image;
 +  vtkMTimeType Time{ 0 };
-+  std::map<int, std::array<int, 6>> Extents;
-+  double MaximumLabel{ 0 };
-+};
-+
-+//----------------------------------------------------------------------------
-+template <class T>
-+void FindLabelExtents(vtkImageData* image, LabelExtents& labelExtents)
-+{
-+  int extent[6];
-+  image->GetExtent(extent);
-+  labelExtents.Extents.clear();
-+  labelExtents.MaximumLabel = 0;
-+  T* voxel = static_cast<T*>(image->GetScalarPointer());
-+  T lastLabel = 0;
-+  std::array<int, 6>* lastExtent = nullptr;
-+  for (int k = extent[4]; k <= extent[5]; ++k)
++  /// Label values in increasing order, and the extent of each (\sa vtkOrientedImageDataResample::CalculateEffectiveExtentPerLabel)
++  vtkSmartPointer<vtkIntArray> LabelValues = vtkSmartPointer<vtkIntArray>::New();
++  vtkSmartPointer<vtkIntArray> Extents = vtkSmartPointer<vtkIntArray>::New();
++  /// Largest label value in the labelmap (0 if there are no labels)
++  int MaximumLabel() const
 +  {
-+    for (int j = extent[2]; j <= extent[3]; ++j)
-+    {
-+      for (int i = extent[0]; i <= extent[1]; ++i, ++voxel)
-+      {
-+        if (*voxel <= 0)
-+        {
-+          continue;
-+        }
-+        if (!lastExtent || *voxel != lastLabel)
-+        {
-+          lastLabel = *voxel;
-+          auto inserted = labelExtents.Extents.insert(std::make_pair(static_cast<int>(lastLabel), std::array<int, 6>{ i, i, j, j, k, k }));
-+          lastExtent = &inserted.first->second;
-+          labelExtents.MaximumLabel = std::max(labelExtents.MaximumLabel, static_cast<double>(lastLabel));
-+        }
-+        std::array<int, 6>& labelExtent = *lastExtent;
-+        labelExtent[0] = std::min(labelExtent[0], i);
-+        labelExtent[1] = std::max(labelExtent[1], i);
-+        labelExtent[2] = std::min(labelExtent[2], j);
-+        labelExtent[3] = std::max(labelExtent[3], j);
-+        labelExtent[5] = k;
-+      }
-+    }
++    vtkIdType numberOfLabels = this->LabelValues->GetNumberOfValues();
++    return numberOfLabels > 0 ? this->LabelValues->GetValue(numberOfLabels - 1) : 0;
 +  }
-+}
++  /// Get the extent of a label, false if the label is not in the labelmap
++  bool GetExtent(int label, int extent[6]) const
++  {
++    vtkIdType index = this->LabelValues->LookupValue(label);
++    if (index < 0)
++    {
++      return false;
++    }
++    this->Extents->GetTypedTuple(index, extent);
++    return true;
++  }
++};
 +
 +//----------------------------------------------------------------------------
 +// Labelmaps are often shown by several mappers (opaque segments in one, each translucent segment in its own),
@@ -1923,10 +1849,9 @@ index 0000000000..4571120c64
 +  }
 +  if (entry->Time != image->GetMTime())
 +  {
-+    switch (image->GetScalarType())
++    if (!vtkOrientedImageDataResample::CalculateEffectiveExtentPerLabel(image, entry->LabelValues, entry->Extents))
 +    {
-+      vtkTemplateMacro(FindLabelExtents<VTK_TT>(image, *entry));
-+      default: return nullptr;
++      return nullptr;
 +    }
 +    entry->Time = image->GetMTime();
 +  }
@@ -2150,15 +2075,15 @@ index 0000000000..4571120c64
 +  this->EffectiveExtent[1] = this->EffectiveExtent[3] = this->EffectiveExtent[5] = VTK_INT_MIN;
 +  for (int label : shownLabels)
 +  {
-+    auto labelExtent = labelExtents->Extents.find(label);
-+    if (labelExtent == labelExtents->Extents.end())
++    int labelExtent[6] = { 0, -1, 0, -1, 0, -1 };
++    if (!labelExtents->GetExtent(label, labelExtent))
 +    {
 +      continue;
 +    }
 +    for (int axis = 0; axis < 3; ++axis)
 +    {
-+      this->EffectiveExtent[axis * 2] = std::min(this->EffectiveExtent[axis * 2], labelExtent->second[axis * 2]);
-+      this->EffectiveExtent[axis * 2 + 1] = std::max(this->EffectiveExtent[axis * 2 + 1], labelExtent->second[axis * 2 + 1]);
++      this->EffectiveExtent[axis * 2] = std::min(this->EffectiveExtent[axis * 2], labelExtent[axis * 2]);
++      this->EffectiveExtent[axis * 2 + 1] = std::max(this->EffectiveExtent[axis * 2 + 1], labelExtent[axis * 2 + 1]);
 +    }
 +  }
 +  if (this->EffectiveExtent[0] > this->EffectiveExtent[1])
@@ -2190,10 +2115,10 @@ index 0000000000..4571120c64
 +  {
 +    int minimum = VTK_INT_MAX;
 +    int maximum = VTK_INT_MIN;
-+    for (const auto& labelExtent : labelExtents->Extents)
++    for (vtkIdType index = 0; index < labelExtents->Extents->GetNumberOfTuples(); ++index)
 +    {
-+      minimum = std::min(minimum, labelExtent.second[axis * 2]);
-+      maximum = std::max(maximum, labelExtent.second[axis * 2 + 1]);
++      minimum = std::min(minimum, labelExtents->Extents->GetTypedComponent(index, axis * 2));
++      maximum = std::max(maximum, labelExtents->Extents->GetTypedComponent(index, axis * 2 + 1));
 +    }
 +    const int sizeGranularity = 64;
 +    allLabelsDimensions[axis] = (maximum - minimum + 1 + sizeGranularity - 1) / sizeGranularity * sizeGranularity;
@@ -2244,7 +2169,7 @@ index 0000000000..4571120c64
 +  }
 +  auto gridDimension = [this](int axis) { return (this->LabelDimensions[axis] + this->Downsampling[axis] - 1) / this->Downsampling[axis] + 2 * this->Padding; };
 +
-+  this->FloatLabels = (labelExtents->MaximumLabel > 255);
++  this->FloatLabels = (labelExtents->MaximumLabel() > 255);
 +  switch (this->Labelmap->GetScalarType())
 +  {
 +    vtkTemplateMacro(CopyLabelsAs<VTK_TT>(this->Labelmap, this->EffectiveExtent, this->FloatLabels, this->LabelsUnsignedChar, this->LabelsFloat));
@@ -2507,7 +2432,7 @@ index 0000000000..4571120c64
 +    quad->Program->SetUniformi("sliceZ", z);
 +    quad->Render();
 +  }
-+  vtkOpenGLCheckErrorMacro("failed after rendering slices");
++  vtkOpenGLStaticCheckErrorMacro("failed after rendering slices");
 +  return true;
 +}
 +
@@ -2908,15 +2833,13 @@ index 0000000000..4571120c64
 +//----------------------------------------------------------------------------
 +bool vtkSegmentationLabelmapSurfaceMapper::vtkInternal::CaptureOpaqueDepth(vtkOpenGLRenderer* ren)
 +{
-+  // Copy the depth buffer of the render framebuffer, which contains the opaque geometry while translucent geometry
-+  // is rendered (in the framebuffers of depth peeling or order independent translucency passes, if they are used).
++  // Copy the depth buffer of the framebuffer that is bound for reading, which contains the opaque geometry while
++  // translucent geometry is rendered: the render framebuffer of the window, or the framebuffer of a render pass
++  // that renders the opaque geometry elsewhere (for example vtkSSAOPass; depth peeling and order independent
++  // translucency passes bind their framebuffers only for drawing). The render framebuffer of the window must not
++  // be used, because it contains the depth of the previous frame while a pass renders into its own framebuffer.
 +  // Same as in vtkOpenGLGPUVolumeRayCastMapper.
 +  vtkOpenGLRenderWindow* renWin = static_cast<vtkOpenGLRenderWindow*>(ren->GetRenderWindow());
-+  vtkOpenGLFramebufferObject* renderFramebuffer = renWin->GetRenderFramebuffer();
-+  if (!renderFramebuffer)
-+  {
-+    return false;
-+  }
 +  int width = 0;
 +  int height = 0;
 +  int lowerLeft[2] = { 0, 0 };
@@ -2960,13 +2883,10 @@ index 0000000000..4571120c64
 +  this->OpaqueDepthCopyColorTexture->Resize(width, height);
 +
 +  vtkOpenGLState* ostate = renWin->GetState();
-+  ostate->PushReadFramebufferBinding();
 +  ostate->PushDrawFramebufferBinding();
-+  renderFramebuffer->Bind(GL_READ_FRAMEBUFFER);
 +  this->OpaqueDepthFramebuffer->Bind(GL_DRAW_FRAMEBUFFER);
 +  ostate->vtkglBlitFramebuffer(lowerLeft[0], lowerLeft[1], lowerLeft[0] + width, lowerLeft[1] + height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
 +  ostate->PopDrawFramebufferBinding();
-+  ostate->PopReadFramebufferBinding();
 +  return true;
 +}
 +
@@ -3271,7 +3191,7 @@ index 0000000000..4571120c64
 +    this->SurfaceVAO->Release();
 +    this->LowResolutionFramebuffer->RestorePreviousBindingsAndBuffers();
 +  }
-+  vtkOpenGLCheckErrorMacro("failed after rendering segmentation surface");
++  vtkOpenGLStaticCheckErrorMacro("failed after rendering segmentation surface");
 +
 +  distanceTexture->Deactivate();
 +  this->ColorTexture->Deactivate();
@@ -3330,7 +3250,7 @@ index 0000000000..4571120c64
 +  this->SurfaceVAO->Bind();
 +  glDrawArrays(GL_TRIANGLES, 0, 3);
 +  this->SurfaceVAO->Release();
-+  vtkOpenGLCheckErrorMacro("failed after scaling up segmentation surface");
++  vtkOpenGLStaticCheckErrorMacro("failed after scaling up segmentation surface");
 +  for (int i = 0; i < 3; ++i)
 +  {
 +    this->LowResolutionTextures[i]->Deactivate();
@@ -3404,17 +3324,6 @@ index 0000000000..4571120c64
 +vtkSegmentationLabelmapSurfaceMapper::vtkSegmentationLabelmapSurfaceMapper()
 +{
 +  this->Internal = new vtkInternal(this);
-+
-+  // Picking
-+  vtkNew<vtkCallbackCommand> intersectRayCallback;
-+  intersectRayCallback->SetCallback(
-+    [](vtkObject* caller, unsigned long, void*, void* callData)
-+    {
-+      vtkSegmentationLabelmapSurfaceMapper* self = static_cast<vtkSegmentationLabelmapSurfaceMapper*>(caller);
-+      vtkMRMLAccuratePicker::RayIntersection* ray = static_cast<vtkMRMLAccuratePicker::RayIntersection*>(callData);
-+      ray->Intersected = self->IntersectWithRay(ray->P1, ray->P2, ray->T1, ray->T2, ray->T, ray->Position, ray->Normal);
-+    });
-+  this->AddObserver(vtkMRMLAccuratePicker::IntersectRayEvent, intersectRayCallback);
 +}
 +
 +//----------------------------------------------------------------------------
@@ -3475,7 +3384,14 @@ index 0000000000..4571120c64
 +//----------------------------------------------------------------------------
 +void vtkSegmentationLabelmapSurfaceMapper::SetLabelColor(int labelValue, double r, double g, double b, double opacity /*=1.0*/)
 +{
-+  this->Internal->LabelColors[labelValue] = { r, g, b, opacity };
++  std::array<double, 4> color = { r, g, b, opacity };
++  auto it = this->Internal->LabelColors.find(labelValue);
++  if (it != this->Internal->LabelColors.end() && it->second == color)
++  {
++    return;
++  }
++  this->Internal->LabelColors[labelValue] = color;
++  this->Modified();
 +}
 +
 +//----------------------------------------------------------------------------
@@ -3640,7 +3556,12 @@ index 0000000000..4571120c64
 +//----------------------------------------------------------------------------
 +void vtkSegmentationLabelmapSurfaceMapper::RemoveAllLabelColors()
 +{
++  if (this->Internal->LabelColors.empty())
++  {
++    return;
++  }
 +  this->Internal->LabelColors.clear();
++  this->Modified();
 +}
 +
 +//----------------------------------------------------------------------------
@@ -3714,10 +3635,10 @@ index 0000000000..4571120c64
 +}
 diff --git a/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
 new file mode 100644
-index 0000000000..d59ce0373a
+index 0000000000..561d64a86d
 --- /dev/null
 +++ b/Modules/Loadable/Segmentations/MRMLDM/vtkSegmentationLabelmapSurfaceMapper.h
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,160 @@
 +/*==============================================================================
 +
 +  Copyright (c) Laboratory for Percutaneous Surgery (PerkLab)
@@ -3743,8 +3664,8 @@ index 0000000000..d59ce0373a
 +
 +#include "vtkSlicerSegmentationsModuleMRMLDisplayableManagerExport.h"
 +
-+// VTK includes
-+#include <vtkMapper.h>
++// MRMLDisplayableManager includes
++#include <vtkMRMLRayCastMapper.h>
 +
 +class vtkOrientedImageData;
 +
@@ -3761,11 +3682,11 @@ index 0000000000..d59ce0373a
 +///
 +/// Uses only OpenGL features that are available in both OpenGL 3.2 and OpenGL ES 3.0 (WebGL2),
 +/// with 16-bit floating-point render targets (EXT_color_buffer_float on WebGL2).
-+class VTK_SLICER_SEGMENTATIONS_MODULE_MRMLDISPLAYABLEMANAGER_EXPORT vtkSegmentationLabelmapSurfaceMapper : public vtkMapper
++class VTK_SLICER_SEGMENTATIONS_MODULE_MRMLDISPLAYABLEMANAGER_EXPORT vtkSegmentationLabelmapSurfaceMapper : public vtkMRMLRayCastMapper
 +{
 +public:
 +  static vtkSegmentationLabelmapSurfaceMapper* New();
-+  vtkTypeMacro(vtkSegmentationLabelmapSurfaceMapper, vtkMapper);
++  vtkTypeMacro(vtkSegmentationLabelmapSurfaceMapper, vtkMRMLRayCastMapper);
 +  void PrintSelf(ostream& os, vtkIndent indent) override;
 +
 +  /// Labelmap to render. Geometry (spacing, directions) is taken into account when computing distances.
@@ -3789,7 +3710,12 @@ index 0000000000..d59ce0373a
 +
 +  /// The labelmap is downsampled if its distance field would have more voxels than this.
 +  /// Larger values preserve more details, but need more GPU memory: about 11 bytes per voxel while the distance field
-+  /// is computed, 3 bytes per voxel after that.
++  /// is computed, 3 bytes per voxel after that. Each mapper instance holds its own distance field and color textures,
++  /// so the memory is multiplied by the number of mappers that show the same labelmap (the segmentations displayable
++  /// manager uses one mapper for the opaque segments of a segmentation and one for each distinct translucent opacity).
++  /// A downsampled voxel is shown if any of its labelmap voxels is shown, which is checked in at most 4 voxels along
++  /// each axis: if the downsampling factor is above 4 along an axis (labelmap larger than about 1300^3 voxels at the
++  /// default limit), the block is sampled at evenly spaced voxels and small structures between them may be missed.
 +  vtkSetClampMacro(MaximumNumberOfVoxels, vtkIdType, 4096, VTK_ID_MAX);
 +  vtkGetMacro(MaximumNumberOfVoxels, vtkIdType);
 +
@@ -3835,8 +3761,8 @@ index 0000000000..d59ce0373a
 +  /// Intersect a ray (in IJK coordinates of the labelmap, between P1 + T1 * (P2 - P1) and P1 + T2 * (P2 - P1)) with
 +  /// the surface of the shown segments (computed from the labelmap on the CPU, the surface follows the boundary of
 +  /// voxels, not smoothed). Returns true if there is an intersection, and its parametric coordinate, position and normal.
-+  /// The mapper responds to vtkMRMLAccuratePicker::IntersectRayEvent with this.
-+  bool IntersectWithRay(const double p1[3], const double p2[3], double t1, double t2, double& t, double position[3], double normal[3]);
++  /// vtkMRMLAccuratePicker picks the surface with this.
++  bool IntersectWithRay(const double p1[3], const double p2[3], double t1, double t2, double& t, double position[3], double normal[3]) override;
 +
 +  /// Get the label of the shown segment that is at the specified position (in IJK coordinates of the labelmap),
 +  /// or the nearest one within the specified distance (in voxels). Returns 0 if there is no shown segment there.
@@ -4156,10 +4082,22 @@ index 63c55d60cf..ee692e4153 100644
  void qMRMLSegmentationShow3DButton::onEnableSurfaceSmoothingToggled(bool smoothingEnabled)
  {
 diff --git a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
-index c91814f58f..c10bbe8e18 100644
+index c91814f58f..0e2ec02e3d 100644
 --- a/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
 +++ b/Modules/Loadable/Segmentations/Widgets/qMRMLSegmentationShow3DButton.h
-@@ -56,6 +56,7 @@ protected slots:
+@@ -25,7 +25,10 @@ class qMRMLSegmentationShow3DButtonPrivate;
+ class vtkMRMLSegmentationNode;
+ 
+ /// \brief Button that shows/hide segmentation in 3D
+-/// It creates or removes closed surface representation.
++/// It creates or removes the representation that is shown in 3D views (closed surface or binary labelmap,
++/// chosen in the Representation submenu, \sa vtkMRMLSegmentationDisplayNode::SetPreferredDisplayRepresentationName3D).
++/// When the representation is switched, the other one is removed (unless it is the source representation),
++/// so that it is not kept up to date for nothing.
+ class Q_SLICER_MODULE_SEGMENTATIONS_WIDGETS_EXPORT qMRMLSegmentationShow3DButton : public ctkMenuButton
+ {
+   Q_OBJECT
+@@ -56,6 +59,7 @@ protected slots:
    void onEnableSurfaceNetsToggled(bool surfaceNetsEnabled);
    void onEnableSurfaceNetsSmoothingToggled(bool surfaceNetsSmoothingEnabled);
    void onSurfaceSmoothingFactorChanged(double newSmoothingFactor);

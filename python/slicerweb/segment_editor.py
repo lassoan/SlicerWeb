@@ -632,6 +632,12 @@ class SegmentEditor:
             normal = np.array([sliceToRas.GetElement(r, 2) for r in range(3)])
             normal /= np.linalg.norm(normal) or 1.0
             planePoint = np.array(self._strokePoints[0])
+            # The brush is as thick as the volume's spacing along the slice normal (the height of
+            # the desktop's brush cylinder, its sliceSpacing): voxels whose centers are within half
+            # of it of the plane. The smallest spacing of the volume would not do: in an axial
+            # slice of a CT with 1.25 mm slices and 0.93 mm pixels, a plane between two slices has
+            # no voxel center within half a pixel, and the stroke painted nothing.
+            halfThickness = 0.5 / (np.linalg.norm(worldToImageArray[:, :3] @ normal) or 1.0)
         painted = None
         for start, end in list(zip(centers, centers[1:])) or [(centers[0], centers[0])]:
             lo = [max(extent[2 * a], int(math.floor(min(start[a], end[a]) - radiusVoxels[a]))) for a in range(3)]
@@ -649,7 +655,7 @@ class SegmentEditor:
             if not sphere:
                 # In the slice only: less than half a voxel from the slice plane
                 world = np.concatenate([ijk, np.ones(ijk.shape[:-1] + (1,))], axis=-1) @ imageToWorldArray.T
-                mask &= np.abs((world - planePoint) @ normal) <= 0.5 * spacing.min() + 1e-6
+                mask &= np.abs((world - planePoint) @ normal) <= halfThickness + 1e-6
             voxels[lo[2]:hi[2] + 1, lo[1]:hi[1] + 1, lo[0]:hi[0] + 1][mask] = 1
             box = [lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]]
             painted = box if painted is None else [min(painted[a], box[a]) if a % 2 == 0 else max(painted[a], box[a]) for a in range(6)]

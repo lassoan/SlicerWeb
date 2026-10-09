@@ -30,6 +30,14 @@ export interface JobResult {
   files: Record<string, Uint8Array>;
 }
 
+/** A start of the worker that a later end() abandoned: who waited for it starts again. */
+class StartSuperseded extends Error {
+  /** @param cancelled whether the work was cancelled (else the worker is only being replaced) */
+  constructor(readonly cancelled = false) {
+    super(cancelled ? "The job was cancelled" : "The worker was replaced while it was starting");
+  }
+}
+
 interface WheelIndex {
   packages: { name: string; version: string; file: string }[];
 }
@@ -42,6 +50,16 @@ export class JobRunner {
   private current: string | null = null;
   /** The extension wheels the worker was started with, to tell when it has fallen behind the page. */
   private startedWith: string[] = [];
+  /**
+   * Counts the starts. A start keeps the worker it makes only if no end() came in the meantime: a
+   * worker that is ended while it is starting - the page's extensions changed, a job was cancelled -
+   * must neither be left running beside the next one, nor keep the jobs waiting for it waiting.
+   */
+  private generation = 0;
+  /** Settles a start that is still waiting for its worker to say it is ready. */
+  private abandonStart: ((cancelled: boolean) => void) | null = null;
+  /** Whether the last start was abandoned by cancel() rather than replaced. */
+  private startCancelled = false;
 
   constructor(
     private wheelsURL = new URL("wheels/", document.baseURI).href,
@@ -75,29 +93,36 @@ export class JobRunner {
     // A worker that fell behind the page's extensions while it was idle is replaced by one that has them.
     if (this.behind && !this.busy) this.end();
     if (this.ready) return this.ready;
-    this.startedWith = [...this.extensionWheels];
-    this.ready = (async () => {
+    const generation = ++this.generation;
+    const extensionWheels = [...this.extensionWheels];
+    this.startedWith = extensionWheels;
+    const ready = (async () => {
       const response = await fetch(this.wheelsURL + "index.json");
       const index = (await response.json()) as WheelIndex;
+      // Ended while the index was being fetched: no worker is made for a start nobody wants
+      if (generation !== this.generation) throw new StartSuperseded(this.startCancelled);
       const wheels = DEFAULT_STARTUP_PACKAGES.map((name) => index.packages.find((p) => p.name === name))
         .filter((p): p is WheelIndex["packages"][0] => Boolean(p))
         .map((p) => new URL(this.wheelsURL + p.file, document.baseURI).href)
-        .concat(this.extensionWheels);
+        .concat(extensionWheels);
       const slicerVersion = /slicer_core-(\d+\.\d+)/.exec(wheels.join(" "))?.[1] ?? "5.13";
 
-      this.worker = new Worker(new URL("./jobWorker.ts", import.meta.url), { type: "module" });
-      this.worker.onmessage = (event) => this.onMessage(event.data);
+      const worker = new Worker(new URL("./jobWorker.ts", import.meta.url), { type: "module" });
+      this.worker = worker;
+      worker.onmessage = (event) => this.onMessage(event.data);
       await new Promise<void>((resolve, reject) => {
+        // Ended while it was starting (see end()): the worker is gone and will never say it is ready
+        this.abandonStart = (cancelled) => reject(new StartSuperseded(cancelled));
         const onReady = (event: MessageEvent) => {
           if (event.data?.type === "ready") {
-            this.worker?.removeEventListener("message", onReady);
+            worker.removeEventListener("message", onReady);
             resolve();
           } else if (event.data?.type === "failed" && !event.data.id) {
             reject(new Error(event.data.error));
           }
         };
-        this.worker!.addEventListener("message", onReady);
-        this.worker!.postMessage({
+        worker.addEventListener("message", onReady);
+        worker.postMessage({
           type: "start",
           pyodideURL: new URL("pyodide/", document.baseURI).href,
           pyodidePackagesURL: `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`,
@@ -105,20 +130,39 @@ export class JobRunner {
           slicerVersion,
           pyodidePackages: ["numpy", "micropip", "packaging"],
         });
+      }).finally(() => {
+        if (generation === this.generation) this.abandonStart = null;
       });
     })();
-    return this.ready;
+    // A start that nobody waits for (one made ahead of the work) may be abandoned without a word
+    ready.catch(() => {});
+    this.ready = ready;
+    return ready;
+  }
+
+  /** Start the worker, again if the start waited for was abandoned; the worker that is then running. */
+  private async startedWorker(): Promise<Worker> {
+    for (;;) {
+      try {
+        await this.start();
+      } catch (error) {
+        // Replaced: wait for the worker that replaces it; cancelled: so is the job
+        if (error instanceof StartSuperseded && !error.cancelled) continue;
+        throw error;
+      }
+      if (this.worker) return this.worker;
+    }
   }
 
   /** Run a job. Only one runs at a time; the next waits for it. */
   async run(spec: JobSpec, events: JobEvents = {}): Promise<JobResult> {
-    await this.start();
+    const worker = await this.startedWorker();
     const id = String(this.nextId++);
     this.current = id;
     return new Promise<JobResult>((resolve, reject) => {
       this.jobs.set(id, { resolve, reject, events });
       const transfer = Object.values(spec.files ?? {}).map((f) => f.buffer);
-      this.worker!.postMessage({ type: "run", id, ...spec }, transfer);
+      worker.postMessage({ type: "run", id, ...spec }, transfer);
     }).finally(() => {
       this.current = null;
     });
@@ -127,14 +171,18 @@ export class JobRunner {
   /** Stop the work: the worker is ended, and the next job starts a new one. */
   cancel() {
     if (!this.worker && !this.ready) return;
-    this.end();
+    this.end(true);
     for (const [, job] of this.jobs) job.reject(new Error("The job was cancelled"));
     this.jobs.clear();
     this.current = null;
   }
 
   /** End the worker, started or starting; the next start makes a new one. */
-  private end() {
+  private end(cancelled = false) {
+    this.generation++;
+    this.startCancelled = cancelled;
+    this.abandonStart?.(cancelled);
+    this.abandonStart = null;
     this.worker?.terminate();
     this.worker = null;
     this.ready = null;

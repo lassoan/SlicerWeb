@@ -119,7 +119,7 @@ covers the independent-component and label-map paths. Both are covered by
   not have, so the generated file is kept in the tree and checked against the module's XML.
 
 - SlicerElastix registers with the elastix of ITK-Wasm (the `itkwasm-elastix` package) in the
-  job worker, since the elastix program cannot be started; the extension's `ElastixLib/browser.py`
+  job worker, since the elastix program cannot be started; the extension's `ElastixLib/web_launcher.py`
   is that path, and the files are read and written there with ITK-Wasm's image IO. The pipelines,
   16 MB of WebAssembly for elastix and a few hundred kB per file format, are fetched from the
   jsDelivr CDN the first time a registration runs, so the first run needs a network connection.

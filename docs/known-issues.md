@@ -120,14 +120,15 @@ covers the independent-component and label-map paths. Both are covered by
 
 - SlicerElastix registers with the elastix of ITK-Wasm (the `itkwasm-elastix` package) in the
   job worker, since the elastix program cannot be started; the extension's `ElastixLib/browser.py`
-  is that path. The pipeline, 16 MB of WebAssembly, is fetched from the jsDelivr CDN the first time
-  a registration runs, so the first run needs a network connection. What the desktop module does
-  and this does not: masks (the ITK-Wasm elastix takes none), a displacement field as the output
-  transform (the output is the affine or B-spline transform elastix computed, read from its
-  transform parameter maps), the log of elastix as it runs, and initial transforms other than
-  linear ones. A registration started from the module's panel answers later, with the Apply
-  button saying Cancel meanwhile; `ElastixLogic.registerVolumes()` takes an `onFinished` callback
-  for that, and waits only where its caller may be suspended (a module test, the console).
+  is that path, and the files are read and written there with ITK-Wasm's image IO. The pipelines,
+  16 MB of WebAssembly for elastix and a few hundred kB per file format, are fetched from the
+  jsDelivr CDN the first time a registration runs, so the first run needs a network connection.
+  What the desktop module does and this does not: masks (the ITK-Wasm elastix takes none), a
+  displacement field as the output transform (the output is the affine or B-spline transform
+  elastix computed, read from its transform parameter maps), and the log of elastix as it runs. A
+  registration started from the module's panel answers later, with the Apply button saying Cancel
+  meanwhile; `ElastixLogic.registerVolumes()` takes an `onFinished` callback for that, and waits
+  only where its caller may be suspended (a module test, the console).
 - `vtkITKLevelTracingImageFilter` no longer throws but returns an empty contour, for every plane
   and seed tried, with the same calls that Slicer's Level Tracing effect makes. Nothing uses it
   yet; the Level Tracing effect would.

@@ -10,7 +10,9 @@
     "python_packages": [
       "itkwasm==1.0b201",
       "itkwasm-elastix==2.1.0",
-      "itkwasm-elastix-emscripten==2.1.0"
+      "itkwasm-elastix-emscripten==2.1.0",
+      "itkwasm-image-io==1.6.1",
+      "itkwasm-image-io-emscripten==1.6.1"
     ]
   }
 }

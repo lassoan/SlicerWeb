@@ -247,6 +247,19 @@ function keepSession() {
 }
 
 /**
+ * The module of `?module=<name>`, opened at startup - once the extensions of `?extensions=` are
+ * installed, so that it can be one of theirs. A restored session opens the module that was open in
+ * it instead.
+ */
+function openStartupModule() {
+  const name = new URLSearchParams(window.location.search).get("module");
+  if (!name) return;
+  const module = store.modules.find((m) => m.name.toLowerCase() === name.toLowerCase());
+  if (module) openModule(module.name);
+  else console.warn(`Unknown module: ${name}`);
+}
+
+/**
  * Data loaded at startup: the files of the `?url=<address of a file>` URL parameters (one or more),
  * else the sample data set of `?sample=<name>`, else that of the VITE_DEFAULT_SAMPLE build setting
  * (`?sample=` with an empty value disables it). A file of a server that does not allow cross-origin
@@ -348,6 +361,7 @@ onMounted(async () => {
     store.status = "ready";
     reportGLToApplication(runtime.bridge);
     await refreshSubjectHierarchy();
+    openStartupModule();
     if (!(await offerLastSession())) await loadStartupSample();
     keepSession();
     rememberActiveModule();

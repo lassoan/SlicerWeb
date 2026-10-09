@@ -33,6 +33,7 @@ What the application reads when it starts:
 | `?url=<address of a file>` | a file to load, URL-encoded; repeat it for several files (a scene, `.mrb`, among them). Loaded instead of `?sample=`. A file of a server that does not allow cross-origin requests is fetched through the site's download proxy (`VITE_DOWNLOAD_PROXY`, see the [readme](../README.md)), and a Dropbox share link is read from where the file itself is |
 | `?volumeRendering=1` | with `?sample=` or `?url=`: also volume render the volume it loads, with the preset that suits it; `?volumeRendering=<preset name>` (`CT-Chest-Contrast-Enhanced`, `MR-Default`, …) for a given preset |
 | `?extensions=<names>` | extensions to make sure are installed, by their names in the extension index (`SlicerHeart,SlicerIGT`), or wheel URLs; installed with what they depend on, and remembered as an installation from the Extensions Manager is |
+| `?module=<name>` | the module to open at startup (`Elastix`); it may be one of the extensions of `?extensions=`, as it is opened once they are installed. A restored last session opens the module that was open in it instead |
 | `?favoriteModules=<names>` | the modules the toolbar offers, in order (`SegmentEditor,Markups,Models`); for this page only, not kept as the user's setting (Application settings > Modules) |
 | `localStorage["slicerweb.extensions"]` | a JSON list of extension wheel URLs to install at startup |
 

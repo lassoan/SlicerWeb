@@ -82,7 +82,7 @@ def _finished(error):
 logic.registerVolumes(fixedVolumeNode=fixed, movingVolumeNode=moving, parameterFilenames=[parameters],
                       outputVolumeNode=outputVolume, outputTransformNode=outputTransform, onFinished=_finished)
 `);
-check("the registration runs in the browser", (await py("json.dumps(logic.runsInBrowser())")) === "true");
+check("the registration runs in the background", (await py("json.dumps(logic.runsInBackground)")) === "true");
 check("and is running after the call returned", (await py("json.dumps(logic.isRunning)")) === "true");
 
 // while it registers, the page must keep answering

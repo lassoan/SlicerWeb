@@ -434,10 +434,17 @@ class qMRMLSegmentSelectorWidget(qMRMLWidget):
         self.currentNodeChanged.emit(node)
         self.currentNodeIDChanged.emit(node.GetID() if node is not None else "")
 
+    @staticmethod
+    def _segmentationOf(node):
+        """The segmentation of the node; None for a node of another type, which the selector may
+        also offer (Cross-section analysis takes a model as the lumen), as on the desktop, where
+        the segment list is then empty."""
+        return node.GetSegmentation() if node is not None and node.IsA("vtkMRMLSegmentationNode") else None
+
     def _observeSegmentation(self, node):
         import vtk
 
-        segmentation = node.GetSegmentation() if node is not None else None
+        segmentation = self._segmentationOf(node)
         if segmentation is self._observed:
             return
         if self._observed is not None:
@@ -459,8 +466,7 @@ class qMRMLSegmentSelectorWidget(qMRMLWidget):
         self._updateSegments()
 
     def _updateSegments(self):
-        node = self._selector.currentNode()
-        segmentation = node.GetSegmentation() if node is not None else None
+        segmentation = self._segmentationOf(self._selector.currentNode())
         items = []
         if segmentation is not None:
             for index in range(segmentation.GetNumberOfSegments()):

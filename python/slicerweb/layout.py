@@ -546,13 +546,31 @@ class LayoutManager(QObject):
     def threeDViewCount(self):
         return property_value(len(self._threeDWidgets()))
 
+    # Table and plot views: as qSlicerLayoutManager, a widget for each table or plot view node of the
+    # scene, shown in the layout or not (its visible says which); the page draws the ones shown
+    # (TableView.vue, PlotView.vue) from the same view nodes.
     @property
     def tableViewCount(self):
-        return property_value(0)
+        return property_value(len(self._viewNodesOfClass("vtkMRMLTableViewNode")))
 
     @property
     def plotViewCount(self):
-        return property_value(0)
+        return property_value(len(self._viewNodesOfClass("vtkMRMLPlotViewNode")))
+
+    def tableWidget(self, index):
+        nodes = self._viewNodesOfClass("vtkMRMLTableViewNode")
+        return TableWidget(nodes[index]) if 0 <= index < len(nodes) else None
+
+    def plotWidget(self, index):
+        nodes = self._viewNodesOfClass("vtkMRMLPlotViewNode")
+        return PlotWidget(nodes[index]) if 0 <= index < len(nodes) else None
+
+    @staticmethod
+    def _viewNodesOfClass(className):
+        import slicer
+
+        scene = slicer.mrmlScene
+        return [scene.GetNthNodeByClass(i, className) for i in range(scene.GetNumberOfNodesByClass(className))]
 
     def threeDWidget(self, index):
         widgets = self._threeDWidgets()
@@ -731,6 +749,71 @@ class SliceController:
 
     def mrmlSliceNode(self):
         return self._view.GetSliceNode()
+
+
+class _DataViewWidget:
+    """What qMRMLTableWidget and qMRMLPlotWidget have in common here: the view node, and whether the
+    view is shown in the layout (their visible property)."""
+
+    def __init__(self, viewNode):
+        self._viewNode = viewNode
+
+    @property
+    def visible(self):
+        return property_value(bool(self._viewNode.IsMappedInLayout()))
+
+    def isVisible(self):
+        return bool(self._viewNode.IsMappedInLayout())
+
+    def objectName(self):
+        return f"{type(self).__name__}{self._viewNode.GetLayoutName()}"
+
+
+class TableView:
+    """Subset of qMRMLTableView: its view node, and what is drawn from it."""
+
+    def __init__(self, viewNode):
+        self._viewNode = viewNode
+
+    def mrmlTableViewNode(self):
+        return self._viewNode
+
+    def mrmlTableNode(self):
+        return self._viewNode.GetTableNode()
+
+
+class TableWidget(_DataViewWidget):
+    """Subset of qMRMLTableWidget: tableView(), mrmlTableViewNode()."""
+
+    def tableView(self):
+        return TableView(self._viewNode)
+
+    def mrmlTableViewNode(self):
+        return self._viewNode
+
+
+class PlotView:
+    """Subset of qMRMLPlotView. The page's plot view fits its axes to the series it draws whenever
+    they change, so fitting to the content needs nothing more."""
+
+    def __init__(self, viewNode):
+        self._viewNode = viewNode
+
+    def mrmlPlotViewNode(self):
+        return self._viewNode
+
+    def fitToContent(self):
+        pass
+
+
+class PlotWidget(_DataViewWidget):
+    """Subset of qMRMLPlotWidget: plotView(), mrmlPlotViewNode()."""
+
+    def plotView(self):
+        return PlotView(self._viewNode)
+
+    def mrmlPlotViewNode(self):
+        return self._viewNode
 
 
 class ThreeDWidget:

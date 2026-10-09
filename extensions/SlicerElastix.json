@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Slicer/Slicer/main/Schemas/slicer-extension-catalog-entry-schema-v1.0.1.json#",
+  "build_dependencies": [],
+  "build_subdirectory": "inner-build",
+  "category": "Registration",
+  "scm_revision": "SlicerWeb",
+  "scm_url": "https://github.com/lassoan/SlicerElastix.git",
+  "tier": 3,
+  "slicerweb": {
+    "python_packages": [
+      "itkwasm==1.0b201",
+      "itkwasm-elastix==2.1.0",
+      "itkwasm-elastix-emscripten==2.1.0"
+    ]
+  }
+}

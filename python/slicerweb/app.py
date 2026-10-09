@@ -514,6 +514,17 @@ class SlicerWebApplication:
     def temporaryPath(self):
         return property_value(self._temp)
 
+    # The settings file, which modules keep files next to (SlicerElastix keeps its user presets in
+    # a folder beside it): the application's settings store, under ~/.config, which the page
+    # persists in the browser.
+    @property
+    def slicerUserSettingsFilePath(self):
+        return property_value(self._settings.fileName())
+
+    @property
+    def slicerRevisionUserSettingsFilePath(self):
+        return property_value(self._settings.fileName())
+
     @property
     def cachePath(self):
         path = os.path.join(self._temp, "Cache")

@@ -37,9 +37,10 @@ another layout; all the arguments are listed in [docs/embedding.md](docs/embeddi
   it. Either way the GUI is built from the module's XML, and the work runs in a worker so the views
   keep drawing.
 - **Extensions**: built as wheels and installed from an index at runtime — SlicerVMTK, SlicerHeart,
-  MarkupsToModel, SimVascular, SlicerIGSIO, SlicerIGT and SlicerRT (without Plastimatch and
-  DICOM) are built by this repository, from the description files in `extensions/`; a folder of
-  others, private ones too, can be built instead ([docs/extensions.md](docs/extensions.md)).
+  MarkupsToModel, SimVascular, SlicerIGSIO, SlicerIGT, SlicerRT (without Plastimatch and DICOM)
+  and SlicerElastix (registering with the elastix of ITK-Wasm, in a worker) are built by this
+  repository, from the description files in `extensions/`; a folder of others, private ones too,
+  can be built instead ([docs/extensions.md](docs/extensions.md)).
 - **Python**: the console is the one from the desktop, `slicer.util` works, and packages are
   installed on demand from the Pyodide distribution or PyPI.
 

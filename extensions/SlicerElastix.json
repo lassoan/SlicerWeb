@@ -3,7 +3,7 @@
   "build_dependencies": [],
   "build_subdirectory": "inner-build",
   "category": "Registration",
-  "scm_revision": "SlicerWeb",
+  "scm_revision": "master",
   "scm_url": "https://github.com/lassoan/SlicerElastix.git",
   "tier": 3,
   "slicerweb": {

@@ -557,7 +557,10 @@ void vtkSlicerWebView::OnSceneEvent(vtkObject* vtkNotUsed(caller), unsigned long
     }
     if (self->Internal->PauseRenderCount == 0)
     {
-      self->RenderPendingWhileDisabled = true;
+      // Rendered only if something asked for it meanwhile (ScheduleRender keeps that), as Slicer's
+      // views are (ctkVTKAbstractView): Slicer pauses rendering around much of what it does - twice
+      // for every move of the pointer over a slice view - and rendering every view for each pause
+      // would redraw the whole layout as the pointer moves.
       vtkMRMLScene* scene = self->Internal->Scene;
       self->SetRenderEnabled(!scene || !scene->IsBatchProcessing());
     }

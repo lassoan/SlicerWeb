@@ -30,6 +30,8 @@ SW_DIST/web-workspace, which follows the checkout (dev copies each change while 
                     one for each SlicerWeb checkout, shared by the applications it builds
     SW_PORT         the port of serve (default 4175)
     SW_DEV_PORT     the port of dev (default 5173)
+    SW_HTTPS        1: serve and dev use https, with a certificate made for this computer (what a
+                    headset needs to reach them over Wi-Fi)
 
 A relative path is relative to the folder. An environment variable of the same name overrides a
 line.
@@ -226,6 +228,9 @@ def web_workspace(settings):
                SLICERWEB_EXTENSIONS=os.path.join(dist, "extensions"),
                SLICERWEB_SAMPLE_DATA=os.path.join(dist, "sample-data"),
                SLICERWEB_APP_VERSION=app_version(settings),
+               # https with a certificate kept with the build (web/vite.xr.ts)
+               SLICERWEB_HTTPS="1" if (settings.get("SW_HTTPS") or os.environ.get("SW_HTTPS")) == "1" else "0",
+               SLICERWEB_CERT_DIR=os.path.join(dist, "certificate"),
                VITE_CONFIG_NATIVE_IGNORE_WARNING="true")
     # npm packages: installed again when package-lock.json changes
     with open(os.path.join(workspace, "package-lock.json"), "rb") as handle:

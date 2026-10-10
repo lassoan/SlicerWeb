@@ -23,6 +23,8 @@ export interface AppConfig {
     pythonConsole: boolean;
     /** The Extensions Manager: the application menu, Ctrl+4 */
     extensionsManager: boolean;
+    /** WebXR: Enter VR / Enter AR for a headset, which shows the 3D view in it (docs/webxr.md) */
+    webxr: boolean;
   };
 }
 
@@ -31,6 +33,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     developerMode: "enabledByDefault",
     pythonConsole: true,
     extensionsManager: true,
+    webxr: false,
   },
 };
 
@@ -38,6 +41,7 @@ const ALLOWED: { [K in keyof AppConfig["features"]]: readonly AppConfig["feature
   developerMode: ["enabledByDefault", "disabledByDefault", "unavailable"],
   pythonConsole: [true, false],
   extensionsManager: [true, false],
+  webxr: [false, true],
 };
 
 /** The configuration in effect (the defaults until loadAppConfig has read the application's). */

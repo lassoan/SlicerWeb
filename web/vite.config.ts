@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { execSync } from "node:child_process";
 import { fileURLToPath, URL } from "node:url";
 import { slicerWebAssets } from "./vite.assets";
+import { slicerWebXR } from "./vite.xr";
 
 /** The commit of SlicerWeb the application is built from ("" outside a checkout), with "+" when files
  *  of it differ from that commit. Shown with the build info of the runtime (the application menu).
@@ -24,7 +25,7 @@ function appVersion() {
 // (copied from D:\SlicerWeb-build\dist\wheels), Pyodide from /pyodide.
 export default defineConfig({
   base: "./",
-  plugins: [vue(), tailwindcss(), slicerWebAssets()],
+  plugins: [vue(), tailwindcss(), slicerWebAssets(), slicerWebXR()],
   define: { __SLICERWEB_APP_VERSION__: JSON.stringify(appVersion()) },
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   // No cross-origin isolation headers: Pyodide runs without SharedArrayBuffer, and COEP would block

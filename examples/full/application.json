@@ -5,6 +5,7 @@
   "features": {
     "developerMode": "enabledByDefault",
     "pythonConsole": true,
-    "extensionsManager": true
+    "extensionsManager": true,
+    "webxr": true
   }
 }

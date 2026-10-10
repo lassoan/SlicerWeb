@@ -47,6 +47,8 @@ another layout; all the arguments are listed in [docs/embedding.md](docs/embeddi
 `docs/known-issues.md` says what is not there yet, and why, and
 [docs/embedding.md](docs/embedding.md) describes how to put the application in a website of your
 own and how that website and the application can talk to each other.
+[docs/webxr.md](docs/webxr.md) describes how to build the application with WebXR, which shows
+Slicer's 3D view in a headset (a Meta Quest 3, for example) in VR or AR.
 
 ## How it fits together
 

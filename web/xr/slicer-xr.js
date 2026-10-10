@@ -2505,20 +2505,25 @@ const preload = setInterval(() => {
 }, 500);
 
 // --------------------------------------------------------------------------------- the setting
-// "XR/Enabled" among SlicerWeb's application settings (on unless turned off): whether the page offers
-// VR and AR. SlicerWeb keeps its settings in the browser - those that differ from its defaults - and
+// "XR/Enabled" among SlicerWeb's application settings (its default the application's: XR_DEFAULT):
+// whether the page offers VR and AR. SlicerWeb keeps its settings in the browser - those that differ from its defaults - and
 // keeps one it does not know of too; the checkbox for it is put in its Application settings dialog,
 // at the end of the General section, made as the dialog's own checkboxes are (SwCheckBox).
 const XR_SETTING = "XR/Enabled";
 const SETTINGS_STORAGE = "slicerweb.settings"; // SlicerWeb's (web/src/core/settings.ts SETTINGS_KEY)
 
+// Whether the setting is on before a user changes it: as the application's application.json says
+// (feature webxr: enabledByDefault or disabledByDefault; main.ts puts it on the script's tag)
+const XR_DEFAULT = document.querySelector('script[src$="xr/slicer-xr.js"]')?.dataset.webxr !== "disabledByDefault";
+
 function xrEnabled() {
   const settings = window.slicerWeb?.store?.settings;
   if (settings && XR_SETTING in settings) return settings[XR_SETTING] !== false;
   try {
-    return JSON.parse(localStorage.getItem(SETTINGS_STORAGE) ?? "{}")?.[XR_SETTING] !== false;
+    const kept = JSON.parse(localStorage.getItem(SETTINGS_STORAGE) ?? "{}");
+    return kept && XR_SETTING in kept ? kept[XR_SETTING] !== false : XR_DEFAULT;
   } catch {
-    return true;
+    return XR_DEFAULT;
   }
 }
 
@@ -2526,10 +2531,9 @@ function setXREnabled(enabled) {
   const store = window.slicerWeb?.store;
   if (store) store.settings = { ...store.settings, [XR_SETTING]: enabled };
   try {
-    // As SlicerWeb's saveSettings keeps them: only what differs from the default (on)
+    // Kept as a user set it, whichever the application's default (which may change)
     const kept = JSON.parse(localStorage.getItem(SETTINGS_STORAGE) ?? "{}") ?? {};
-    if (enabled) delete kept[XR_SETTING];
-    else kept[XR_SETTING] = false;
+    kept[XR_SETTING] = !!enabled;
     localStorage.setItem(SETTINGS_STORAGE, JSON.stringify(kept));
   } catch {
     // a private window: the setting holds for this page

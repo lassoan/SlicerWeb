@@ -1,7 +1,9 @@
-// The feature webxr of application.json decides whether the page offers WebXR: with it, the page
-// loads xr/slicer-xr.js and shows Enter VR; without it (or with it false), the page asks for no XR
-// file and shows no XR button. The application's configuration (wheels/application.json) is
-// replaced here, so that one server shows all three.
+// The feature webxr of application.json decides whether the page offers WebXR, and whether its
+// setting (Application settings > General > Virtual and augmented reality, XR/Enabled) is on at
+// first: enabledByDefault - the XR script loaded and Enter VR shown; disabledByDefault - the script
+// loaded but no button until the setting is turned on (and a user's choice kept across a reload);
+// unavailable, or no feature - no XR file asked for, no button. The application's configuration
+// (wheels/application.json) is replaced here, so that one server shows them all.
 //
 // Usage: node tests/xr/webxr-feature.mjs [url]  (python slicerweb.py dev)
 import { fileURLToPath } from "node:url";
@@ -15,9 +17,10 @@ const check = (ok, what) => {
   if (!ok) failed = true;
 };
 
-/** The page with this configuration: whether it asked for XR files, and shows the XR buttons. */
-async function open(features) {
-  const page = await (await browser.newContext({ viewport: { width: 1200, height: 800 } })).newPage();
+/** A page with this configuration (in a browser profile of its own, or the one given). */
+async function open(features, context = null) {
+  context ??= await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const page = await context.newPage();
   await page.addInitScript({ path: fileURLToPath(new URL("./xr-mock.js", import.meta.url)) });
   page.on("pageerror", (e) => console.log(`[pageerror] ${e}`));
   await page.route("**/wheels/application.json", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify({ features }) }));
@@ -28,16 +31,36 @@ async function open(features) {
   await page.goto(url);
   await page.waitForFunction(() => window.slicerWeb?.store?.status === "ready", null, { timeout: 300000 });
   await page.waitForTimeout(3000);
-  const buttons = await page.evaluate(() => !!document.querySelector("#slicer-xr button.vr") && !!window.slicerXR);
-  await page.context().close();
-  return { asked, buttons };
+  const shown = () => page.evaluate(() => {
+    const root = document.querySelector("#slicer-xr");
+    return !!root && !root.hidden && !!root.querySelector("button.vr");
+  });
+  return { page, context, asked, shown };
 }
 
-let r = await open({ webxr: true });
-check(r.asked.includes("slicer-xr.js") && r.buttons, `with "webxr": true the page loads the XR script and shows Enter VR (asked for ${r.asked.join(", ")})`);
-r = await open({});
-check(r.asked.length === 0 && !r.buttons, "without the feature it asks for no XR file and shows no XR button");
-r = await open({ webxr: false });
-check(r.asked.length === 0 && !r.buttons, 'with "webxr": false the same');
+let r = await open({ webxr: "enabledByDefault" });
+check(r.asked.includes("slicer-xr.js") && await r.shown(), `enabledByDefault: the page loads the XR script and shows Enter VR (asked for ${r.asked.join(", ")})`);
+await r.context.close();
+
+r = await open({ webxr: "disabledByDefault" });
+check(r.asked.includes("slicer-xr.js") && !(await r.shown()), "disabledByDefault: the page loads the XR script, but shows no XR button");
+// The setting turned on (as its checkbox in Application settings does): the buttons, and kept
+await r.page.evaluate(() => {
+  const store = window.slicerWeb.store;
+  store.settings = { ...store.settings, "XR/Enabled": true };
+  localStorage.setItem("slicerweb.settings", JSON.stringify({ ...JSON.parse(localStorage.getItem("slicerweb.settings") ?? "{}"), "XR/Enabled": true }));
+});
+await r.page.waitForTimeout(1500);
+check(await r.shown(), "the setting turned on, Enter VR is shown");
+await r.page.close();
+const again = await open({ webxr: "disabledByDefault" }, r.context);
+check(await again.shown(), "and after a reload too: a user's choice stays, whatever the default");
+await r.context.close();
+
+for (const features of [{ webxr: "unavailable" }, {}]) {
+  r = await open(features);
+  check(r.asked.length === 0 && !(await r.shown()), `${JSON.stringify(features)}: no XR file asked for, no XR button`);
+  await r.context.close();
+}
 await browser.close();
 process.exit(failed ? 1 : 0);

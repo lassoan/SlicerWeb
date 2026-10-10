@@ -1,7 +1,7 @@
 # WebXR: Slicer's 3D view in a headset
 
-A SlicerWeb application with the feature `webxr` offers **Enter VR** and **Enter AR** buttons (bottom right
-of the page) in a browser that supports WebXR, such as the browser of a Meta Quest 3. In the
+A SlicerWeb application that offers the feature `webxr` has **Enter VR** and **Enter AR** buttons
+(bottom right of the page) in a browser that supports WebXR, such as the browser of a Meta Quest 3. In the
 headset you see the first 3D view of the layout, drawn by Slicer's own VTK in WebAssembly: the same
 renderers, displayable managers, volume rendering, models, segmentations and markups as on the
 page. Nothing is exported to another renderer. A panel floating in the room, and the controllers,
@@ -13,21 +13,28 @@ The code is `web/xr/slicer-xr.js` (the page side: the session, the panel, the co
 
 ## Turning it on
 
-WebXR is a feature of the application, off unless its `application.json` turns it on
+WebXR is a feature of the application, unavailable unless its `application.json` offers it
 ([extensions.md](extensions.md)):
 
 ```json
 {
   "features": {
-    "webxr": true
+    "webxr": "disabledByDefault"
   }
 }
 ```
 
-The page then loads the XR script at startup; without the feature, it doesn't (the build carries
-the two files unused). Like the other features, it is read from `wheels/application.json` when the
-page starts, so everyone who builds or deploys the application gets it, and changing it needs no
-build. `examples/full` has it on.
+- `disabledByDefault`: the page loads the XR script, and Application settings > General has
+  **Virtual and augmented reality (WebXR)**, off until a user turns it on; only then are the Enter
+  VR and Enter AR buttons shown.
+- `enabledByDefault`: the same, with the setting on until a user turns it off.
+- `unavailable` (the default): the page doesn't load the XR script (the build carries the two files
+  unused).
+
+Like the other features, it is read from `wheels/application.json` when the page starts, so
+everyone who builds or deploys the application gets it, and changing it needs no build. A user's
+own choice of the setting is kept in the browser and stays, whatever the application's default.
+`examples/full` has `enabledByDefault`.
 
 ## Serving it to a headset
 
@@ -50,9 +57,9 @@ Load data on the page as usual (Samples, Files, or `?sample=MRHead` in the addre
 entering, with the preset SlicerWeb chooses for it. Sample data and downloads go through
 SlicerWeb's own `/sample-data/` and `/download?url=` handling, as on the page.
 
-To hide the buttons, turn off **Virtual and augmented reality (WebXR)** in Application settings >
-General (on by default; stored as `XR/Enabled` with SlicerWeb's other settings in the browser).
-While it is off, the page doesn't prepare the 3D view for XR either.
+The buttons are shown while **Virtual and augmented reality (WebXR)** is on in Application settings >
+General (stored as `XR/Enabled` with SlicerWeb's other settings in the browser; its default is the
+application's). While it is off, the page doesn't prepare the 3D view for XR either.
 
 ## In the headset
 

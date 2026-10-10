@@ -3,10 +3,12 @@
 import { appConfig, loadAppConfig } from "./core/appConfig";
 
 await loadAppConfig();
-if (appConfig.features.webxr) {
-  // The XR script (web/xr/, copied into the build as it is: it finds xr/slicer_xr.py beside itself)
+if (appConfig.features.webxr !== "unavailable") {
+  // The XR script (web/xr/, copied into the build as it is: it finds xr/slicer_xr.py beside itself),
+  // told whether its setting is on before a user changes it
   const script = document.createElement("script");
   script.type = "module";
+  script.dataset.webxr = appConfig.features.webxr;
   script.src = new URL("xr/slicer-xr.js", document.baseURI).href;
   document.head.appendChild(script);
 }

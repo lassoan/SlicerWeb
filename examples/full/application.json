@@ -6,6 +6,6 @@
     "developerMode": "enabledByDefault",
     "pythonConsole": true,
     "extensionsManager": true,
-    "webxr": true
+    "webxr": "enabledByDefault"
   }
 }

@@ -168,7 +168,7 @@ themselves.
     "developerMode": "enabledByDefault",
     "pythonConsole": true,
     "extensionsManager": true,
-    "webxr": true
+    "webxr": "disabledByDefault"
   }
 }
 ```
@@ -184,8 +184,10 @@ themselves.
     `disabledByDefault` - off, and they can turn it on; `unavailable` - off, and not offered;
   - `pythonConsole`: `true` or `false` - the Python console in the application menu and Ctrl+3;
   - `extensionsManager`: `true` or `false` - the Extensions Manager in the menu and Ctrl+4;
-  - `webxr`: `false` or `true` - Enter VR and Enter AR, which show the 3D view in a headset
-    ([webxr.md](webxr.md)).
+  - `webxr`: `unavailable` - no WebXR; `disabledByDefault` - Enter VR and Enter AR, which show the
+    3D view in a headset ([webxr.md](webxr.md)), once a user turns on the setting "Virtual and
+    augmented reality (WebXR)" in Application settings; `enabledByDefault` - offered, and the
+    setting on until a user turns it off.
 
 The build puts the descriptions together in `<dist>/extension-descriptions` and stops at a name that
 `extensions/` here has no description of, or at a feature or value that `application.json` cannot

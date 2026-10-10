@@ -16,6 +16,14 @@
  */
 export type DeveloperModeAvailability = "enabledByDefault" | "disabledByDefault" | "unavailable";
 
+/**
+ * WebXR (the setting XR/Enabled, Application settings > General):
+ * - enabledByDefault: offered, and the setting is on until a user turns it off
+ * - disabledByDefault: offered, but the setting is off until a user turns it on
+ * - unavailable: not offered (the page does not load the XR script)
+ */
+export type WebXRAvailability = "unavailable" | "disabledByDefault" | "enabledByDefault";
+
 export interface AppConfig {
   features: {
     developerMode: DeveloperModeAvailability;
@@ -23,8 +31,9 @@ export interface AppConfig {
     pythonConsole: boolean;
     /** The Extensions Manager: the application menu, Ctrl+4 */
     extensionsManager: boolean;
-    /** WebXR: Enter VR / Enter AR for a headset, which shows the 3D view in it (docs/webxr.md) */
-    webxr: boolean;
+    /** WebXR: Enter VR / Enter AR for a headset, which shows the 3D view in it (docs/webxr.md) - the
+     *  setting "Virtual and augmented reality (WebXR)" on or off at first, or no WebXR at all */
+    webxr: WebXRAvailability;
   };
 }
 
@@ -33,7 +42,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
     developerMode: "enabledByDefault",
     pythonConsole: true,
     extensionsManager: true,
-    webxr: false,
+    webxr: "unavailable",
   },
 };
 
@@ -41,7 +50,7 @@ const ALLOWED: { [K in keyof AppConfig["features"]]: readonly AppConfig["feature
   developerMode: ["enabledByDefault", "disabledByDefault", "unavailable"],
   pythonConsole: [true, false],
   extensionsManager: [true, false],
-  webxr: [false, true],
+  webxr: ["unavailable", "disabledByDefault", "enabledByDefault"],
 };
 
 /** The configuration in effect (the defaults until loadAppConfig has read the application's). */

@@ -83,7 +83,7 @@ FEATURES = {
     "developerMode": ("enabledByDefault", "disabledByDefault", "unavailable"),
     "pythonConsole": (True, False),
     "extensionsManager": (True, False),
-    "webxr": (False, True),
+    "webxr": ("unavailable", "disabledByDefault", "enabledByDefault"),
 }
 
 

@@ -47,7 +47,8 @@ const statuses = [];
 for (let i = 0; i < 900; i++) {
   const text = await panel.innerText();
   if (/Test passed|Error|error:|Failed|failed/.test(text)) break;
-  const status = await page.locator("[data-name=testStatus]").first().innerText().catch(() => "");
+  // A test that says nothing (no slicer.util.delayDisplay) has no status line: not waited for
+  const status = await page.locator("[data-name=testStatus]").first().innerText({ timeout: 500 }).catch(() => "");
   if (status && statuses[statuses.length - 1] !== status) statuses.push(status);
   await page.waitForTimeout(1000);
 }

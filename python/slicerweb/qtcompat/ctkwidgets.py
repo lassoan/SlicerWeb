@@ -1,7 +1,7 @@
 """CTK widgets used by Slicer module GUIs."""
 
 from . import dom
-from .core import QProp, Signal, count_property
+from .core import CheckedProp, QProp, Signal, count_property
 from .types import QColor, QMessageBox
 from .widgets import (
     QAbstractButton,
@@ -408,7 +408,7 @@ class ctkCheckablePushButton(QPushButton):
     _events = dict(QPushButton._events, checkBoxToggled="_onCheckBoxToggled")
 
     # the check box shows the checked state (the button itself is not highlighted)
-    checked = QProp(False, el="checkBoxChecked", convert=_bool)
+    checked = CheckedProp(False, el="checkBoxChecked", convert=_bool)
 
     def __init__(self, text="", parent=None, *args):
         super().__init__(text, parent, *args)
@@ -559,6 +559,9 @@ class ctkCoordinatesWidget(QWidget):
 
 class ctkVTKSliceView(QWidget):
     pass
+
+
+from .charts import ctkVTKChartView  # noqa: E402  (drawn as SVG; it needs QWidget, defined above)
 
 
 def _message_line(value):

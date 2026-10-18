@@ -338,6 +338,16 @@ class SlicerWebApplication:
     def commandOptions(self):
         return _CommandOptions()
 
+    def startupEnvironment(self):
+        """The environment Slicer was started with, which a process it starts is given: here the
+        environment of the Python the page runs (a page starts no processes of its own)."""
+        from .qtcompat.types import QProcessEnvironment
+
+        return QProcessEnvironment.systemEnvironment()
+
+    def environment(self):
+        return self.startupEnvironment()
+
     def processEvents(self, *args):
         """Let the page draw a frame and answer, where the code may be suspended (see yielding.py);
         elsewhere nothing to do: the browser processes events when Python returns control."""

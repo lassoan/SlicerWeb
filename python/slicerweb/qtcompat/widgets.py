@@ -7,7 +7,7 @@ element. User interaction on the element updates the Python state and emits the 
 import logging
 
 from . import dom
-from .core import QObject, QProp, Signal, count_property, text_property
+from .core import CheckedProp, QObject, QProp, Signal, count_property, text_property
 from .types import QAbstractItemView, QTableWidgetItem
 
 logger = logging.getLogger("slicerweb.qt")
@@ -275,6 +275,7 @@ class QWidget(QObject):
             style = self._el.style
             style.fontStyle = "italic" if self._font.italic() else ""
             style.fontWeight = "600" if self._font.bold() else ""
+            style.fontFamily = self._font.family() or ""
             if getattr(self._font, "_pointSizeSet", False):
                 style.fontSize = f"{self._font.pointSize()}pt"
         except Exception:
@@ -315,16 +316,43 @@ class QWidget(QObject):
         p = self.parent()
         return p if isinstance(p, QWidget) else None
 
-    def width(self):
-        return 0
+    # The size the page gives the widget, 0 while it is not shown. Qt properties: an attribute in
+    # PythonQt (button.height), also called (button.height())
+    def _rect(self):
+        try:
+            return self._el.getBoundingClientRect()
+        except Exception:
+            return None
 
-    def height(self):
-        return 0
+    def _pageSize(self):
+        rect = self._rect()
+        if rect is None:
+            return 0, 0
+        return int(round(float(rect.width))), int(round(float(rect.height)))
+
+    width = count_property(lambda self: self._pageSize()[0])
+    height = count_property(lambda self: self._pageSize()[1])
 
     def size(self):
         from .types import QSize
 
-        return QSize(0, 0)
+        return QSize(*self._pageSize())
+
+    def mapTo(self, widget, point):
+        """A point of this widget in the coordinates of *widget* (one it is shown in)."""
+        from .types import QPoint
+
+        mine, theirs = self._rect(), widget._rect() if isinstance(widget, QWidget) else None
+        if mine is None or theirs is None:
+            return QPoint(point.x(), point.y())
+        return QPoint(int(round(point.x() + float(mine.left) - float(theirs.left))),
+                      int(round(point.y() + float(mine.top) - float(theirs.top))))
+
+    def mapFrom(self, widget, point):
+        from .types import QPoint
+
+        there = widget.mapTo(self, QPoint(0, 0)) if isinstance(widget, QWidget) else QPoint(0, 0)
+        return QPoint(point.x() + there.x(), point.y() + there.y())
 
     def close(self):
         self.hide()
@@ -677,7 +705,7 @@ class QAbstractButton(_ElementWidget):
 
     text = QProp("", el="text", convert=str)
     checkable = QProp(False, el="checkable", convert=_bool)
-    checked = QProp(False, el="checked", convert=_bool)
+    checked = CheckedProp(False, el="checked", convert=_bool)
 
     def __init__(self, text="", parent=None, *args):
         if isinstance(text, QWidget):
@@ -722,7 +750,7 @@ class QAbstractButton(_ElementWidget):
 
     def setChecked(self, v):
         changed = bool(v) != self.checked
-        self.checked = v
+        type(self).checked.store(self, v)
         if changed:
             self.toggled.emit(self.checked)
 
@@ -879,7 +907,7 @@ class QCheckBox(_ElementWidget):
     clicked = Signal("clicked(bool)")
 
     text = QProp("", el="text", convert=str)
-    checked = QProp(False, el="checked", convert=_bool)
+    checked = CheckedProp(False, el="checked", convert=_bool)
 
     def __init__(self, text="", parent=None):
         if isinstance(text, QWidget):
@@ -899,7 +927,7 @@ class QCheckBox(_ElementWidget):
 
     def setChecked(self, v):
         changed = bool(v) != self.checked
-        self.checked = v
+        type(self).checked.store(self, v)
         if changed:
             self.toggled.emit(self.checked)
             self.stateChanged.emit(2 if self.checked else 0)
@@ -1644,27 +1672,157 @@ class QSplitter(QWidget):
 
 
 class QDialog(QWidget):
+    """A dialog: a window over the page, with its title above what its layout holds.
+
+    show() and open() put it over the page and return; accept(), reject() and done() close it, and
+    result() is how. exec() puts it over the page and waits for it to be closed, where the code that
+    runs can be suspended until the user has answered (a self test, the Python console: see
+    slicerweb.yielding). Elsewhere - code run from a click in the page, which the browser waits for -
+    nothing can wait for the user, so exec() says so in the log and answers Rejected at once, as if
+    the dialog had been cancelled.
+    """
+
     accepted = Signal("accepted()")
     rejected = Signal("rejected()")
     finished = Signal("finished(int)")
     Accepted, Rejected = 1, 0
 
+    _classes = "sw-qwidget sw-dialog flex flex-col gap-1.5 min-w-0"
+    # (inline: the page's stylesheet has only the classes its own sources use)
+    _backdropStyle = ("position:fixed; inset:0; z-index:1000; display:flex; align-items:center; "
+                      "justify-content:center; background:rgba(0,0,0,0.35)")
+    _windowStyle = ("display:flex; flex-direction:column; gap:8px; padding:12px; max-width:calc(100vw - 32px); "
+                    "max-height:calc(100vh - 32px); overflow:auto; border-radius:8px; "
+                    "background:var(--color-card, #fff); color:inherit; "
+                    "border:1px solid var(--color-border, #ccc); box-shadow:0 10px 30px rgba(0,0,0,0.3)")
+
+    def __init__(self, *args):
+        parent = next((a for a in args if isinstance(a, QWidget)), None)
+        super().__init__(parent)
+        self._result = self.Rejected
+        self._modal = False
+        self._backdrop = None
+        self._titleElement = None
+        self._visible = False
+
+    def _contentElement(self):
+        return self._el
+
+    def _open(self):
+        document = getattr(dom, "_document", None)
+        if self._backdrop is not None or document is None or document.body is None:
+            self._visible = True
+            return
+        backdrop = dom.create("div", "sw-dialog-backdrop")
+        backdrop.setAttribute("style", self._backdropStyle)
+        window = dom.create("div", "sw-dialog-window")
+        window.setAttribute("style", self._windowStyle)
+        window.setAttribute("role", "dialog")
+        title = dom.create("div", "sw-dialog-title")
+        title.setAttribute("style", "font-weight:600")
+        title.textContent = self._windowTitle
+        title.style.display = "" if self._windowTitle else "none"
+        window.appendChild(title)
+        window.appendChild(self._el)
+        backdrop.appendChild(window)
+        # Escape closes it wherever the focus is, as it closes a dialog that has the focus in Qt
+        self._keyProxy = dom.proxy(self._onKey)
+        document.addEventListener("keydown", self._keyProxy)
+        document.body.appendChild(backdrop)
+        self._backdrop, self._titleElement = backdrop, title
+        self._visible = True
+        try:
+            self._el.style.display = ""
+        except Exception:
+            pass
+
+    def _closeWindow(self):
+        self._visible = False
+        backdrop, self._backdrop, self._titleElement = self._backdrop, None, None
+        if backdrop is None:
+            return
+        try:
+            dom._document.removeEventListener("keydown", self._keyProxy)
+            self._keyProxy.destroy()
+        except Exception:
+            pass
+        try:
+            self._el.remove()
+            backdrop.remove()
+        except Exception:
+            pass
+
+    def _onKey(self, event):
+        if str(event.key) == "Escape":
+            self.reject()
+
+    def setVisible(self, visible):
+        if visible:
+            self._open()
+        else:
+            self._closeWindow()
+
+    def isVisible(self):
+        return self._visible
+
+    def setWindowTitle(self, title):
+        super().setWindowTitle(title)
+        if self._titleElement is not None:
+            self._titleElement.textContent = self._windowTitle
+            self._titleElement.style.display = "" if self._windowTitle else "none"
+
+    def open(self):
+        self._open()
+
     def exec_(self):
-        logger.warning("Modal dialogs are not supported in the browser; returning Rejected")
-        return self.Rejected
+        from .. import yielding
+
+        self._result = self.Rejected
+        if not yielding.can_yield():
+            logger.warning("%s: a dialog cannot wait for an answer in code run from the page's events; "
+                           "taken as cancelled", self._windowTitle or type(self).__name__)
+            return self.Rejected
+        self._open()
+        while self._visible:
+            if not yielding.yield_to_browser(milliseconds=50, force=True):
+                self._closeWindow()
+                break
+        return self._result
 
     exec = exec_
 
+    def done(self, result):
+        self._closeWindow()
+        self._result = int(result)
+        self.finished.emit(self._result)
+        if self._result == self.Accepted:
+            self.accepted.emit()
+        else:
+            self.rejected.emit()
+
     def accept(self):
-        self.accepted.emit()
-        self.finished.emit(1)
+        self.done(self.Accepted)
 
     def reject(self):
-        self.rejected.emit()
-        self.finished.emit(0)
+        self.done(self.Rejected)
 
-    def setModal(self, v):
-        pass
+    def result(self):
+        return self._result
+
+    def setResult(self, result):
+        self._result = int(result)
+
+    def setModal(self, modal):
+        self._modal = bool(modal)
+
+    def isModal(self):
+        return self._modal
+
+    modal = property(isModal, setModal)
+
+    def _destroy(self):
+        self._closeWindow()
+        super()._destroy()
 
 
 class QMainWindow(QWidget):

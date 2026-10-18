@@ -6,7 +6,7 @@ import os
 import time
 
 from . import dom
-from .core import QObject, QProp, Signal
+from .core import CheckedProp, QObject, QProp, Signal
 
 logger = logging.getLogger("slicerweb.qt")
 
@@ -556,6 +556,29 @@ class QFont:
     __hash__ = None
 
 
+class QFontDatabase:
+    """The fonts of the system, as far as the page has them: the font a kind of text is drawn in
+    (systemFont), a CSS family of the browser's."""
+
+    GeneralFont, FixedFont, TitleFont, SmallestReadableFont = 0, 1, 2, 3
+
+    @staticmethod
+    def systemFont(kind):
+        font = QFont("monospace" if kind == QFontDatabase.FixedFont else "")
+        if kind == QFontDatabase.TitleFont:
+            font.setBold(True)
+        elif kind == QFontDatabase.SmallestReadableFont:
+            font.setPointSizeF(7.5)
+        return font
+
+    @staticmethod
+    def families(*args):
+        return ["sans-serif", "serif", "monospace"]
+
+    def __init__(self, *args):
+        pass
+
+
 class QBrush:
     """A brush as far as the page draws one: its color, or none (Qt.NoBrush), which leaves the
     default (QTableWidgetItem.setForeground / setBackground)."""
@@ -600,7 +623,7 @@ class QAction(QObject):
 
     text = QProp("", convert=str)
     checkable = QProp(False)
-    checked = QProp(False)
+    checked = CheckedProp(False)
     enabled = QProp(True)
     visible = QProp(True)
     toolTip = QProp("")
@@ -614,8 +637,7 @@ class QAction(QObject):
 
     def trigger(self):
         if self.checkable:
-            self.checked = not self.checked
-            self.toggled.emit(self.checked)
+            self.setChecked(not self.checked)
         self.triggered.emit(self.checked)
 
     def setText(self, t):
@@ -625,7 +647,10 @@ class QAction(QObject):
         self.checkable = v
 
     def setChecked(self, v):
-        self.checked = v
+        changed = bool(v) != bool(self.checked)
+        QAction.checked.store(self, bool(v))
+        if changed:
+            self.toggled.emit(bool(self.checked))
 
     def isChecked(self):
         return self.checked
@@ -1429,6 +1454,49 @@ class QStandardPaths:
     @staticmethod
     def writableLocation(location):
         return {7: "/tmp", 8: os.path.expanduser("~")}.get(location, os.path.expanduser("~"))
+
+
+class QProcessEnvironment:
+    """Environment variables, as a process is started with them (QProcess.setProcessEnvironment,
+    slicer.app.startupEnvironment()); here those of the Python the page runs."""
+
+    def __init__(self, other=None):
+        self._variables = dict(other._variables) if isinstance(other, QProcessEnvironment) else {}
+
+    @staticmethod
+    def systemEnvironment():
+        import os
+
+        environment = QProcessEnvironment()
+        environment._variables = dict(os.environ)
+        return environment
+
+    def keys(self):
+        return list(self._variables)
+
+    def value(self, name, default=""):
+        return self._variables.get(str(name), default)
+
+    def contains(self, name):
+        return str(name) in self._variables
+
+    def insert(self, name, value=None):
+        if isinstance(name, QProcessEnvironment):
+            self._variables.update(name._variables)
+        else:
+            self._variables[str(name)] = str(value)
+
+    def remove(self, name):
+        self._variables.pop(str(name), None)
+
+    def clear(self):
+        self._variables.clear()
+
+    def isEmpty(self):
+        return not self._variables
+
+    def toStringList(self):
+        return [f"{name}={value}" for name, value in self._variables.items()]
 
 
 class QProcess(QObject):

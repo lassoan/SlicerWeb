@@ -277,6 +277,19 @@ class QProp:
             getattr(obj, self.signal).emit(value)
 
 
+class CheckedProp(QProp):
+    """The checked property of a button or an action. Assigned (box.checked = True), it is set as
+    PythonQt sets a Qt property, through the object's setChecked(), which emits toggled when the
+    state changes; setChecked() stores the value with store()."""
+
+    def __set__(self, obj, value):
+        obj.setChecked(value)
+
+    def store(self, obj, value):
+        """Store the value (and show it on the element), without signals."""
+        QProp.__set__(self, obj, value)
+
+
 class QObject:
     destroyed = Signal("destroyed()")
     objectNameChanged = Signal("objectNameChanged(QString)")

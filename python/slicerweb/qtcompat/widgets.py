@@ -258,6 +258,28 @@ class QWidget(QObject):
 
     toolTip = property(lambda self: self._toolTip, lambda self, v: self.setToolTip(v))
 
+    def _getFont(self):
+        """The widget's font: a copy, which setFont() gives back (bold, italic, size are drawn).
+        A Qt property: an attribute in PythonQt (label.font), also callable (label.font())."""
+        from .types import QFont
+
+        return QFont(getattr(self, "_font", None) or QFont())
+
+    font = property(_getFont, lambda self, value: self.setFont(value))
+
+    def setFont(self, font):
+        from .types import QFont
+
+        self._font = QFont(font)
+        try:
+            style = self._el.style
+            style.fontStyle = "italic" if self._font.italic() else ""
+            style.fontWeight = "600" if self._font.bold() else ""
+            if getattr(self._font, "_pointSizeSet", False):
+                style.fontSize = f"{self._font.pointSize()}pt"
+        except Exception:
+            pass
+
     def setWindowTitle(self, title):
         self._windowTitle = str(title)
         self.windowTitleChanged.emit(self._windowTitle)
@@ -279,7 +301,7 @@ class QWidget(QObject):
     setFixedWidth = setFixedHeight = setFixedSize = setMinimumSize = setMaximumSize = _noop
     setSizePolicy = resize = move = setGeometry = setContentsMargins = setFocusPolicy = _noop
     setFocus = raise_ = activateWindow = update = repaint = adjustSize = setAttribute = _noop
-    setContextMenuPolicy = setMouseTracking = setAutoFillBackground = setFont = setPalette = _noop
+    setContextMenuPolicy = setMouseTracking = setAutoFillBackground = setPalette = _noop
 
     def setMRMLScene(self, scene):
         self._mrmlScene = scene
@@ -2027,6 +2049,93 @@ class _TableIndex:
         return hash((self._row, self._column))
 
 
+class _TableViewport(QObject):
+    """view.viewport() of a table: the area its cells are drawn in, whose children are the editors
+    open in it (Qt's QAbstractItemView keeps a cell's editor there)."""
+
+    def __init__(self, table):
+        super().__init__(None)
+        self._table = table
+
+    @property
+    def rect(self):
+        from .types import QRect
+
+        try:
+            return QRect(0, 0, int(self._table._el.clientWidth), int(self._table._el.clientHeight))
+        except Exception:
+            return QRect(0, 0, 0, 0)
+
+    def update(self, *args):
+        pass
+
+    def setCursor(self, cursor):
+        pass
+
+
+class _CellEditor(QLineEdit):
+    """The editor of a cell being edited: the cell's own text box, as the QLineEdit Qt puts there.
+
+    Escape closes it and puts the text back, Enter closes it and keeps what was typed - as a key
+    pressed in the page or as a key event sent to it (QApplication.sendEvent).
+    """
+
+    def __init__(self, table, key, field):
+        QObject.__init__(self, None)   # not a widget of its own: the cell's text box is its element
+        self._table, self._key, self._field = table, key, field
+        self._el = field
+        self._listeners = []
+        self._layout = None
+        self._visible = self._enabled = True
+        self._toolTip = self._windowTitle = self._styleSheet = ""
+        self.setParent(table._viewportObject)
+
+    @property
+    def text(self):
+        from .core import property_value
+
+        return property_value(str(self._field.value))
+
+    @text.setter
+    def text(self, value):
+        self._field.value = str(value)
+
+    def setText(self, value):
+        self._field.value = str(value)
+
+    def selectAll(self):
+        try:
+            self._field.select()
+        except Exception:
+            pass
+
+    def setFocus(self, *args):
+        try:
+            self._field.focus()
+        except Exception:
+            pass
+
+    def event(self, event):
+        from .types import QEvent
+
+        if event.type() == QEvent.KeyPress:
+            self.keyPressEvent(event)
+            return True
+        return False
+
+    def keyPressEvent(self, event):
+        from .types import Qt
+
+        if event.key() == Qt.Key_Escape:
+            self._table._closeEditor(revert=True)
+        elif event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self._table._closeEditor(revert=False)
+
+    def _destroy(self):
+        self.setParent(None)
+        self.disconnect()
+
+
 class QTableWidget(QWidget, QAbstractItemView):
     """A table of items (QTableWidgetItem), each cell with its own text, check box and tool tip.
 
@@ -2347,12 +2456,62 @@ class QTableWidget(QWidget, QAbstractItemView):
         return (item is not None and self._editTriggers != QAbstractItemView.NoEditTriggers
                 and bool(item.flags() & Qt.ItemIsEditable) and bool(item.flags() & Qt.ItemIsEnabled))
 
-    def editItem(self, item):
-        cell = self._cells.get(self._positionOf(item))
+    # --- editing in place: the editor open in a cell, and the view's state while it is
+    @property
+    def _viewportObject(self):
+        viewport = self.__dict__.get("_viewportInstance")
+        if viewport is None:
+            viewport = self.__dict__["_viewportInstance"] = _TableViewport(self)
+        return viewport
+
+    def viewport(self):
+        return self._viewportObject
+
+    def state(self):
+        return QAbstractItemView.EditingState if getattr(self, "_editor", None) is not None else QAbstractItemView.NoState
+
+    def _cellField(self, key):
+        cell = self._cells.get(key)
         try:
-            field = cell.querySelector("input[data-cell-edit]") if cell is not None else None
-            if field is not None:
-                field.focus()
+            return cell.querySelector("input[data-cell-edit]") if cell is not None else None
+        except AttributeError:
+            return None
+
+    def editItem(self, item):
+        """Open the item's cell for typing, as a double click on it does (if the item is editable)."""
+        key = self._positionOf(item)
+        field = self._cellField(key)
+        if field is None:
+            return
+        self._openEditor(key, field)
+        try:
+            field.focus()
+        except AttributeError:
+            pass
+
+    def _openEditor(self, key, field):
+        editor = getattr(self, "_editor", None)
+        if editor is not None and editor._key == key:
+            return
+        if editor is not None:
+            self._closeEditor(revert=False)
+        self._editor = _CellEditor(self, key, field)
+
+    def _closeEditor(self, revert=False):
+        """Close the open editor: put the item's text back (Escape), or keep what was typed."""
+        editor = getattr(self, "_editor", None)
+        if editor is None:
+            return
+        self._editor = None
+        field = editor._field
+        if revert:
+            item = self._items.get(editor._key)
+            field.value = item.text() if item is not None else ""
+        else:
+            self._onEdited(editor._key, field)
+        editor._destroy()
+        try:
+            field.blur()
         except AttributeError:
             pass
 
@@ -2363,11 +2522,15 @@ class QTableWidget(QWidget, QAbstractItemView):
 
     def _onEditKey(self, key, field, event):
         if event.key == "Escape":
-            item = self._items.get(key)
-            field.value = item.text() if item is not None else ""
-            field.blur()
+            self._openEditor(key, field)
+            self._closeEditor(revert=True)
         elif event.key == "Enter":
             field.blur()   # leaving the field keeps what was typed (its change event)
+
+    def _onFieldLeft(self, key):
+        editor = getattr(self, "_editor", None)
+        if editor is not None and editor._key == key:
+            self._closeEditor(revert=False)
 
     def _onCheckClicked(self, key):
         from .types import Qt
@@ -2442,6 +2605,18 @@ class QTableWidget(QWidget, QAbstractItemView):
         if item is None:
             return
         line = dom.create("div", "flex min-w-0 items-center gap-1")
+        # The item's font and colors (QTableWidgetItem.setFont / setForeground / setBackground)
+        font = item._font
+        if font.italic():
+            line.style.fontStyle = "italic"
+        if font.bold():
+            line.style.fontWeight = "600"
+        color = item._foreground._css()
+        if color:
+            line.style.color = color
+        background = item._background._css()
+        if background:
+            td.style.backgroundColor = background
         if item._checkState is not None:
             box = dom.create("input", "shrink-0")
             box.type = "checkbox"
@@ -2455,9 +2630,20 @@ class QTableWidget(QWidget, QAbstractItemView):
                                         "text-[12px] text-foreground outline-none hover:border-input focus:border-primary "
                                         "focus:bg-background")
             field.value = item.text()
+            # an input box does not take the cell's font and color: it is given them
+            field.style.fontStyle = line.style.fontStyle
+            field.style.fontWeight = line.style.fontWeight
+            if color:
+                field.style.color = color
             field.setAttribute("data-cell-edit", "")
             field.addEventListener("change", dom.proxy(lambda e, k=key, f=field: self._onEdited(k, f)))
             field.addEventListener("keydown", dom.proxy(lambda e, k=key, f=field: self._onEditKey(k, f, e)))
+            # typing into a cell is editing it: the view is in its editing state until it is left
+            field.addEventListener("focus", dom.proxy(lambda e, k=key, f=field: self._openEditor(k, f)))
+            field.addEventListener("blur", dom.proxy(lambda e, k=key: self._onFieldLeft(k)))
+            editor = getattr(self, "_editor", None)
+            if editor is not None and editor._key == key:
+                editor._field = editor._el = field   # the cell was drawn again while it is edited
             line.appendChild(field)
         else:
             text = dom.create("span", "min-w-0 truncate px-1" + ("" if item.flags() & Qt.ItemIsEnabled else " opacity-50"))
@@ -2474,6 +2660,17 @@ class QTableWidget(QWidget, QAbstractItemView):
 
     def setColumnHidden(self, column, hidden):
         pass
+
+    def setTextElideMode(self, mode):
+        """How text too long for its cell is cut. The page cuts it at the end with an ellipsis
+        (the cells' text is truncated with CSS), which is Qt.ElideRight; the other modes are
+        taken as that."""
+        self._textElideMode = int(mode)
+
+    def textElideMode(self):
+        from .types import Qt
+
+        return getattr(self, "_textElideMode", Qt.ElideRight)
 
     def hideColumn(self, column):
         pass

@@ -6,12 +6,12 @@ qMRML/qSlicer widgets in the ``slicer`` namespace. Widgets are rendered with the
 work in the browser.
 """
 
-from . import core, ctkwidgets, mrmlwidgets, types, uiloader, widgets
+from . import core, ctkwidgets, graphics, mrmlwidgets, types, uiloader, widgets
 
 QT_NAMESPACE = {}
 CTK_NAMESPACE = {}
 
-for _module in (core, types, widgets):
+for _module in (core, types, widgets, graphics):
     for _name, _obj in vars(_module).items():
         if _name.startswith("Q") or _name in ("Qt", "Signal", "Slot"):
             QT_NAMESPACE[_name] = _obj

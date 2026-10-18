@@ -82,6 +82,30 @@ class QMouseEvent(QEvent):
         super().__init__(type)
 
 
+class QKeyEvent(QEvent):
+    """QKeyEvent(type, key, modifiers, text="", autorep=False, count=1)."""
+
+    def __init__(self, type=0, key=0, modifiers=0, text="", autorep=False, count=1):
+        super().__init__(type)
+        self._key, self._modifiers, self._text = int(key), int(modifiers), str(text or "")
+        self._autorep, self._count = bool(autorep), int(count)
+
+    def key(self):
+        return self._key
+
+    def modifiers(self):
+        return self._modifiers
+
+    def text(self):
+        return self._text
+
+    def isAutoRepeat(self):
+        return self._autorep
+
+    def count(self):
+        return self._count
+
+
 class QVector3D:
     def __init__(self, x=0.0, y=0.0, z=0.0):
         self._v = [float(x), float(y), float(z)]
@@ -213,6 +237,8 @@ class QAbstractItemView:
     NoSelection, SingleSelection, MultiSelection, ExtendedSelection, ContiguousSelection = 0, 1, 2, 3, 4
     SelectItems, SelectRows, SelectColumns = 0, 1, 2
     ScrollPerItem, ScrollPerPixel = 0, 1
+    # what the view is doing (QAbstractItemView.state())
+    NoState, DraggingState, DragSelectingState, EditingState, ExpandingState, CollapsingState, AnimatingState = range(7)
 
 
 class QListView(QAbstractItemView):
@@ -449,25 +475,115 @@ class QPixmap:
 
 
 class QFont:
+    """A font as far as the page draws one: bold, italic, point size and family, which a copy keeps
+    (QTableWidgetItem.font() / setFont() round-trip it)."""
     Bold, Normal = 75, 50
 
     def __init__(self, *args):
-        pass
+        self._family = ""
+        self._pointSize = 10.0
+        self._weight = QFont.Normal
+        self._italic = False
+        if args and isinstance(args[0], QFont):
+            other = args[0]
+            self._family, self._pointSize, self._weight, self._italic = (
+                other._family, other._pointSize, other._weight, other._italic)
+            self._pointSizeSet = getattr(other, "_pointSizeSet", False)
+            return
+        if args and isinstance(args[0], str):
+            self._family = args[0]
+        if len(args) > 1 and args[1] is not None and float(args[1]) > 0:
+            self._pointSize = float(args[1])
+        if len(args) > 2 and args[2] is not None and int(args[2]) >= 0:
+            self._weight = int(args[2])
+        if len(args) > 3:
+            self._italic = bool(args[3])
 
     def setBold(self, v):
-        pass
+        self._weight = QFont.Bold if v else QFont.Normal
+
+    def bold(self):
+        return self._weight > QFont.Normal
+
+    def setWeight(self, weight):
+        self._weight = int(weight)
+
+    def weight(self):
+        return self._weight
 
     def setPointSize(self, v):
-        pass
-
-    def setFamily(self, f):
-        pass
-
-    def setItalic(self, v):
-        pass
+        self._pointSize = float(int(v))
+        self._pointSizeSet = True
 
     def pointSize(self):
-        return 10
+        return int(round(self._pointSize))
+
+    def setPointSizeF(self, v):
+        self._pointSize = float(v)
+        self._pointSizeSet = True
+
+    def pointSizeF(self):
+        return float(self._pointSize)
+
+    def setPixelSize(self, pixels):
+        """A size in pixels, kept as the point size it is at 96 dots per inch, as Qt does on a screen."""
+        self._pointSize = float(pixels) * 72.0 / 96.0
+        self._pointSizeSet = True
+
+    def pixelSize(self):
+        return int(round(self._pointSize * 96.0 / 72.0))
+
+    def setFamily(self, f):
+        self._family = str(f)
+
+    def family(self):
+        return self._family
+
+    def setItalic(self, v):
+        self._italic = bool(v)
+
+    def italic(self):
+        return self._italic
+
+    def __call__(self):
+        """A font read as a Qt property (widget.font) is also called (widget.font()), as in PythonQt."""
+        return self
+
+    def __eq__(self, other):
+        return isinstance(other, QFont) and (self._family, self._pointSize, self._weight, self._italic) == (
+            other._family, other._pointSize, other._weight, other._italic)
+
+    __hash__ = None
+
+
+class QBrush:
+    """A brush as far as the page draws one: its color, or none (Qt.NoBrush), which leaves the
+    default (QTableWidgetItem.setForeground / setBackground)."""
+
+    def __init__(self, *args):
+        self._color = None
+        if args and isinstance(args[0], QBrush):
+            self._color = QColor(args[0]._color) if args[0]._color is not None else None
+        elif args and isinstance(args[0], QColor):
+            self._color = QColor(args[0])
+        elif args and isinstance(args[0], str):
+            self._color = QColor(args[0])
+
+    def color(self):
+        return QColor(self._color) if self._color is not None else QColor(0, 0, 0)
+
+    def setColor(self, color):
+        self._color = QColor(color)
+
+    def style(self):
+        return 1 if self._color is not None else 0   # Qt.SolidPattern / Qt.NoBrush
+
+    def _css(self):
+        """The color as CSS, or None for no brush."""
+        if self._color is None:
+            return None
+        r, g, b, a = self._color._rgba
+        return f"rgba({r}, {g}, {b}, {a / 255:.3f})"
 
 
 class QKeySequence:
@@ -1063,6 +1179,9 @@ class QTableWidgetItem:
         self._toolTip = ""
         self._data = {}
         self._table = None
+        self._font = QFont()
+        self._foreground = QBrush()
+        self._background = QBrush()
 
     def _changed(self):
         if self._table is not None:
@@ -1105,6 +1224,28 @@ class QTableWidgetItem:
         self._toolTip = str(text)
         self._changed()
 
+    # How the cell is drawn: its font (bold, italic), and the colors of its text and background
+    def font(self):
+        return QFont(self._font)
+
+    def setFont(self, font):
+        self._font = QFont(font)
+        self._changed()
+
+    def foreground(self):
+        return QBrush(self._foreground)
+
+    def setForeground(self, brush):
+        self._foreground = QBrush(brush)
+        self._changed()
+
+    def background(self):
+        return QBrush(self._background)
+
+    def setBackground(self, brush):
+        self._background = QBrush(brush)
+        self._changed()
+
     def data(self, role):
         role = int(role)
         if role in (self.DisplayRole, self.EditRole):
@@ -1144,15 +1285,6 @@ class QTableWidgetItem:
 
     def textAlignment(self):
         return 0
-
-    def setForeground(self, brush):
-        pass
-
-    def setBackground(self, brush):
-        pass
-
-    def setFont(self, font):
-        pass
 
     def setIcon(self, icon):
         pass
@@ -1220,6 +1352,28 @@ class QApplication:
             js.document.body.style.cursor = _CSS_CURSORS.get(cursor.shape(), "wait") if cursor else ""
         except Exception:  # pragma: no cover - not in a browser
             pass
+
+    @staticmethod
+    def sendEvent(receiver, event):
+        """Deliver an event to an object at once: to its event() if it has one, else to the handler
+        of the event's type (keyPressEvent, mousePressEvent, ...). Whether it was handled."""
+        handler = getattr(receiver, "event", None)
+        if callable(handler):
+            return bool(handler(event))
+        names = {QEvent.KeyPress: "keyPressEvent", QEvent.KeyRelease: "keyReleaseEvent",
+                 QEvent.MouseButtonPress: "mousePressEvent", QEvent.MouseButtonRelease: "mouseReleaseEvent",
+                 QEvent.MouseButtonDblClick: "mouseDoubleClickEvent", QEvent.MouseMove: "mouseMoveEvent",
+                 QEvent.Wheel: "wheelEvent", QEvent.FocusIn: "focusInEvent", QEvent.FocusOut: "focusOutEvent"}
+        handler = getattr(receiver, names.get(event.type(), ""), None)
+        if callable(handler):
+            handler(event)
+            return event.isAccepted()
+        return False
+
+    @staticmethod
+    def postEvent(receiver, event, *args):
+        """Delivered at once: the page has no event queue of Qt's to post to."""
+        QApplication.sendEvent(receiver, event)
 
     @staticmethod
     def clipboard():

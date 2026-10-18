@@ -62,13 +62,20 @@ class qMRMLNodeComboBox(_ElementWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._currentNodeID = None
+        # The node itself, not only its ID: a scene that is cleared and filled again in one go (as
+        # a module test's setUp does) gives the new node the ID of the one that was removed, and
+        # selecting it must still be a change of the current node, as it is on the desktop
+        self._currentNodeObject = None
         self._attributeFilters = {}
         self._proxyModel = _NodeComboBoxProxyModel(self)
         self.addEnabled = self._addRemoveByDefault
         self.removeEnabled = self._addRemoveByDefault
 
     def _onCurrentNodeChanged(self, nodeID=None):
+        import slicer
+
         self._currentNodeID = nodeID or None
+        self._currentNodeObject = slicer.mrmlScene.GetNodeByID(self._currentNodeID) if self._currentNodeID else None
         node = self.currentNode()
         self.currentNodeChanged.emit(node)
         self.currentNodeIDChanged.emit(self._currentNodeID or "")
@@ -98,10 +105,15 @@ class qMRMLNodeComboBox(_ElementWidget):
         self.setCurrentNodeID(nodeID)
 
     def setCurrentNodeID(self, nodeID):
+        import slicer
+
         nodeID = nodeID or None
-        if nodeID == self._currentNodeID:
+        newNode = slicer.mrmlScene.GetNodeByID(nodeID) if nodeID else None
+        # unchanged only if it is the same node, not merely a node with the same ID
+        if nodeID == self._currentNodeID and newNode is self._currentNodeObject:
             return
         self._currentNodeID = nodeID
+        self._currentNodeObject = newNode
         dom.set_prop(self._el, "currentNodeID", nodeID)
         node = self.currentNode()
         self.currentNodeChanged.emit(node)

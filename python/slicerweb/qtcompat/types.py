@@ -59,6 +59,8 @@ class QEvent:
     Show, Hide, Close, Wheel = 17, 18, 19, 31
     DragEnter, DragMove, DragLeave, Drop = 60, 61, 62, 63
     ToolTip, ContextMenu = 110, 82
+    ShortcutOverride, DeferredDelete, Shortcut = 51, 52, 117
+    GraphicsSceneMouseMove, GraphicsSceneMousePress, GraphicsSceneMouseRelease = 155, 156, 157
 
     def __init__(self, type=0, *args):
         self._type = int(type)

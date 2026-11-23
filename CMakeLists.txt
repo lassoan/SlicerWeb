@@ -70,9 +70,11 @@ find_package(Git REQUIRED)
 include(SlicerVersion)
 message(STATUS "Building Slicer ${Slicer_VERSION_FULL} (revision ${Slicer_REVISION}) libraries for the browser")
 
-# SlicerDirectories.cmake uses mark_as_superbuild() from ExternalProjectDependency.
+# SlicerDirectories.cmake uses mark_as_superbuild() from ExternalProjectDependency, and
+# CMAKE_INSTALL_LIBDIR (Slicer_SITE_PACKAGES_DIR)
 macro(mark_as_superbuild)
 endmacro()
+include(GNUInstallDirs)
 include(SlicerDirectories)
 
 set(Slicer_EXPORT_HEADER_TEMPLATE "${Slicer_SOURCE_DIR}/CMake/qSlicerExport.h.in")
@@ -164,79 +166,72 @@ set(MRML_TEST_DATA_DIR ${Slicer_SOURCE_DIR}/Libs/MRML/Core/Testing/TestData)
 set(VTKITK_BUILD_DICOM_SUPPORT ON)
 set(VTKITK_BUILD_DCMTK_SUPPORT OFF)
 
-set(_slicerweb_libs
-  ITKFactoryRegistration:${Slicer_SOURCE_DIR}/Libs/ITKFactoryRegistration
-  vtkAddon:${vtkAddon_SOURCE_DIR}
-  vtkTeem:${Slicer_SOURCE_DIR}/Libs/vtkTeem
-  vtkITK:${Slicer_SOURCE_DIR}/Libs/vtkITK
-  vtkSegmentationCore:${Slicer_SOURCE_DIR}/Libs/vtkSegmentationCore
-  MRMLCore:${Slicer_SOURCE_DIR}/Libs/MRML/Core
-  MRMLCLI:${Slicer_SOURCE_DIR}/Libs/MRML/CLI
-  RemoteIO:${CMAKE_CURRENT_SOURCE_DIR}/Stubs/RemoteIO
-  MRMLLogic:${Slicer_SOURCE_DIR}/Libs/MRML/Logic
-  MRMLDisplayableManager:${Slicer_SOURCE_DIR}/Libs/MRML/DisplayableManager
-  )
-set(_include_dirs)
-foreach(_entry IN LISTS _slicerweb_libs)
-  string(REPLACE ":" ";" _entry "${_entry}")
-  list(GET _entry 0 _name)
-  list(GET _entry 1 _dir)
-  set(${_name}_INSTALL_BIN_DIR ${Slicer_INSTALL_LIB_DIR})
-  set(${_name}_INSTALL_LIB_DIR ${Slicer_INSTALL_LIB_DIR})
-  set(${_name}_INSTALL_SHARE_DIR ${Slicer_INSTALL_ROOT}share/${_name})
-  set(${_name}_INSTALL_NO_DEVELOPMENT ${Slicer_INSTALL_NO_DEVELOPMENT})
-  set(${_name}_EXPORT_FILE ${Slicer_BINARY_DIR}/SlicerTargets.cmake)
-  if(_name STREQUAL "vtkAddon")
-    set(vtkAddon_WRAP_PYTHON ON)
-    set(vtkAddon_INSTALL_PYTHON_MODULE_LIB_DIR ${Slicer_INSTALL_LIB_DIR})
-    set(vtkAddon_INSTALL_PYTHON_LIB_DIR ${Slicer_INSTALL_LIB_DIR})
+# ITKFactoryRegistration is a plain library; the others are VTK modules (below)
+set(ITKFactoryRegistration_INSTALL_BIN_DIR ${Slicer_INSTALL_LIB_DIR})
+set(ITKFactoryRegistration_INSTALL_LIB_DIR ${Slicer_INSTALL_LIB_DIR})
+set(ITKFactoryRegistration_INSTALL_NO_DEVELOPMENT ${Slicer_INSTALL_NO_DEVELOPMENT})
+# (exported with the other libraries of this project, cmake/SlicerWebSDK.cmake)
+add_subdirectory(${Slicer_SOURCE_DIR}/Libs/ITKFactoryRegistration ${CMAKE_BINARY_DIR}/Libs/ITKFactoryRegistration)
+
+# vtkAddon is a package built before (scripts/stages/50-slicer.sh), found as Slicer finds it
+find_package(vtkAddon REQUIRED)
+include(vtkMacroKitPythonWrap)
+
+# Slicer's libraries (Base/Logic and Libs) and the Qt-free libraries of the loadable modules
+# (MRML, Logic, VTKWidgets, MRMLDM) are VTK modules, built as Slicer builds them
+# (SlicerVTKModuleBuild.cmake), those of the loadable modules SlicerWeb has. Their Python wrappers are
+# modules of the slicer package
+# (slicer.MRMLCore), with the former module names (MRMLCorePython) as shims.
+# The wrapping is done by the wrapping tools built for the build host (VTKCompileTools), as for VTK.
+set(SW_VTK_COMPILETOOLS_DIR "${VTK_DIR}/../../../../vtk-compiletools/lib/cmake/vtkcompiletools-${VTK_VERSION_MAJOR}.${VTK_VERSION_MINOR}")
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/vtk/project-include.cmake)
+include(SlicerVTKModuleHeaderWrapper)
+include(SlicerVTKModuleBuild)
+include(SlicerVTKModuleAutoInit)
+# The modules SlicerWeb does not build are turned off by the module system's own setting,
+# VTK_MODULE_ENABLE_<module>: RemoteIO (curl; the web page downloads, and MRML scenes have no handler
+# of remote URIs here), those of loadable modules that are not in SlicerWeb_LOADABLE_MODULES, the
+# scripted modules' (DICOM) and the templates'.
+set(VTK_MODULE_ENABLE_Slicer_RemoteIO NO CACHE STRING "Not built for the browser" FORCE)
+vtk_module_find_modules(_module_files ${Slicer_SOURCE_DIR}/Modules ${Slicer_SOURCE_DIR}/Utilities/Templates)
+foreach(_module_file IN LISTS _module_files)
+  file(READ "${_module_file}" _module_description)
+  string(REGEX MATCH "NAME[ \t\r\n]+([^ \t\r\n]+)" _match "${_module_description}")
+  set(_module_name "${CMAKE_MATCH_1}")
+  set(_wanted OFF)
+  foreach(MODULE_NAME IN LISTS SlicerWeb_LOADABLE_MODULES)
+    if(_module_file MATCHES "^${Slicer_SOURCE_DIR}/Modules/Loadable/${MODULE_NAME}/")
+      set(_wanted ON)
+    endif()
+  endforeach()
+  if(NOT _wanted)
+    string(REPLACE "::" "_" _module_name_safe "${_module_name}")
+    set(VTK_MODULE_ENABLE_${_module_name_safe} NO CACHE STRING "Not built for the browser" FORCE)
   endif()
-  message(STATUS "Configuring library: ${_name}")
-  add_subdirectory(${_dir} ${CMAKE_BINARY_DIR}/Libs/${_name})
-  list(APPEND _include_dirs ${${_name}_INCLUDE_DIRS})
 endforeach()
-set(Slicer_Libs_INCLUDE_DIRS ${_include_dirs} CACHE INTERNAL "Slicer Libs includes" FORCE)
+slicer_vtk_module_build(
+  SOURCE_DIR ${Slicer_SOURCE_DIR}
+  BUILD_PYI_FILES OFF)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${Slicer_BINARY_DIR}/${Slicer_BIN_DIR})
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${Slicer_BINARY_DIR}/${Slicer_BIN_DIR})
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${Slicer_BINARY_DIR}/${Slicer_LIB_DIR})
+_vtk_module_real_target(SlicerWeb_vtkITK_TARGET Slicer::ITK)
 
 # vtkITK instantiates ITK filters and IO for all pixel types. In a WebAssembly side module every
 # exported symbol is preemptible and therefore imported (GOT entry) even when defined locally, which
 # makes libvtkITK exceed the browser limits of 100000 imports and 100000 exports per module.
 # Bind its own definitions locally, and export only the vtkITK classes (VTK_ITK_EXPORT, generated by
 # generate_export_header) instead of every ITK template instantiation.
-target_link_options(vtkITK PRIVATE "LINKER:-Bsymbolic")
-set_target_properties(vtkITK PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+target_link_options(${SlicerWeb_vtkITK_TARGET} PRIVATE "LINKER:-Bsymbolic")
+set_target_properties(${SlicerWeb_vtkITK_TARGET} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 set(MRML_LIBRARIES MRMLCore MRMLLogic MRMLDisplayableManager MRMLCLI CACHE INTERNAL "MRML libraries" FORCE)
 set(Slicer_Libs_VTK_WRAPPED_LIBRARIES
   vtkSegmentationCore vtkTeem vtkITK MRMLCore MRMLLogic vtkAddon MRMLDisplayableManager MRMLCLI
   CACHE INTERNAL "Slicer Libs VTK wrapped" FORCE)
 
-#-----------------------------------------------------------------------------
-# Base/Logic
-#-----------------------------------------------------------------------------
-set(SlicerBaseLogic_INSTALL_BIN_DIR ${Slicer_INSTALL_LIB_DIR})
-set(SlicerBaseLogic_INSTALL_LIB_DIR ${Slicer_INSTALL_LIB_DIR})
-add_subdirectory(${Slicer_SOURCE_DIR}/Base/Logic ${CMAKE_BINARY_DIR}/Base/Logic)
-set(Slicer_Base_INCLUDE_DIRS
-  ${Slicer_SOURCE_DIR}/Base/Logic ${CMAKE_BINARY_DIR}/Base/Logic
-  CACHE INTERNAL "Slicer Base includes" FORCE)
+# Base/Logic and the loadable module libraries are among the VTK modules above
+set(Slicer_Base_INCLUDE_DIRS "" CACHE INTERNAL "Slicer Base includes" FORCE)
 set(Slicer_Base_LIBRARIES SlicerBaseLogic CACHE INTERNAL "Slicer Base libraries" FORCE)
-
-#-----------------------------------------------------------------------------
-# Loadable modules: only their Qt-free subdirectories
-#-----------------------------------------------------------------------------
-include(SlicerMacroBuildModuleVTKLibrary)
-include(SlicerMacroPythonWrapModuleVTKLibrary)
-include(SlicerMacroBuildModuleLogic)
-include(SlicerMacroBuildModuleMRML)
-foreach(MODULE_NAME IN LISTS SlicerWeb_LOADABLE_MODULES)
-  string(TOUPPER ${MODULE_NAME} MODULE_NAME_UPPER)
-  set(_module_dir ${Slicer_SOURCE_DIR}/Modules/Loadable/${MODULE_NAME})
-  foreach(_sub MRML VTKWidgets Logic MRMLDM)
-    if(EXISTS ${_module_dir}/${_sub}/CMakeLists.txt)
-      message(STATUS "Configuring module library: ${MODULE_NAME}/${_sub}")
-      add_subdirectory(${_module_dir}/${_sub} ${CMAKE_BINARY_DIR}/Modules/Loadable/${MODULE_NAME}/${_sub})
-    endif()
-  endforeach()
-endforeach()
 
 #-----------------------------------------------------------------------------
 # SlicerWeb libraries
@@ -268,7 +263,7 @@ add_subdirectory(Modules)
 # This is done for the libraries whose ITK use is entirely their own. MRMLCore is left alone: it
 # reads transforms, and the transform objects come from ITK's factory in another library, so its
 # casts are between descriptions that have to be shared.
-foreach(target vtkITK SlicerWebCore)
+foreach(target ${SlicerWeb_vtkITK_TARGET} SlicerWebCore)
   if(TARGET ${target})
     target_compile_definitions(${target} PRIVATE
       "ITK_TEMPLATE_EXPORT=__attribute__((visibility(\"hidden\")))")

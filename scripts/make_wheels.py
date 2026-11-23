@@ -153,6 +153,17 @@ def needed_closure(roots, libraries):
     return result
 
 
+def add_slicer_python_modules(w, site_packages, shims_destination):
+    """Slicer's Python wrappers as Slicer installs them: <site-packages>/slicer/<Name>.so, built as VTK
+    modules, and <site-packages>/<Name>Python.py, which imports one under the name it had before.
+    The modules go into the slicer package of the wheel, the shims to shims_destination."""
+    for module in sorted(glob.glob(os.path.join(site_packages, "slicer", "*.so"))):
+        if is_wasm(module):
+            w.add_file(module, "slicer/" + os.path.basename(module))
+    for shim in sorted(glob.glob(os.path.join(site_packages, "*Python.py"))):
+        w.add_file(shim, shims_destination + os.path.basename(shim))
+
+
 def itk_libraries(args):
     """The ITK libraries by file name, and those of them that the Slicer libraries need."""
     itk_install = os.path.join(args.install, "itk")
@@ -236,6 +247,9 @@ def main():
             w.add_file(lib, f"slicer_home/lib/Slicer-{slicer_ver}/" + os.path.basename(lib))
     if os.path.isdir(share_dir):
         w.add_tree(share_dir, f"slicer_home/share/Slicer-{slicer_ver}", exclude=lambda rel: rel.startswith("qt-loadable-modules"))
+    # The Python wrappers of Slicer's libraries: modules of the slicer package (slicer.MRMLCore), and
+    # the modules of the names they had before (MRMLCorePython), which import them
+    add_slicer_python_modules(w, os.path.join(slicer_install, "lib", "site-packages"), "")
     # slicer Python package (unchanged from Slicer), kits, and kit modules
     base_python = os.path.join(slicer_src, "Base", "Python")
     w.add_tree(os.path.join(base_python, "slicer"), "slicer",
@@ -266,7 +280,12 @@ def main():
     modules_lib = os.path.join(lib_dir, "qt-loadable-modules")
     modules_share = os.path.join(share_dir, "qt-loadable-modules")
     w = Wheel("slicer-modules-core", version_full, summary="3D Slicer core loadable modules (Qt-free libraries) for Pyodide")
-    w.add_tree(modules_lib, f"slicer_home/lib/Slicer-{slicer_ver}/qt-loadable-modules", exclude=lambda rel: rel.endswith(".a"))
+    w.add_tree(modules_lib, f"slicer_home/lib/Slicer-{slicer_ver}/qt-loadable-modules",
+               exclude=lambda rel: rel.endswith(".a") or rel.startswith("site-packages"))
+    # The Python wrappers of the module libraries, in the slicer package too (slicer.vtkSlicerMarkupsModuleMRML),
+    # and the modules of their former names where the modules' wrappers are looked for (modules.py)
+    add_slicer_python_modules(w, os.path.join(modules_lib, "site-packages"),
+                              f"slicer_home/lib/Slicer-{slicer_ver}/qt-loadable-modules/")
     if os.path.isdir(modules_share):
         w.add_tree(modules_share, f"slicer_home/share/Slicer-{slicer_ver}/qt-loadable-modules")
     # Core Python scripted modules and packages used by extensions, in the desktop layout

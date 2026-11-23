@@ -27,16 +27,37 @@ _slicerweb_collect_targets("${CMAKE_SOURCE_DIR}" _all_targets)
 set(_sdk_targets)
 foreach(_t IN LISTS _all_targets)
   get_target_property(_type ${_t} TYPE)
+  # Slicer's VTK modules are exported by slicer_vtk_module_build (Slicer::<name>, see below)
+  get_target_property(_vtk_module ${_t} INTERFACE_vtk_module_name)
   if(_type MATCHES "^(SHARED_LIBRARY|MODULE_LIBRARY|STATIC_LIBRARY|INTERFACE_LIBRARY)$"
-      AND NOT _t MATCHES "^(VTKCompileTools|SlicerWeb)")
+      AND NOT _t MATCHES "^(VTKCompileTools|SlicerWeb|ITKFactoryRegistration$)" AND NOT _vtk_module)
     list(APPEND _sdk_targets ${_t})
   endif()
 endforeach()
 export(TARGETS ${_sdk_targets} FILE "${CMAKE_BINARY_DIR}/SlicerWebTargets.cmake")
-# vtkAddon's own config in this build tree includes a targets file that nothing exports; the
-# vtkAddon target is among the targets exported above, so an empty one satisfies the include.
-# (An extension built with Slicer_EXTENSION_SOURCE_DIRS set - SlicerIGT - finds vtkAddon itself.)
-file(WRITE "${CMAKE_BINARY_DIR}/Libs/vtkAddon/vtkAddonTargets.cmake" "# vtkAddon is exported with the Slicer targets (SlicerWebTargets.cmake)\n")
+# The exports of Slicer's VTK modules, and the names they had before (vtkSlicerMarkupsModuleMRML),
+# as aliases: what Slicer's own SlicerConfig.cmake gives an extension
+get_property(SlicerWeb_SLICER_TARGETS_FILES GLOBAL PROPERTY Slicer_TARGETS_FILES)
+get_property(SlicerWeb_SLICER_ALIASES_CODE GLOBAL PROPERTY Slicer_ALIASES_CODE_TO_EXPORT)
+list(JOIN SlicerWeb_SLICER_ALIASES_CODE "" SlicerWeb_SLICER_ALIASES_CODE)  # one add_library() per line
+file(WRITE "${CMAKE_BINARY_DIR}/SlicerWebAliases.cmake" "${SlicerWeb_SLICER_ALIASES_CODE}")
+# The include directories of each library (<name>_INCLUDE_DIRS), and all of them in the lists the
+# module macros add to an extension's modules, as Slicer's SlicerGenerateSlicerConfig.cmake writes them
+# (an extension's module may include the headers of a library it only reaches through another, as
+# SlicerIGSIO's MetafileImporter does the Sequences logic's)
+get_property(SlicerWeb_SLICER_MODULE_TARGETS GLOBAL PROPERTY SLICER_MODULE_MRML_TARGETS)
+set(SlicerWeb_SLICER_INCLUDE_DIRS_CODE "")
+set(_all_dirs "")
+foreach(_t IN LISTS SlicerWeb_SLICER_MODULE_TARGETS)
+  string(APPEND SlicerWeb_SLICER_INCLUDE_DIRS_CODE "set(${_t}_INCLUDE_DIRS \"$<TARGET_PROPERTY:${_t},INTERFACE_INCLUDE_DIRECTORIES>\")
+")
+  string(APPEND _all_dirs "\${${_t}_INCLUDE_DIRS};")
+endforeach()
+foreach(_list Slicer_Libs_INCLUDE_DIRS Slicer_ModuleLogic_INCLUDE_DIRS Slicer_ModuleMRML_INCLUDE_DIRS)
+  string(APPEND SlicerWeb_SLICER_INCLUDE_DIRS_CODE "set(${_list} \"${_all_dirs}\" CACHE INTERNAL \"\" FORCE)
+")
+endforeach()
+file(WRITE "${CMAKE_BINARY_DIR}/SlicerWebIncludeDirs.cmake" "${SlicerWeb_SLICER_INCLUDE_DIRS_CODE}")
 
 # ---------------------------------------------------------------------------- variables
 # Captured with bracket arguments, so values need no escaping.
@@ -96,6 +117,8 @@ foreach(_v IN LISTS _vars)
     endif()
   endif()
 endforeach()
+string(APPEND _config "set(SlicerWeb_SLICER_TARGETS_FILES [==[${SlicerWeb_SLICER_TARGETS_FILES}]==])
+")
 string(APPEND _config [==[
 
 # Dependencies referenced by the exported targets
@@ -108,8 +131,16 @@ if(NOT DEFINED SlicerWeb_SDK_TARGETS_INCLUDED)
   find_package(Teem REQUIRED NO_MODULE)
   find_package(SlicerExecutionModel REQUIRED)
   find_package(RapidJSON REQUIRED)  # header-only; linked by the Markups MRML library
+  find_package(vtkAddon REQUIRED)
+  # ITKFactoryRegistration exports itself (Libs/ITKFactoryRegistration/CMakeLists.txt)
+  include("${Slicer_DIR}/Libs/ITKFactoryRegistration/ITKFactoryRegistrationTargets.cmake")
+  foreach(_slicerweb_targets_file IN LISTS SlicerWeb_SLICER_TARGETS_FILES)
+    include("${Slicer_DIR}/${_slicerweb_targets_file}")
+  endforeach()
+  include("${Slicer_DIR}/SlicerWebAliases.cmake")
   include("${Slicer_DIR}/SlicerWebTargets.cmake")
 endif()
+include("${Slicer_DIR}/SlicerWebIncludeDirs.cmake")
 set(Slicer_FOUND TRUE)
 ]==])
 file(WRITE "${CMAKE_BINARY_DIR}/SlicerConfig.cmake" "${_config}")

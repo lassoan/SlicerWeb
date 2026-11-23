@@ -251,7 +251,7 @@ class SlicerWebApplication:
         # that what a module asks to be read in, is read in. Tasks run where they are scheduled.
         appLogic.CreateProcessingThread()
         # Data IO manager and cache directory (vtkMRMLScene::ReadFromMRB extracts bundles there);
-        # remote downloads are not handled by the RemoteIO stub (the browser fetches URLs instead).
+        # remote downloads are not handled by MRML (Slicer's RemoteIO is not built; the browser fetches URLs).
         remoteIOLogic = slicer.vtkMRMLRemoteIOLogic()
         os.makedirs(self.cachePath, exist_ok=True)
         remoteIOLogic.GetCacheManager().SetRemoteCacheDirectory(self.cachePath)
